@@ -1,0 +1,52 @@
+# ── Runtime artifacts (created by the application) ──
+logs/
+/memory/
+/exports/
+/sessions/
+/workspaces/
+
+# ── Secrets & credentials ──
+.env
+*.db
+
+# ── Logs ──
+*.log
+
+# ── Python artifacts ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+data/workspaces
+
+# ── Virtual environments ──
+venv/
+.venv/
+
+# ── IDE & editor ──
+.vscode/
+.idea/
+.opencode/
+opencode.json
+.directory
+*.swp
+*.swo
+*~
+
+# ── OS artifacts ──
+.DS_Store
+
+# ── Test artifacts ──
+*.png
+
+# ── Docs build ──
+site/
+
+# ── AI planning artifacts (local development only) ──
+docs/superpowers/
+ROADMAP.md
+charts/
