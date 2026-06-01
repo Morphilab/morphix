@@ -1,0 +1,104 @@
+[project]
+name = "morphix"
+version = "1.0.0"
+description = "Morphix — Multi-agent orchestration platform for AI-assisted software engineering"
+authors = [{ name = "morphilab", email = "lab@morphilab.com" }]
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Framework :: Pydantic",
+    "Topic :: Software Development",
+]
+homepage = "https://github.com/morphilab/morphix"
+repository = "https://github.com/morphilab/morphix"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "sqlmodel",
+    "redis",
+    "python-dotenv",
+    "pydantic-settings",
+    "sentence-transformers",
+    "faiss-cpu",
+    "reportlab",
+    "networkx",
+    "matplotlib",
+    "httpx",
+    "tiktoken",
+    "bcrypt",
+    "cryptography",
+    "pdfplumber",
+    "numpy",
+    "pandas",
+    "psutil",
+    "openai",
+    "ollama",
+    "RestrictedPython>=7.0",
+    "asyncpg (>=0.29)",
+    "sqlalchemy[asyncio] (>=2.0)",
+    "pyyaml (>=6.0.3,<7.0.0)",
+    "gitpython (>=3.1.49,<4.0.0)",
+    "jedi (>=0.20.0,<0.21.0)",
+    "pyside6 (>=6.11.1,<7.0.0)",
+]
+[project.scripts]
+morphix-mcp = "core.mcp.server:run_mcp_server"
+
+[tool.poetry]
+package-mode = false   # ← Esta línea es la solución
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^25.1"
+ruff = "^0.11"
+mypy = "^1.15"
+pytest = "^8.3"
+pytest-asyncio = "^0.25"
+pytest-cov = "^6.0"
+pre-commit = "^4.0"
+alembic = "^1.18.4"
+types-pyyaml = "^6.0.12.20260518"
+
+[tool.poetry.group.docs.dependencies]
+mkdocs = "^1.6"
+mkdocs-material = "^9.5"
+mkdocstrings = {extras = ["python"], version = "^0.25"}
+mkdocs-git-revision-date-localized-plugin = "^1.2"
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "W", "UP"]
+ignore = [
+    "E501",   # line too long
+    "F403",   # from . import *
+    "F841",   # unused variable
+    "E722",   # bare except
+    "B904",   # raise from
+    "F821",   # undefined name
+    "RUF001", "RUF002", "RUF003", "RUF012",  # en-dash y mutable attrs
+    "E402",   # import not at top
+    "UP038",  # isinstance tuple -> union
+    "RUF006", # asyncio.create_task
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+files = ["core/", "llm/", "agents/", "tools/", "orchestration/", "desktop/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=core --cov=llm --cov=agents --cov=tools --cov=orchestration --cov=desktop --cov-report=term-missing"
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
