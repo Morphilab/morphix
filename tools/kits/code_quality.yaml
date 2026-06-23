@@ -1,0 +1,27 @@
+tool_kit: code_quality
+description: "Pipeline de calidad: lint → corregir → verificar"
+steps:
+  - order: 1
+    tool: "lsp_manager"
+    action: "ruff_check"
+    params: {path: "ruta/directorio/"}
+    note: "Detectá problemas de linting (F, E, W)"
+  - order: 2
+    tool: "diff_editor"
+    action: "apply"
+    params: {file_path: "ruta/archivo.py", diff_content: "corrección según ruff"}
+    note: "Corregí cada problema uno por uno, empezando por los más graves"
+  - order: 3
+    tool: "lsp_manager"
+    action: "ruff_check"
+    params: {path: "ruta/directorio/"}
+    note: "Verificá que todo esté limpio"
+  - order: 4
+    tool: "test_runner"
+    action: "run"
+    params: {file_path: "tests/"}
+    note: "Asegurate de que las correcciones no rompan tests"
+  - order: 5
+    tool: "git_manager"
+    action: "commit"
+    params: {message: "style: correcciones de linting"}

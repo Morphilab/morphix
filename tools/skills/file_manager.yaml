@@ -1,0 +1,16 @@
+tool: file_manager
+when_to_use:
+  - Para crear, leer o modificar archivos en el proyecto
+  - Antes de modificar un archivo, leelo primero para entender su contenido actual
+  - Para escribir archivos de configuración, tests, o documentación
+when_not_to_use:
+  - Para ejecutar comandos de terminal (usa bash_manager)
+  - Para aplicar diffs unificados (usa diff_editor)
+  - Para archivos binarios o PDFs (usa pdf_reader)
+examples:
+  - "file_manager: write, path='src/main.py', content='print(\"hello\")'"
+  - "file_manager: read, path='src/main.py'"
+  - "file_manager: read, path='tests/'"
+tips:
+  - Los paths son relativos al project root
+  - Verificá que el archivo se haya creado correctamente después de escribir
