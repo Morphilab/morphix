@@ -1,0 +1,14 @@
+tool: test_runner
+when_to_use:
+  - Después de escribir o modificar código Python
+  - Para verificar que los tests pasan antes de considerar la tarea completa
+  - Para ejecutar un archivo de test específico
+when_not_to_use:
+  - Para ejecutar scripts que no son tests (usa bash_manager con python3)
+  - Antes de que el archivo de test exista
+examples:
+  - "test_runner: run, file_path='tests/test_mi_modulo.py'"
+  - "test_runner: run, path='tests/test_main.py'"
+tips:
+  - Prefiere test_runner sobre bash_manager para ejecutar pytest
+  - Si los tests fallan, lee el output completo antes de modificar código

@@ -1,0 +1,34 @@
+tool_kit: project_setup
+description: "Configuración inicial de proyecto: estructura, git, CI"
+steps:
+  - order: 1
+    tool: "bash_manager"
+    action: "execute"
+    params: {command: "mkdir -p src tests"}
+    note: "Creá estructura de directorios"
+  - order: 2
+    tool: "file_manager"
+    action: "write"
+    params: {path: "src/__init__.py", content: ""}
+    note: "Inicializá el paquete Python"
+  - order: 3
+    tool: "git_manager"
+    action: "init"
+    params: {}
+    note: "Inicializá repositorio"
+  - order: 4
+    tool: "file_manager"
+    action: "write"
+    params: {path: "README.md", content: "# Nombre del proyecto"}
+  - order: 5
+    tool: "file_manager"
+    action: "write"
+    params: {path: ".gitignore", content: "__pycache__/\n*.pyc\n.env\n.venv/"}
+  - order: 6
+    tool: "git_manager"
+    action: "add"
+    params: {files: ["."]}
+  - order: 7
+    tool: "git_manager"
+    action: "commit"
+    params: {message: "chore: inicializar proyecto"}

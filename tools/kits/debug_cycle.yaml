@@ -1,0 +1,32 @@
+tool_kit: debug_cycle
+description: "Ciclo de depuración: diagnosticar, leer, corregir, verificar"
+steps:
+  - order: 1
+    tool: "lsp_manager"
+    action: "diagnostics"
+    params: {path: "ruta/archivo_problema.py"}
+    note: "Detectá errores de sintaxis, tipo y estilo"
+  - order: 2
+    tool: "file_manager"
+    action: "read"
+    params: {path: "ruta/archivo_problema.py"}
+    note: "Leé el archivo con errores para entender el código"
+  - order: 3
+    tool: "diff_editor"
+    action: "apply"
+    params: {file_path: "ruta/archivo_problema.py", diff_content: "corrección"}
+    note: "Aplicá la corrección. Verificá imports, tipos y lógica"
+  - order: 4
+    tool: "lsp_manager"
+    action: "diagnostics"
+    params: {path: "ruta/archivo_problema.py"}
+    note: "Confirmá que los errores desaparecieron"
+  - order: 5
+    tool: "test_runner"
+    action: "run"
+    params: {file_path: "tests/"}
+    note: "Ejecutá tests. Si fallan, volvé al paso 1"
+  - order: 6
+    tool: "git_manager"
+    action: "commit"
+    params: {message: "fix: descripción del bug corregido"}

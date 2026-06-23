@@ -1,0 +1,16 @@
+tool: lsp_manager
+when_to_use:
+  - Para verificar sintaxis, tipos y formato de archivos Python
+  - Para ejecutar ruff y mypy sobre archivos o directorios
+  - Para obtener diagnósticos de código antes de commits
+when_not_to_use:
+  - Para ejecutar código (usa code_exec o bash_manager)
+  - Para buscar en el código (usa code_search)
+examples:
+  - "lsp_manager: diagnostics, path='src/main.py'"
+  - "lsp_manager: ruff_check, path='src/'"
+  - "lsp_manager: definition, path='src/main.py', line=42, character=10"
+tips:
+  - Ejecutá diagnostics o ruff_check ANTES de crear diffs o commits
+  - Si hay errores, corregilos antes de continuar con otras herramientas
+  - ruff_check es más rápido que diagnostics para chequeos de formato

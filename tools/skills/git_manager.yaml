@@ -1,0 +1,13 @@
+tool: git_manager
+when_to_use:
+  - Para commits después de completar una subtarea o fix
+  - Para ver el log de cambios recientes
+  - Para inicializar repositorios nuevos
+when_not_to_use:
+  - No requiere comandos git crudos (git_manager abstrae init, add, commit, log, diff)
+examples:
+  - "git_manager: init, workspace='main', project_root='code_projects/mi_app'"
+  - "git_manager: commit, message='feat: agregar endpoint', workspace='main', project_root='code_projects/mi_app'"
+tips:
+  - Hacé commits frecuentes: uno por cada subtarea completada
+  - Usá mensajes en formato convencional (feat:, fix:, refactor:, test:, chore:)

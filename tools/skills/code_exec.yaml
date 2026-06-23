@@ -1,0 +1,13 @@
+tool: code_exec
+when_to_use:
+  - Para ejecutar código Python en un sandbox aislado
+  - Cuando necesitas probar lógica matemática o algorítmica rápidamente
+when_not_to_use:
+  - Para ejecutar archivos completos (usa bash_manager con python3)
+  - Para comandos de sistema (usa bash_manager)
+examples:
+  - "code_exec: eval, code='sum(range(100))'"
+  - "code_exec: eval, code='import math; math.factorial(10)'"
+tips:
+  - Usa solo módulos permitidos por el sandbox
+  - code_exec es rápido pero no tiene acceso al sistema de archivos
