@@ -46,7 +46,12 @@ opencode.json
 # ── Docs build ──
 site/
 
-# ── AI planning artifacts (local development only) ──
+# ── Internal dev artifacts (not for public repo) ──
 docs/superpowers/
 ROADMAP.md
+alembic/README
+AGENTS.md
+CAPABILITIES.md
+CHANGELOG.md
+PENDING.md
 charts/
