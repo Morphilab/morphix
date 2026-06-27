@@ -44,10 +44,21 @@ tested, and extended independently.
 - **~698 test functions, 0 mypy errors** &mdash; disciplined development across 26 sprints. Async tests with `pytest-asyncio`. Full CI pipeline with PostgreSQL service containers.
 - **Dynamic extensibility** &mdash; tools as `.py` files loaded at runtime, agents as YAML profiles, hooks with 6 interception points, MCP integration for external tool servers.
 
+> ⚠️ **AI Disclosure / Divulgación de IA**
+>
+> **English:** This project was developed with assistance from artificial intelligence
+> tools. Given the automated nature of some components, users are advised to review
+> and test the code independently before integrating it into their own systems.
+>
+> **Español:** Este proyecto fue desarrollado con asistencia de herramientas de
+> inteligencia artificial. Dada la naturaleza automatizada de algunos componentes,
+> se recomienda que los usuarios revisen y prueben el código independientemente antes
+> de integrarlo en sus propios sistemas.
+
 > **Coverage note:** Test coverage is ~21%. The test suite uses mock-heavy patterns
 > (387 MagicMock/AsyncMock, 238 `patch()` context managers) due to async LLM dependencies
 > that require external API keys. Integration tests for orchestration paths are
-> planned. See [ROADMAP.md](ROADMAP.md).
+> planned for future releases.
 
 ---
 
@@ -347,7 +358,7 @@ The documentation covers:
 - **Architecture** &mdash; design decisions, data flow, workspace system, security model, memory system, MCP integration, per-layer deep-dives
 - **Developer Guide** &mdash; adding tools, agents, workflows, hooks; contributing; testing guide
 - **API Reference** &mdash; auto-generated from docstrings via mkdocstrings
-- **Changelog** &mdash; full sprint history
+- **Changelog** &mdash; release notes and version history
 
 ---
 
@@ -383,10 +394,9 @@ codemorphix/
 
 ## Development
 
-- See [AGENTS.md](AGENTS.md) for architecture details, conventions, and gotchas.
-- See [CAPABILITIES.md](CAPABILITIES.md) for the testing guide and example prompts.
-- See [PENDING.md](PENDING.md) and [CHANGELOG.md](CHANGELOG.md) for sprint history.
+- See the [documentation site](https://morphilab.github.io/morphix) for architecture, workflows, agents, tools, and development guides.
 - See [docs/](docs/) for the full documentation source.
+- See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for developer setup and conventions.
 
 **Test conventions:** `pytest-asyncio` with `asyncio_mode = "auto"`; mark async tests with
 `@pytest.mark.asyncio`. No shared fixtures in `conftest.py` &mdash; mocks are defined inline per module.
