@@ -1,0 +1,3442 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AI-powered coding assistant with multi-agent orchestration">
+      
+      
+      
+      
+        <link rel="prev" href="../../mcp-integration/">
+      
+      
+        <link rel="next" href="../llm-layer/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Core Layer - Morphix Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#core-layer" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Morphix Documentation" class="md-header__button md-logo" aria-label="Morphix Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Morphix Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Core Layer
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/morphilab/morphix" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    morphilab/morphix
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Morphix Documentation" class="md-nav__button md-logo" aria-label="Morphix Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Morphix Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/morphilab/morphix" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    morphilab/morphix
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../user-guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/gui-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GUI Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/maestro-cockpit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maestro Cockpit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/editor-tab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Editor Tab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/history-tab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    History Tab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/config-tab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config Tab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/analytics-tab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analytics Tab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_9" id="__nav_3_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/workflows/development-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/workflows/coordinated-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coordinated
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/workflows/collaborative-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Collaborative
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/workflows/tdd-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TDD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/projects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Projects & Workspaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/prompts-examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompt Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../data-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../workspace-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workspace System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../streaming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Streaming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../memory-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Layers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Layers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Layer
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#module-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module Inventory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Module Inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#database-databasepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database (database.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration-configpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration (config.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path-resolver-path_resolverpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path Resolver (path_resolver.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-check-healthpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health Check (health.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bootstrap-bootstrappy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bootstrap (bootstrap.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#feature-flags-feature_flagspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature Flags (feature_flags.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#circuit-breaker-circuit_breakerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Circuit Breaker (circuit_breaker.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rate-limiter-rate_limiterpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rate Limiter (rate_limiter.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-counter-token_counterpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token Counter (token_counter.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-manager-cache_managerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache Manager (cache_manager.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context-manager-context_managerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context Manager (context_manager.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#change-tracker-change_trackerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change Tracker (change_tracker.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#codebase-indexer-codebase_indexerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Codebase Indexer (codebase_indexer.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#embedding-provider-embedding_providerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embedding Provider (embedding_provider.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#faiss-indexer-faiss_indexerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FAISS Indexer (faiss_indexer.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#git-operations-git_operationspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Git Operations (git_operations.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspaces-workspacespy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspaces (workspaces.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workflow-state-workflow_statepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow State (workflow_state.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics-metricspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metrics (metrics.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lru-cache-lru_cachepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LRU Cache (lru_cache.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#utils-utilspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Utils (utils.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#models-modelspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models (models.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hooks-registry-hooks_registrypy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hooks Registry (hooks_registry.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hook-loader-hook_loaderpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hook Loader (hook_loader.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subsystems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subsystems
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Subsystems">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#memory-memory-manager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory/ — Memory Manager
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        security/ — Security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mcp-mcp-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mcp/ — MCP Protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sandbox-code-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sandbox/ — Code Execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hooks-hook-implementations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hooks/ — Hook Implementations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#repositories-data-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        repositories/ — Data Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layer-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer Boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tools Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../orchestration-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Orchestration Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../desktop-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../developer-guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/adding-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adding Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/adding-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adding Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/adding-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adding Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/adding-hooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adding Hooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/testing-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api-reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/orchestration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Orchestration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/desktop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../MANUAL_DE_PRUEBAS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing Manual
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#module-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module Inventory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Module Inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#database-databasepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database (database.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration-configpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration (config.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path-resolver-path_resolverpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path Resolver (path_resolver.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-check-healthpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health Check (health.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bootstrap-bootstrappy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bootstrap (bootstrap.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#feature-flags-feature_flagspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature Flags (feature_flags.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#circuit-breaker-circuit_breakerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Circuit Breaker (circuit_breaker.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rate-limiter-rate_limiterpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rate Limiter (rate_limiter.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-counter-token_counterpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token Counter (token_counter.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-manager-cache_managerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache Manager (cache_manager.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context-manager-context_managerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context Manager (context_manager.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#change-tracker-change_trackerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change Tracker (change_tracker.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#codebase-indexer-codebase_indexerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Codebase Indexer (codebase_indexer.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#embedding-provider-embedding_providerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embedding Provider (embedding_provider.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#faiss-indexer-faiss_indexerpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FAISS Indexer (faiss_indexer.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#git-operations-git_operationspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Git Operations (git_operations.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspaces-workspacespy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspaces (workspaces.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workflow-state-workflow_statepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow State (workflow_state.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics-metricspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metrics (metrics.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lru-cache-lru_cachepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LRU Cache (lru_cache.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#utils-utilspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Utils (utils.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#models-modelspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models (models.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hooks-registry-hooks_registrypy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hooks Registry (hooks_registry.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hook-loader-hook_loaderpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hook Loader (hook_loader.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subsystems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subsystems
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Subsystems">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#memory-memory-manager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory/ — Memory Manager
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        security/ — Security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mcp-mcp-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mcp/ — MCP Protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sandbox-code-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sandbox/ — Code Execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hooks-hook-implementations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hooks/ — Hook Implementations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#repositories-data-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        repositories/ — Data Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layer-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer Boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="core-layer">Core Layer<a class="headerlink" href="#core-layer" title="Permanent link">&para;</a></h1>
+<p>The <code>core/</code> layer contains all business logic with <strong>zero UI dependencies</strong>. It is the single source of truth for database access, configuration, memory, security, code execution, and system-level utilities.</p>
+<h2 id="module-inventory">Module Inventory<a class="headerlink" href="#module-inventory" title="Permanent link">&para;</a></h2>
+<h3 id="database-databasepy">Database (<code>database.py</code>)<a class="headerlink" href="#database-databasepy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Loop-aware async engine, workspace schemas, session factory, pool settings.</p>
+</blockquote>
+<p>Key components:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Engine management</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">_get_async_engine</span><span class="p">()</span>              <span class="c1"># Creates/reuses async engine, handles loop changes</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">dispose_engine</span><span class="p">()</span>                 <span class="c1"># Clean pool shutdown</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># Session management</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">get_async_session_factory</span><span class="p">()</span>      <span class="c1"># Returns async_sessionmaker</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">get_async_session</span><span class="p">()</span>              <span class="c1"># Context manager — sets search_path, yields session</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># Schema management</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="n">set_async_schema</span><span class="p">(</span><span class="n">schema</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span>    <span class="c1"># Switch current schema (validated: ^[a-z][a-z0-9_]*$)</span>
+</code></pre></div>
+<p>Features:</p>
+<ul>
+<li><strong>Loop-aware</strong>: The engine is recreated if the running asyncio event loop changes (critical for per-test event loops in pytest-asyncio).</li>
+<li><strong>URL rewriting</strong>: <code>postgresql://</code> → <code>postgresql+asyncpg://</code> for the async engine.</li>
+<li><strong>Schema isolation</strong>: Every <code>get_async_session()</code> executes <code>SET search_path TO {schema}</code> on the connection, implementing workspace-level database isolation.</li>
+<li><strong>Pool settings</strong>: Configurable via <code>DB_POOL_SIZE</code>, <code>DB_MAX_OVERFLOW</code>, <code>DB_POOL_PRE_PING</code>, <code>DB_POOL_RECYCLE</code>.</li>
+<li><strong>Schema lock</strong>: Thread-safe schema switching via an event-loop-bound <code>asyncio.Lock</code>.</li>
+</ul>
+<h3 id="configuration-configpy">Configuration (<code>config.py</code>)<a class="headerlink" href="#configuration-configpy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Pydantic-settings model with all environment variables.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Settings</span><span class="p">(</span><span class="n">BaseSettings</span><span class="p">):</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">model_config</span> <span class="o">=</span> <span class="n">SettingsConfigDict</span><span class="p">(</span><span class="n">env_file</span><span class="o">=</span><span class="s2">&quot;.env&quot;</span><span class="p">,</span> <span class="n">extra</span><span class="o">=</span><span class="s2">&quot;ignore&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="c1"># General</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">dark_mode</span><span class="p">:</span> <span class="nb">bool</span>               <span class="c1"># DARK_MODE (default: true)</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">offline_mode</span><span class="p">:</span> <span class="nb">bool</span>            <span class="c1"># OFFLINE_MODE (default: false)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="c1"># API Keys</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">openai_api_key</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># OPENAI_API_KEY</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">deepseek_api_key</span><span class="p">:</span> <span class="nb">str</span>         <span class="c1"># DEEPSEEK_API_KEY</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">grok_api_key</span><span class="p">:</span> <span class="nb">str</span>             <span class="c1"># GROK_API_KEY</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">google_api_key</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># GOOGLE_API_KEY</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="c1"># Infrastructure</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="n">ollama_base_url</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># OLLAMA_BASE_URL (default: http://localhost:11434)</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    <span class="n">database_url</span><span class="p">:</span> <span class="nb">str</span>             <span class="c1"># DATABASE_URL</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="n">redis_url</span><span class="p">:</span> <span class="nb">str</span>                <span class="c1"># REDIS_URL</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    <span class="n">ollama_model</span><span class="p">:</span> <span class="nb">str</span>             <span class="c1"># OLLAMA_MODEL (default: phi3:mini)</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    <span class="n">llm_timeout</span><span class="p">:</span> <span class="nb">int</span>              <span class="c1"># LLM_TIMEOUT (default: 60)</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>    <span class="n">deepseek_strict_mode</span><span class="p">:</span> <span class="nb">bool</span>    <span class="c1"># DEEPSEEK_STRICT_MODE</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>    <span class="n">max_context_tokens</span><span class="p">:</span> <span class="nb">int</span>       <span class="c1"># MAX_CONTEXT_TOKENS (default: 128000)</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>    <span class="c1"># Security</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>    <span class="n">encryption_key</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># ENCRYPTION_KEY (auto-gen in dev, required in prod)</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>    <span class="n">password_hash</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># PASSWORD_HASH</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>    <span class="c1"># Model roles (centralized model selection)</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>    <span class="n">model_roles</span><span class="p">:</span> <span class="nb">dict</span>             <span class="c1"># Per-role provider/model/temperature config</span>
+</code></pre></div>
+<p><strong>Model roles</strong> define which provider and model to use for each role:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model_roles</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">&quot;default&quot;</span><span class="p">:</span>    <span class="p">{</span><span class="s2">&quot;provider&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek-v4-flash&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">},</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="s2">&quot;fast&quot;</span><span class="p">:</span>       <span class="p">{</span><span class="s2">&quot;provider&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek-v4-flash&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="s2">&quot;reasoning&quot;</span><span class="p">:</span>  <span class="p">{</span><span class="s2">&quot;provider&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek-v4-flash&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="s2">&quot;agent&quot;</span><span class="p">:</span>      <span class="p">{</span><span class="s2">&quot;provider&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek-v4-flash&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">},</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="s2">&quot;creative&quot;</span><span class="p">:</span>   <span class="p">{</span><span class="s2">&quot;provider&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek-v4-flash&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.9</span><span class="p">},</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="s2">&quot;critique&quot;</span><span class="p">:</span>   <span class="p">{</span><span class="s2">&quot;provider&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;deepseek-v4-flash&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">},</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Encryption key</strong> validation: In production (<code>MORPHIX_ENV=production</code>), a missing <code>ENCRYPTION_KEY</code> raises <code>ValueError</code>. In development, a temporary key is auto-generated.</p>
+<h3 id="path-resolver-path_resolverpy">Path Resolver (<code>path_resolver.py</code>)<a class="headerlink" href="#path-resolver-path_resolverpy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Centralized paths — never hardcode paths.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">paths</span> <span class="o">=</span> <span class="n">PathResolver</span><span class="p">()</span>  <span class="c1"># Global singleton</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># All paths derive from project root (parent of core/)</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">paths</span><span class="o">.</span><span class="n">memory_base</span><span class="p">()</span>              <span class="c1"># → memory/</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">paths</span><span class="o">.</span><span class="n">memory_dir</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>      <span class="c1"># → memory/{workspace}/</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">paths</span><span class="o">.</span><span class="n">workspaces_base</span><span class="p">()</span>          <span class="c1"># → workspaces/</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">paths</span><span class="o">.</span><span class="n">workspace_dir</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>        <span class="c1"># → workspaces/{name}/</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">paths</span><span class="o">.</span><span class="n">templates_dir</span><span class="p">()</span>            <span class="c1"># → templates/</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">paths</span><span class="o">.</span><span class="n">charts_dir</span><span class="p">()</span>               <span class="c1"># → charts/</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">paths</span><span class="o">.</span><span class="n">exports_dir</span><span class="p">()</span>              <span class="c1"># → exports/</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">paths</span><span class="o">.</span><span class="n">log_file</span><span class="p">()</span>                 <span class="c1"># → logs/morphix.log</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">paths</span><span class="o">.</span><span class="n">analytics_charts_dir</span><span class="p">()</span>     <span class="c1"># → charts/analytics/</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="n">paths</span><span class="o">.</span><span class="n">mcp_servers_file</span><span class="p">(</span><span class="n">ws</span><span class="p">)</span>       <span class="c1"># → workspaces/{ws}/mcp_servers.json</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="n">paths</span><span class="o">.</span><span class="n">workspace_tools_dir</span><span class="p">(</span><span class="n">ws</span><span class="p">)</span>    <span class="c1"># → workspaces/{ws}/tools/</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="n">paths</span><span class="o">.</span><span class="n">workspace_agents_dir</span><span class="p">(</span><span class="n">ws</span><span class="p">)</span>   <span class="c1"># → workspaces/{ws}/agents/</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="n">paths</span><span class="o">.</span><span class="n">workspace_workflows_dir</span><span class="p">(</span><span class="n">ws</span><span class="p">)</span><span class="c1"># → workspaces/{ws}/workflows/</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="n">paths</span><span class="o">.</span><span class="n">workspace_hooks_dir</span><span class="p">(</span><span class="n">ws</span><span class="p">)</span>    <span class="c1"># → workspaces/{ws}/hooks/</span>
+</code></pre></div>
+<h3 id="health-check-healthpy">Health Check (<code>health.py</code>)<a class="headerlink" href="#health-check-healthpy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>5 probes → 6 report rows.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">HealthReport</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">checks</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">all_ok</span><span class="p">:</span> <span class="nb">bool</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">ok</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">detail</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">extra</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">format</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span>  <span class="c1"># Table with ✅/❌ icons</span>
+</code></pre></div>
+<p>Probes:</p>
+<table>
+<thead>
+<tr>
+<th>Probe</th>
+<th>Function</th>
+<th>Checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Database</strong></td>
+<td><code>check_database()</code></td>
+<td><code>SELECT 1</code> on async engine</td>
+</tr>
+<tr>
+<td><strong>LLM</strong></td>
+<td><code>check_llm()</code></td>
+<td>HTTP GET to provider API endpoint</td>
+</tr>
+<tr>
+<td><strong>Redis</strong></td>
+<td><code>check_redis()</code></td>
+<td><code>PING</code> if configured</td>
+</tr>
+<tr>
+<td><strong>Filesystem</strong></td>
+<td><code>check_filesystem()</code></td>
+<td>MEMORY_BASE and TEMPLATES_DIR existence</td>
+</tr>
+<tr>
+<td><strong>Workspace</strong></td>
+<td><code>check_workspace()</code></td>
+<td>Active workflow integrity</td>
+</tr>
+</tbody>
+</table>
+<p>Usage: <code>poetry run python -m core.health</code></p>
+<h3 id="bootstrap-bootstrappy">Bootstrap (<code>bootstrap.py</code>)<a class="headerlink" href="#bootstrap-bootstrappy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Startup sequence for desktop mode.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">validate_config</span><span class="p">()</span>                          <span class="c1"># (bool, list[str]): fatal errors + warnings</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">init_backend</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span> <span class="n">on_progress</span><span class="p">)</span>  <span class="c1"># Init DB, workspace, agents</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">start_daemons</span><span class="p">(</span><span class="n">on_offline_changed</span><span class="p">)</span>     <span class="c1"># Launch Kairos daemon + OfflineManager</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop_daemons</span><span class="p">()</span>                        <span class="c1"># Cancel all background tasks</span>
+</code></pre></div>
+<p>Startup sequence:
+1. Load <code>.env</code> via <code>python-dotenv</code>
+2. <code>validate_config()</code> — check DATABASE_URL, API keys, encryption
+3. <code>init_backend()</code> — init async engine, switch workspace, load hooks
+4. <code>start_daemons()</code> — if <code>DAEMON_MODE=true</code>, launch Kairos daemon + offline check loop</p>
+<h3 id="feature-flags-feature_flagspy">Feature Flags (<code>feature_flags.py</code>)<a class="headerlink" href="#feature-flags-feature_flagspy" title="Permanent link">&para;</a></h3>
+<p>Kairos feature flags system (Claude Code style). Enabled/disabled via environment variables and runtime overrides.</p>
+<h3 id="circuit-breaker-circuit_breakerpy">Circuit Breaker (<code>circuit_breaker.py</code>)<a class="headerlink" href="#circuit-breaker-circuit_breakerpy" title="Permanent link">&para;</a></h3>
+<p>See <a href="../../security-model/">Security Model</a> for full details.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>CircuitBreaker (per provider)
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    failure_threshold: int = 5
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    recovery_timeout: float = 30.0
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    allow_request() → bool
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    record_success()
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    record_failure()
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    state → &quot;closed&quot; | &quot;open&quot; | &quot;half_open&quot;
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>CircuitBreakerRegistry
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    get(provider) → CircuitBreaker
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>    reset_all()
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    get_all_states() → dict
+</code></pre></div>
+<h3 id="rate-limiter-rate_limiterpy">Rate Limiter (<code>rate_limiter.py</code>)<a class="headerlink" href="#rate-limiter-rate_limiterpy" title="Permanent link">&para;</a></h3>
+<p>See <a href="../../security-model/">Security Model</a> for full details.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">RateLimiter</span><span class="p">(</span><span class="n">max_per_minute</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">max_per_hour</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acquire</span><span class="p">()</span> <span class="err">→</span> <span class="nb">bool</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_and_acquire</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span> <span class="err">→</span> <span class="nb">bool</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">remaining</span><span class="p">()</span> <span class="err">→</span> <span class="nb">int</span>
+</code></pre></div>
+<h3 id="token-counter-token_counterpy">Token Counter (<code>token_counter.py</code>)<a class="headerlink" href="#token-counter-token_counterpy" title="Permanent link">&para;</a></h3>
+<p>Lazy-loads <code>tiktoken</code> encoding (<code>cl100k_base</code>). First call loads (~1-2 MB, ~100ms). Subsequent calls return cached instance.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">get_encoding</span><span class="p">()</span>  <span class="c1"># → tiktoken.Encoding | None</span>
+</code></pre></div>
+<p>Returns <code>None</code> if <code>tiktoken</code> is not installed.</p>
+<h3 id="cache-manager-cache_managerpy">Cache Manager (<code>cache_manager.py</code>)<a class="headerlink" href="#cache-manager-cache_managerpy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Multi-provider prompt cache abstraction with per-workspace stats.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">CacheManager</span> <span class="p">(</span><span class="n">singleton</span><span class="p">)</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">track_usage</span><span class="p">(</span><span class="n">response</span><span class="p">,</span> <span class="n">workspace</span><span class="p">)</span>     <span class="c1"># Extract cache hit/miss from provider usage</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">get_stats</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span> <span class="err">→</span> <span class="nb">dict</span>          <span class="c1"># Hit rate, token savings</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">stabilize_messages</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span>         <span class="c1"># Keep prefix intact for DeepSeek disk caching</span>
+</code></pre></div>
+<p>Monitors <code>prompt_cache_hit_tokens</code> / <code>prompt_cache_miss_tokens</code> from provider response <code>usage</code> fields. Future-ready for Anthropic ephemeral caching and OpenAI automatic caching.</p>
+<h3 id="context-manager-context_managerpy">Context Manager (<code>context_manager.py</code>)<a class="headerlink" href="#context-manager-context_managerpy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Intelligent context window management for LLMs.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">ContextManager</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">CHARS_PER_TOKEN</span> <span class="o">=</span> <span class="mf">3.5</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">estimate_tokens</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span> <span class="err">→</span> <span class="nb">int</span>      <span class="c1"># Character-based estimation + 4 token overhead/msg</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">compress_history</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">)</span> <span class="err">→</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span>  <span class="c1"># Trim to fit budget</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">chunk_large_file</span><span class="p">(</span><span class="n">content</span><span class="p">,</span> <span class="n">file_path</span><span class="p">,</span> <span class="n">chunk_size</span><span class="p">)</span> <span class="err">→</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span>  <span class="c1"># Split large files</span>
+</code></pre></div>
+<h3 id="change-tracker-change_trackerpy">Change Tracker (<code>change_tracker.py</code>)<a class="headerlink" href="#change-tracker-change_trackerpy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Undo/redo for file operations.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">ChangeTracker</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="n">save_backup</span><span class="p">(</span><span class="n">file_path</span><span class="p">)</span>              <span class="c1"># Save pre-write snapshot</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">get_backup</span><span class="p">(</span><span class="n">file_path</span><span class="p">)</span> <span class="err">→</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="c1"># Retrieve backup</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">undo</span><span class="p">(</span><span class="n">file_path</span><span class="p">)</span> <span class="err">→</span> <span class="nb">bool</span>              <span class="c1"># Restore from backup</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">clear_backups</span><span class="p">(</span><span class="n">age_days</span><span class="o">=</span><span class="mi">7</span><span class="p">)</span>           <span class="c1"># Purge old backups</span>
+</code></pre></div>
+<p>Backups are stored with URL-encoded paths in a dedicated directory. Each <code>file_manager.write</code> saves a backup beforehand.</p>
+<h3 id="codebase-indexer-codebase_indexerpy">Codebase Indexer (<code>codebase_indexer.py</code>)<a class="headerlink" href="#codebase-indexer-codebase_indexerpy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Semantic indexing of project codebases with FAISS + disk cache.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">CODE_EXTENSIONS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;.py&quot;</span><span class="p">,</span> <span class="s2">&quot;.js&quot;</span><span class="p">,</span> <span class="s2">&quot;.ts&quot;</span><span class="p">,</span> <span class="s2">&quot;.tsx&quot;</span><span class="p">,</span> <span class="s2">&quot;.jsx&quot;</span><span class="p">,</span> <span class="s2">&quot;.rs&quot;</span><span class="p">,</span> <span class="s2">&quot;.go&quot;</span><span class="p">,</span> <span class="s2">&quot;.java&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>                    <span class="s2">&quot;.c&quot;</span><span class="p">,</span> <span class="s2">&quot;.cpp&quot;</span><span class="p">,</span> <span class="s2">&quot;.h&quot;</span><span class="p">,</span> <span class="s2">&quot;.hpp&quot;</span><span class="p">,</span> <span class="s2">&quot;.rb&quot;</span><span class="p">,</span> <span class="s2">&quot;.php&quot;</span><span class="p">,</span> <span class="s2">&quot;.swift&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">}</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">CodebaseIndexer</span><span class="p">:</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;main&quot;</span><span class="p">,</span> <span class="n">project_root</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="n">index_project</span><span class="p">(</span><span class="n">patterns</span><span class="p">,</span> <span class="n">max_files</span><span class="p">,</span> <span class="n">force</span><span class="p">,</span> <span class="n">progress_callback</span><span class="p">)</span> <span class="err">→</span> <span class="nb">int</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    <span class="n">search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span> <span class="err">→</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="n">find_relevant_code</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">max_results</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span> <span class="err">→</span> <span class="nb">str</span>
+</code></pre></div>
+<p>Chunks files by function/class boundaries where possible. Uses file hash for cache invalidation.</p>
+<h3 id="embedding-provider-embedding_providerpy">Embedding Provider (<code>embedding_provider.py</code>)<a class="headerlink" href="#embedding-provider-embedding_providerpy" title="Permanent link">&para;</a></h3>
+<p>See <a href="../../memory-system/">Memory System</a> for full details.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">EmbeddingProvider</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">_model_name</span> <span class="o">=</span> <span class="s2">&quot;intfloat/multilingual-e5-large&quot;</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">get_instance</span><span class="p">()</span> <span class="err">→</span> <span class="n">SentenceTransformer</span> <span class="o">|</span> <span class="kc">None</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="n">encode</span><span class="p">(</span><span class="n">text</span><span class="p">)</span> <span class="err">→</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">wait_until_ready</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">60</span><span class="p">)</span> <span class="err">→</span> <span class="nb">bool</span>
+</code></pre></div>
+<h3 id="faiss-indexer-faiss_indexerpy">FAISS Indexer (<code>faiss_indexer.py</code>)<a class="headerlink" href="#faiss-indexer-faiss_indexerpy" title="Permanent link">&para;</a></h3>
+<p>See <a href="../../memory-system/">Memory System</a> for full details.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">FAISSIndexer</span><span class="p">(</span><span class="n">dimension</span><span class="o">=</span><span class="mi">1024</span><span class="p">)</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="n">add</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span> <span class="err">→</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">remove</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">rebuild_index</span><span class="p">()</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">save</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span> <span class="o">/</span> <span class="n">load</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="git-operations-git_operationspy">Git Operations (<code>git_operations.py</code>)<a class="headerlink" href="#git-operations-git_operationspy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Centralized git helper for auto-commit and common operations.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">auto_commit</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span> <span class="n">project_root</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">message</span><span class="o">=</span><span class="s2">&quot;Auto-commit&quot;</span><span class="p">)</span> <span class="err">→</span> <span class="nb">dict</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>    <span class="c1"># git init → git add -A → git commit -m message</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">smart_auto_commit</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span> <span class="n">project_root</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">task_description</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">files_written</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="err">→</span> <span class="nb">dict</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="c1"># Generates commit message via LLM based on task description</span>
+</code></pre></div>
+<p>Uses <code>safe_tool_call</code> to invoke <code>git_manager</code> tool. Supports LLM-generated commit messages based on the task context.</p>
+<h3 id="workspaces-workspacespy">Workspaces (<code>workspaces.py</code>)<a class="headerlink" href="#workspaces-workspacespy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>List, create, switch, delete workspaces.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Workspaces</span><span class="p">:</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    <span class="n">current</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;main&quot;</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_workspaces</span><span class="p">()</span> <span class="err">→</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">switch_workspace</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">retries</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="err">→</span> <span class="nb">bool</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_workspace</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="err">→</span> <span class="nb">bool</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">delete_workspace</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="err">→</span> <span class="nb">bool</span>
+</code></pre></div>
+<p>On <code>switch_workspace</code>:
+1. Creates PostgreSQL schema if not exists
+2. Creates tables in schema
+3. Sets <code>search_path</code> via <code>set_async_schema()</code>
+4. Copies templates (agents, workflows) if first switch
+5. Switches memory workspace
+6. Updates workflow state
+7. Connects MCP servers
+8. Loads workspace tools and hooks</p>
+<h3 id="workflow-state-workflow_statepy">Workflow State (<code>workflow_state.py</code>)<a class="headerlink" href="#workflow-state-workflow_statepy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Tracks the active workflow per workspace.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">set_active_workflow</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>      <span class="c1"># Set for current workspace</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">get_active_workflow</span><span class="p">()</span> <span class="err">→</span> <span class="nb">str</span>    <span class="c1"># Get for current workspace (defaults to settings.default_workflow)</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">switch_workspace</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>    <span class="c1"># Update current workspace without losing saved preferences</span>
+</code></pre></div>
+<p>Stores workflow preferences in memory across workspace switches.</p>
+<h3 id="metrics-metricspy">Metrics (<code>metrics.py</code>)<a class="headerlink" href="#metrics-metricspy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Cumulative system usage counters.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">Metrics</span> <span class="p">(</span><span class="n">singleton</span><span class="p">):</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="n">total_tokens</span><span class="p">:</span> <span class="nb">int</span>           <span class="c1"># LLM tokens consumed</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="n">total_workflows</span><span class="p">:</span> <span class="nb">int</span>        <span class="c1"># Workflows started</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">completed_workflows</span><span class="p">:</span> <span class="nb">int</span>    <span class="c1"># Successful completions</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">failed_workflows</span><span class="p">:</span> <span class="nb">int</span>       <span class="c1"># Failed workflows</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="n">tool_calls</span><span class="p">:</span> <span class="nb">int</span>             <span class="c1"># Total tool invocations</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>    <span class="n">llm_calls</span><span class="p">:</span> <span class="nb">int</span>              <span class="c1"># Total LLM calls</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>    <span class="n">rate_limited</span><span class="p">:</span> <span class="nb">int</span>           <span class="c1"># Times rate-limited</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>    <span class="n">cache_hit_tokens</span><span class="p">:</span> <span class="nb">int</span>       <span class="c1"># DeepSeek cache hits</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>    <span class="n">cache_miss_tokens</span><span class="p">:</span> <span class="nb">int</span>      <span class="c1"># DeepSeek cache misses</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>    <span class="n">record_workflow_completed</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">tool_calls</span><span class="p">)</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>    <span class="n">record_rate_limited</span><span class="p">()</span>
+<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a>    <span class="n">get_report</span><span class="p">()</span> <span class="err">→</span> <span class="nb">dict</span>
+</code></pre></div>
+<h3 id="lru-cache-lru_cachepy">LRU Cache (<code>lru_cache.py</code>)<a class="headerlink" href="#lru-cache-lru_cachepy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Thread-safe, TTL-based LRU cache for LLM response caching.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">LRUCache</span><span class="p">(</span><span class="n">max_size</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="mi">300</span><span class="p">)</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>    <span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="err">→</span> <span class="n">Any</span> <span class="o">|</span> <span class="kc">None</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>    <span class="nb">set</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>    <span class="n">invalidate</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="n">clear</span><span class="p">()</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>    <span class="n">size</span> <span class="err">→</span> <span class="nb">int</span>
+</code></pre></div>
+<p>Used by <code>TaskAnalyzer</code> and <code>AgentRouter</code> to cache decomposition and routing results.</p>
+<h3 id="utils-utilspy">Utils (<code>utils.py</code>)<a class="headerlink" href="#utils-utilspy" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">clean_llm_response</span><span class="p">(</span><span class="n">response</span><span class="p">)</span> <span class="err">→</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Strip LLM response down to plain text.</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="sd">    Handles: OpenAI objects, coroutine detection, watermarks, JSON blocks.&quot;&quot;&quot;</span>
+</code></pre></div>
+<h3 id="models-modelspy">Models (<code>models.py</code>)<a class="headerlink" href="#models-modelspy" title="Permanent link">&para;</a></h3>
+<p>SQLModel definitions for the database:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Conversation</span><span class="p">(</span><span class="n">SQLModel</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">created_at</span><span class="p">:</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">tags</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">workflow_id</span><span class="p">:</span> <span class="nb">int</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">Message</span><span class="p">(</span><span class="n">SQLModel</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">conversation_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">role</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">timestamp</span><span class="p">:</span> <span class="n">datetime</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">Workflow</span><span class="p">(</span><span class="n">SQLModel</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">subtasks</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">status</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">scorecard</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">created_at</span><span class="p">:</span> <span class="n">datetime</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="k">class</span><span class="w"> </span><span class="nc">User</span><span class="p">(</span><span class="n">SQLModel</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">username</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">password_hash</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a>
+<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="k">class</span><span class="w"> </span><span class="nc">PausedSession</span><span class="p">(</span><span class="n">SQLModel</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a>    <span class="c1"># Persisted state for clarification-request pauses</span>
+</code></pre></div>
+<h3 id="hooks-registry-hooks_registrypy">Hooks Registry (<code>hooks_registry.py</code>)<a class="headerlink" href="#hooks-registry-hooks_registrypy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>6 interception points for tool call lifecycle.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">HookContext</span><span class="p">:</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>    <span class="n">hook_point</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># on_before_tool, on_after_tool, on_tool_error, ...</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>    <span class="n">tool_name</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>    <span class="n">parameters</span><span class="p">:</span> <span class="nb">dict</span>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>    <span class="n">role</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>    <span class="n">result</span><span class="p">:</span> <span class="n">Any</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a>    <span class="n">error</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>    <span class="n">duration</span><span class="p">:</span> <span class="nb">float</span>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a>    <span class="n">attempt</span><span class="p">:</span> <span class="nb">int</span>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a>    <span class="n">workspace</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a>    <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a>
+<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="k">class</span><span class="w"> </span><span class="nc">HooksRegistry</span><span class="p">:</span>
+<a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a>    <span class="n">register</span><span class="p">(</span><span class="n">hook_point</span><span class="p">:</span> <span class="nb">str</span><span class="p">)(</span><span class="nb">callable</span><span class="p">)</span>   <span class="c1"># Decorator-based registration</span>
+<a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a>    <span class="n">execute</span><span class="p">(</span><span class="n">hook_point</span><span class="p">,</span> <span class="n">context</span><span class="p">)</span>          <span class="c1"># Fire all hooks for a point</span>
+<a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a>    <span class="n">clear</span><span class="p">()</span>                               <span class="c1"># Remove all hooks</span>
+</code></pre></div>
+<p><strong>Hook points:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Hook point</th>
+<th>Trigger</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>on_before_tool</code></td>
+<td>Before tool execution</td>
+</tr>
+<tr>
+<td><code>on_after_tool</code></td>
+<td>After successful tool execution</td>
+</tr>
+<tr>
+<td><code>on_tool_error</code></td>
+<td>After tool failure</td>
+</tr>
+<tr>
+<td><code>on_permission_denied</code></td>
+<td>When tool call is blocked by security</td>
+</tr>
+<tr>
+<td><code>on_token_budget_exceeded</code></td>
+<td>When context exceeds limit</td>
+</tr>
+<tr>
+<td><code>on_tools_disabled</code></td>
+<td>When tool execution is globally disabled</td>
+</tr>
+</tbody>
+</table>
+<h3 id="hook-loader-hook_loaderpy">Hook Loader (<code>hook_loader.py</code>)<a class="headerlink" href="#hook-loader-hook_loaderpy" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Dynamic loading of workspace hook modules.</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_global_hooks</span><span class="p">()</span>                    <span class="c1"># Load from hooks/ directory</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_workspace_hooks</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>        <span class="c1"># Load from workspaces/{name}/hooks/</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">unload_workspace_hooks</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>      <span class="c1"># De-register workspace hooks</span>
+</code></pre></div>
+<p>Hooks are <code>.py</code> files loaded dynamically via <code>importlib</code>, using the <code>@hooks_registry.register("hook_point")</code> decorator pattern.</p>
+<h2 id="subsystems">Subsystems<a class="headerlink" href="#subsystems" title="Permanent link">&para;</a></h2>
+<h3 id="memory-memory-manager"><code>memory/</code> — Memory Manager<a class="headerlink" href="#memory-memory-manager" title="Permanent link">&para;</a></h3>
+<p>See <a href="../../memory-system/">Memory System</a> for full documentation.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>memory/manager.py           # MemoryManager singleton (CRUD, self-healing, workspace isolation)
+</code></pre></div>
+<h3 id="security-security"><code>security/</code> — Security<a class="headerlink" href="#security-security" title="Permanent link">&para;</a></h3>
+<p>See <a href="../../security-model/">Security Model</a> for full documentation.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>security/undercover_mode.py      # UndercoverMode singleton (query blocking, output scrubbing)
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>security/anti_distillation.py    # WatermarkRotator, DistillationTracker, HoneypotInjector
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>security/frustration_detector.py # FrustrationDetector (regex patterns, calming prompts)
+</code></pre></div>
+<h3 id="mcp-mcp-protocol"><code>mcp/</code> — MCP Protocol<a class="headerlink" href="#mcp-mcp-protocol" title="Permanent link">&para;</a></h3>
+<p>See <a href="../../mcp-integration/">MCP Integration</a> for full documentation.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>mcp/server.py     # MCPServer — expose Morphix tools over stdio JSON-RPC
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>mcp/client.py     # MCPClient — connect to external MCP servers
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>mcp/adapter.py    # Format conversion (Morphix ↔ MCP)
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>mcp/config.py     # MCPServerConfig, load_mcp_servers()
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>mcp/protocol.py   # JSON-RPC 2.0 framing, read/write helpers
+</code></pre></div>
+<h3 id="sandbox-code-execution"><code>sandbox/</code> — Code Execution<a class="headerlink" href="#sandbox-code-execution" title="Permanent link">&para;</a></h3>
+<p>See <a href="../../security-model/">Security Model</a> for full details.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>sandbox/restricted_executor.py   # RestrictedExecutor with SAFE_MODULES allowlist
+</code></pre></div>
+<h3 id="hooks-hook-implementations"><code>hooks/</code> — Hook Implementations<a class="headerlink" href="#hooks-hook-implementations" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>hooks/audit.py              # Logs every tool call to memory for audit trail
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>hooks/distillation_guard.py # Additional distillation checks at the hook level
+</code></pre></div>
+<h3 id="repositories-data-access"><code>repositories/</code> — Data Access<a class="headerlink" href="#repositories-data-access" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>repositories/conversation_repository.py  # Conversation + Message CRUD operations
+</code></pre></div>
+<h2 id="layer-boundaries">Layer Boundaries<a class="headerlink" href="#layer-boundaries" title="Permanent link">&para;</a></h2>
+<p>The <code>core/</code> layer:</p>
+<ul>
+<li><strong>Imports from</strong>: Standard library, third-party libraries (sqlalchemy, pydantic, faiss, etc.)</li>
+<li><strong>Does NOT import from</strong>: <code>desktop/</code> (UI), <code>tools/</code> (individual tool implementations)</li>
+<li><strong>Is imported by</strong>: <code>llm/</code>, <code>agents/</code>, <code>tools/</code> (registry/loader), <code>orchestration/</code>, <code>desktop/services/</code></li>
+<li><strong>Exposes</strong>: Global singletons (<code>settings</code>, <code>memory</code>, <code>paths</code>, <code>undercover</code>, <code>metrics</code>)</li>
+</ul>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="June 25, 2026 12:54:45 UTC">June 25, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="June 24, 2026 11:48:28 UTC">June 24, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "navigation.expand", "navigation.indexes", "navigation.top", "search.suggest", "search.highlight", "content.tabs", "content.code.copy", "content.code.annotate"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
