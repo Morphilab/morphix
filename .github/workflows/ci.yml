@@ -26,24 +26,23 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://morphix:morphix@localhost:5432/morphix
-      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
-      PASSWORD_HASH: ${{ secrets.PASSWORD_HASH }}
+      ENCRYPTION_KEY: "ci-test-key-not-for-production-32char!"
+      PASSWORD_HASH: "$2b$12$ci-test-hash-not-for-production"
       UNDERCOVER_MODE: "false"
       DAEMON_MODE: "false"
       OFFLINE_MODE: "true"
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'poetry'
+      - uses: actions/checkout@v5
 
       - name: Install Poetry
         run: pipx install poetry
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'poetry'
 
       - name: Install dependencies
         run: poetry install --with dev,docs
@@ -61,4 +60,4 @@ jobs:
         run: poetry run mkdocs build --strict
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
