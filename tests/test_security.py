@@ -14,10 +14,11 @@ def undercover_instance():
     """UndercoverMode con memoria mockeada."""
     with patch("core.memory.manager.memory.write", new_callable=AsyncMock):
         with patch("core.feature_flags.kairos.get", return_value=True):
-            instance = UndercoverMode()
-            instance._instance = None  # Reset singleton para tests
-            instance.blocked_attempts = 0
-            yield instance
+            with patch("core.security.undercover_mode.settings.undercover_mode", True):
+                instance = UndercoverMode()
+                instance._instance = None  # Reset singleton para tests
+                instance.blocked_attempts = 0
+                yield instance
 
 
 @pytest.mark.asyncio
