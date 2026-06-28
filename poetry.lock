@@ -2197,14 +2197,14 @@ min-versions = ["babel (==2.9.0)", "click (==7.0)", "colorama (==0.4) ; platform
 
 [[package]]
 name = "mkdocs-autorefs"
-version = "1.4.4"
+version = "1.3.1"
 description = "Automatically link across pages in MkDocs."
 optional = false
 python-versions = ">=3.9"
 groups = ["docs"]
 files = [
-    {file = "mkdocs_autorefs-1.4.4-py3-none-any.whl", hash = "sha256:834ef5408d827071ad1bc69e0f39704fa34c7fc05bc8e1c72b227dfdc5c76089"},
-    {file = "mkdocs_autorefs-1.4.4.tar.gz", hash = "sha256:d54a284f27a7346b9c38f1f852177940c222da508e66edc816a0fa55fc6da197"},
+    {file = "mkdocs_autorefs-1.3.1-py3-none-any.whl", hash = "sha256:18c504ae4d3ee7f344369bb26cb31d4105569ee252aab7d75ec2734c2c8b0474"},
+    {file = "mkdocs_autorefs-1.3.1.tar.gz", hash = "sha256:a6d30cbcccae336d622a66c2418a3c92a8196b69782774529ad441abb23c0902"},
 ]
 
 [package.dependencies]
@@ -4926,4 +4926,4 @@ watchmedo = ["PyYAML (>=3.10)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "a3adfc46d90456123ffb8cbdf6fabdb21f9bc0b82f00700035c19620c07c9d91"
+content-hash = "0be99689467ac1488603601b1641b243992254719d1776130ed282548811fec1"
