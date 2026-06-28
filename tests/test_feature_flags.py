@@ -99,7 +99,10 @@ class TestKairosFlagsSet:
 class TestKairosFlagsDaemon:
     @pytest.mark.asyncio
     async def test_daemon_loop_writes_heartbeat(self):
-        with patch("core.config.settings", _make_settings()):
+        with (
+            patch("core.config.settings", _make_settings()),
+            patch.dict("os.environ", {"DAEMON_MODE": "true"}),
+        ):
             k = KairosFlags()
             mock_memory = MagicMock()
             mock_memory.write_system = AsyncMock()

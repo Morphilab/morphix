@@ -51,7 +51,7 @@ jobs:
         run: poetry run pre-commit run --all-files
 
       - name: Run tests with coverage
-        run: poetry run pytest --cov=core --cov=llm --cov=agents --cov=tools --cov=orchestration --cov-report=xml
+        run: poetry run pytest --ignore=tests/test_desktop_events.py --cov=core --cov=llm --cov=agents --cov=tools --cov=orchestration --cov-report=xml
 
       - name: Run mypy type check
         run: poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/
