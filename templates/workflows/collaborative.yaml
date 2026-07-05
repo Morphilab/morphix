@@ -5,6 +5,7 @@ decomposition: panel
 execution: parallel_rounds
 max_parallel: 2
 rounds: 3
+round_timeout: 300
 retry_on_failure: false
 retry_max: 0
 moderator: "moderador"

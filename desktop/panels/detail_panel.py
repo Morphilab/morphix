@@ -17,13 +17,11 @@ if TYPE_CHECKING:
 
 
 def build_detail_panel(tab: MaestroTab) -> QTabWidget:
-    # --- Detail panel: static tabs (Agents / Diagram / Log / Bash) ---
+    # --- Detail panel: static tabs (Diagram / Log / Bash) ---
     tabs = QTabWidget()
     tabs.setStyleSheet(StyleFactory.detail_tabs())
     tab._detail_tabs = tabs
     log_style = StyleFactory.text_browser_log()
-
-    tabs.addTab(tab.agent_panel, "Agentes")
 
     tab._diagram_view = QTextBrowser()
     tab._diagram_view.setReadOnly(True)

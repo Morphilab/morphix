@@ -167,6 +167,11 @@ class ModelsController:
 
         client, model, temp = LLMProvider.get_client(role, temperature)
 
+        from core.config import settings as _settings
+
+        role_config = _settings.model_roles.get(role, _settings.model_roles["default"])
+        max_tokens = role_config.get("max_tokens")
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 if isinstance(client, OpenAI):
@@ -176,17 +181,22 @@ class ModelsController:
                         "temperature": temp,
                         "stream": stream,
                     }
+                    if max_tokens:
+                        call_kwargs["max_tokens"] = max_tokens
                     if tools:
                         call_kwargs["tools"] = tools
                         call_kwargs["tool_choice"] = tool_choice
                     call_kwargs.update(kwargs)
                     response = client.chat.completions.create(**call_kwargs)
                 else:
+                    ollama_options: dict[str, Any] = {"temperature": temp}
+                    if max_tokens:
+                        ollama_options["num_predict"] = max_tokens
                     response = client.chat(
                         model=model,
                         messages=messages,
                         stream=stream,
-                        options={"temperature": temp},
+                        options=ollama_options,
                         **kwargs,
                     )
 
@@ -293,13 +303,34 @@ class ModelsController:
             try:
                 client, model, temp = LLMProvider.get_async_client(role, temperature)
 
+                from core.config import settings as __app_settings
+
+                _role_config = __app_settings.model_roles.get(
+                    role, __app_settings.model_roles["default"]
+                )
+                _max_tokens = _role_config.get("max_tokens")
+
                 if isinstance(client, AsyncOpenAI):
                     async for chunk in self._stream_openai_async(
-                        client, model, messages, temp, tools, tool_choice, **kwargs
+                        client,
+                        model,
+                        messages,
+                        temp,
+                        tools,
+                        tool_choice,
+                        max_tokens=_max_tokens,
+                        **kwargs,
                     ):
                         yield chunk
                 else:
-                    async for chunk in self._stream_ollama(client, model, messages, temp, **kwargs):
+                    async for chunk in self._stream_ollama(
+                        client,
+                        model,
+                        messages,
+                        temp,
+                        max_tokens=_max_tokens,
+                        **kwargs,
+                    ):
                         yield chunk
                 cb.record_success()
                 return  # Success — exit retry loop
@@ -418,7 +449,7 @@ class ModelsController:
                             )
 
     async def _stream_ollama(
-        self, client, model, messages, temp, **kwargs
+        self, client, model, messages, temp, max_tokens=None, **kwargs
     ) -> AsyncGenerator[StreamChunk, None]:
         """Streaming desde Ollama API con cola para streaming real.
 
@@ -433,11 +464,14 @@ class ModelsController:
 
         def _produce_chunks():
             try:
+                ollama_options: dict[str, Any] = {"temperature": temp}
+                if max_tokens:
+                    ollama_options["num_predict"] = max_tokens
                 response = client.chat(
                     model=model,
                     messages=messages,
                     stream=True,
-                    options={"temperature": temp},
+                    options=ollama_options,
                     **kwargs,
                 )
                 for chunk in response:
