@@ -307,7 +307,7 @@ class MaestroTab(QWidget):
 
     def _on_agent_stream(self, agent_name: str, label: str, chunk: str):
         # Ensure debate section is visible in the chat
-        if self.debate_section.parent() is None:
+        if not self.debate_section.isVisible():
             self._add_debate_section()
         self.debate_section.append_chunk(agent_name, chunk)
 
@@ -318,6 +318,7 @@ class MaestroTab(QWidget):
         """Insert the debate section into the chat layout before the stretch."""
         idx = self.chat_layout.count() - 1  # before stretch
         self.chat_layout.insertWidget(idx, self.debate_section)
+        self.debate_section.show()
         self.chat_container.adjustSize()
         QTimer.singleShot(50, self._scroll_to_bottom)
 
@@ -458,6 +459,7 @@ class MaestroTab(QWidget):
                 break
         if debate_idx is not None:
             self.chat_layout.takeAt(debate_idx)
+            self.debate_section.hide()
         # Clear remaining chat widgets
         while self.chat_layout.count() > 0:
             item = self.chat_layout.takeAt(0)
