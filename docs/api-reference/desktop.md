@@ -14,5 +14,5 @@
 ::: desktop.services.analytics_service
 ::: desktop.services.history_service
 ::: desktop.widgets.chat_bubble
-::: desktop.widgets.agent_panel
+::: desktop.widgets.debate_section
 ::: desktop.widgets.bash_panel
