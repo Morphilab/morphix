@@ -76,3 +76,62 @@ async def test_execute_print_preferred_over_expression():
     """Si hay print, se usa esa salida (no se pisa con el valor de la expresión)."""
     result = await CodeExecutor.execute("print('hola')\n42")
     assert "hola" in result.get("text", "")
+
+
+# ==================== SAFE_MODULES restriction tests ====================
+
+
+@pytest.mark.asyncio
+async def test_safe_ast_parse_allowed():
+    """ast.parse está permitido en sandbox."""
+    result = await CodeExecutor.execute("import ast\nprint(type(ast.parse('x = 1')))")
+    assert result.get("success") is True
+    assert "ast.Module" in result.get("text", "")
+
+
+@pytest.mark.asyncio
+async def test_safe_ast_walk_blocked():
+    """ast.walk no está disponible en sandbox (SimpleNamespace)."""
+    result = await CodeExecutor.execute("import ast\nast.walk(None)\nprint('should not reach')")
+    assert result.get("success") is False
+
+
+@pytest.mark.asyncio
+async def test_safe_sqlite3_memory_allowed():
+    """sqlite3 con :memory: funciona en sandbox."""
+    result = await CodeExecutor.execute(
+        "import sqlite3\nconn = sqlite3.connect(':memory:')\n"
+        "conn.execute('CREATE TABLE t(x)')\n"
+        "conn.execute('INSERT INTO t VALUES(42)')\n"
+        "rows = conn.execute('SELECT * FROM t').fetchall()\n"
+        "print(rows)\nconn.close()"
+    )
+    assert result.get("success") is True
+    assert "42" in result.get("text", "")
+
+
+@pytest.mark.asyncio
+async def test_safe_sqlite3_file_blocked():
+    """sqlite3.connect a archivo físico lanza PermissionError."""
+    result = await CodeExecutor.execute('import sqlite3\nconn = sqlite3.connect("test.db")')
+    assert result.get("success") is False
+    assert (
+        "memory" in result.get("text", "").lower() or "permission" in result.get("text", "").lower()
+    )
+
+
+@pytest.mark.asyncio
+async def test_safe_io_stringio_allowed():
+    """io.StringIO está permitido en sandbox."""
+    result = await CodeExecutor.execute(
+        "import io\nbuf = io.StringIO()\nbuf.write('hello')\nbuf.seek(0)\nprint(buf.read())"
+    )
+    assert result.get("success") is True
+    assert "hello" in result.get("text", "")
+
+
+@pytest.mark.asyncio
+async def test_safe_io_bytesio_blocked():
+    """io.BytesIO no está disponible en sandbox."""
+    result = await CodeExecutor.execute("import io\nbuf = io.BytesIO()\nprint('should not reach')")
+    assert result.get("success") is False

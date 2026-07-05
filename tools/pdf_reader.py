@@ -6,6 +6,7 @@ import logging
 import pdfplumber
 
 from agents.audit import log_operation
+from core.config import settings
 from core.path_resolver import paths
 from tools.registry import tools_registry
 
@@ -34,11 +35,13 @@ class PDFReader:
 @tools_registry.register("pdf_read")
 async def pdf_read_tool(
     path: str,
-    workspace: str = "main",
+    workspace: str | None = None,
     project_root: str | None = None,
     **kwargs,
 ) -> str:
     """Extrae texto de archivos PDF con validación de path traversal."""
+    if workspace is None:
+        workspace = settings.active_workspace
     base = paths.code_projects_dir(workspace, project_root).resolve()
 
     resolved = (base / path).resolve()

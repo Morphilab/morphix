@@ -5,6 +5,7 @@ Workflow Finalizer — conversation persistence, export, and structured profile 
 import json
 import logging
 
+from core.config import settings
 from core.database import get_async_session
 from core.memory.manager import memory as memory_manager
 from core.models import Conversation, Workflow
@@ -67,7 +68,9 @@ Responde solo el JSON:"""
                     try:
                         facts = json.loads(raw[start:end])
                     except json.JSONDecodeError:
-                        pass
+                        logger.warning(
+                            "Failed to parse facts JSON from subtask response", exc_info=True
+                        )
 
         if not isinstance(facts, dict):
             return {}
@@ -91,10 +94,12 @@ async def finalize_workflow(
     G: nx.DiGraph | None,
     events,
     project_root: str | None = None,
-    workspace: str = "main",
+    workspace: str | None = None,
     files_written: list[str] | None = None,
     conversation_id: int | None = None,
 ):
+    if workspace is None:
+        workspace = settings.active_workspace
     conv_id = None
 
     # 1. Save conversation + user message + assistant response

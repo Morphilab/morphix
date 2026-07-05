@@ -52,7 +52,11 @@ CACHE_FILE = "codebase_index.json"
 class CodebaseIndexer:
     """Indexa un codebase con FAISS para búsqueda semántica de código relevante."""
 
-    def __init__(self, workspace: str = "main", project_root: str | None = None):
+    def __init__(self, project_root: str | None = None, workspace: str | None = None):
+        if workspace is None:
+            from core.config import settings
+
+            workspace = settings.active_workspace
         self.workspace = workspace
         self.project_root = project_root
         self._index_built = False
@@ -198,7 +202,7 @@ class CodebaseIndexer:
                             }
                         )
                     except Exception:
-                        pass
+                        logger.warning("Failed to report indexer progress", exc_info=True)
 
         # Single rebuild with all new chunks at once
         if pending_chunks:

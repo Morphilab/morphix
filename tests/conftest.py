@@ -13,7 +13,7 @@ pytest_plugins = ["pytest_asyncio"]
 
 
 @pytest.fixture(autouse=True)
-def _isolate_db_engine():
+def isolated_db_engine():
     """Drop the global async DB engine after every test.
 
     pytest-asyncio (auto mode) runs each test in a fresh function-scoped event

@@ -11,6 +11,7 @@ File Manager - Versión Profesional y Robusta
 import asyncio
 import logging
 
+from core.config import settings
 from core.path_resolver import paths
 
 logger = logging.getLogger(__name__)
@@ -25,10 +26,12 @@ class FileManager:
         path: str | None = None,
         file_path: str | None = None,  # alias para compatibilidad con LLM
         content: str = "",
-        workspace: str = "main",
+        workspace: str | None = None,
         project_root: str | None = None,
         **kwargs,
     ) -> str:
+        if workspace is None:
+            workspace = settings.active_workspace
         # Normalize: accept file_path as alias for path
         if file_path and not path:
             path = file_path
@@ -136,7 +139,7 @@ async def file_manager_tool(action: str = "", **kwargs) -> str:
         if project_root:
             from core.path_resolver import paths
 
-            workspace = kwargs.get("workspace", "main")
+            workspace = kwargs.get("workspace", settings.active_workspace)
             proj_dir = paths.memory_dir(workspace) / project_root
             if proj_dir.exists():
                 files = [str(p.relative_to(proj_dir)) for p in proj_dir.rglob("*") if p.is_file()]

@@ -1,4 +1,3 @@
-# features/maestro/services/workflow_utils.py
 """
 Workflow Utils - Funciones compartidas de limpieza y scorecard
 """
@@ -37,7 +36,7 @@ def generate_scorecard(
     enc: Any = None,
 ) -> dict:
     """Genera scorecard con tokens reales de ToolOrchestrator"""
-    duration = round(time.time() - start_time, 2)
+    duration = round(time.monotonic() - start_time, 2)
 
     total_tokens = 0
     for r in results.values():

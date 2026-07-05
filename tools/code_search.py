@@ -5,6 +5,7 @@ import logging
 import re
 
 from agents.audit import log_operation
+from core.config import settings
 from core.path_resolver import paths
 from tools.registry import tools_registry
 
@@ -16,7 +17,7 @@ async def _code_search_tool(
     path: str = ".",
     include: str = "*.py",
     max_results: int = 20,
-    workspace: str = "main",
+    workspace: str | None = None,
     project_root: str | None = None,
     **kwargs,
 ) -> str:
@@ -33,6 +34,8 @@ async def _code_search_tool(
     Returns:
         Resultados formateados: archivo:línea → contenido.
     """
+    if workspace is None:
+        workspace = settings.active_workspace
     base = paths.memory_dir(workspace)
     if project_root:
         base = base / project_root

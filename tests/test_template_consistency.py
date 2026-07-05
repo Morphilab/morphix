@@ -107,6 +107,44 @@ def test_architect_is_allowed_in_coordinated_workflow():
     assert "architect" in allowed, f"architect not in coordinated.yaml agents.allowed: {allowed}"
 
 
+def test_collaborative_has_tools_allowed_with_minimum_count():
+    """Collaborative workflow must restrict tool access for debate safety."""
+    wf_file = paths.templates_workflows_dir() / "collaborative.yaml"
+    assert wf_file.exists(), "collaborative.yaml not found"
+
+    template = yaml.safe_load(wf_file.read_text(encoding="utf-8"))
+    allowed = template.get("tools", {}).get("allowed")
+    assert allowed is not None, "collaborative.yaml must define tools.allowed"
+    assert isinstance(allowed, list), "tools.allowed must be a list"
+    assert (
+        len(allowed) >= 3
+    ), f"collaborative.yaml must have at least 3 allowed tools, got {len(allowed)}: {allowed}"
+
+
+def test_development_yaml_includes_code_search():
+    from pathlib import Path
+
+    import yaml
+
+    template_path = Path("templates/workflows/development.yaml")
+    with open(template_path) as f:
+        template = yaml.safe_load(f)
+    tools = template["tools"]["allowed"]
+    assert "code_search" in tools
+
+
+def test_development_yaml_has_retry_enabled():
+    from pathlib import Path
+
+    import yaml
+
+    template_path = Path("templates/workflows/development.yaml")
+    with open(template_path) as f:
+        template = yaml.safe_load(f)
+    assert template["retry_on_failure"] is True
+    assert template["retry_max"] == 2
+
+
 def test_workflow_templates_reference_registered_tools():
     valid = _valid_tools()
 

@@ -11,6 +11,7 @@ from pathlib import Path
 import jedi
 
 from agents.audit import log_operation
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -202,10 +203,12 @@ async def lsp_manager_tool(
     line: int = 0,
     character: int = 0,
     project_root: str | None = None,
-    workspace: str = "main",
+    workspace: str | None = None,
     **kwargs,
 ) -> str:
     """Herramienta LSP profesional - usa project_root si se proporciona."""
+    if workspace is None:
+        workspace = settings.active_workspace
     if not action:
         return "❌ lsp_manager requiere un parámetro 'action' (diagnostics, definition, hover, references)"
     if not project_root:

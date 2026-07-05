@@ -475,7 +475,7 @@ async def execute_agent_loop(
     history: list | None = None,
     allowed_tools: list | None = None,
     project_root: str | None = None,
-    workspace: str = "main",
+    workspace: str | None = None,
     extra_context: str = "",
     on_stream_chunk=None,
     session: Session | None = None,
@@ -493,6 +493,8 @@ async def execute_agent_loop(
         config: Configuración inyectable (opcional). Si es None, usa valores
                 por defecto del sistema.
     """
+    if workspace is None:
+        workspace = settings.active_workspace
     if config is None:
         config = AgentLoopConfig.from_settings()
 

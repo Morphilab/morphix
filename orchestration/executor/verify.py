@@ -2,6 +2,7 @@
 
 import logging
 
+from core.config import settings
 from core.git_operations import auto_commit
 from core.path_resolver import paths
 from core.utils import clean_llm_response
@@ -35,9 +36,11 @@ async def _run_functional_verification(
     project_root: str | None,
     intended_files: set,
     add_system_message: Any,
-    workspace: str = "main",
+    workspace: str | None = None,
     events: Any = None,
 ) -> bool:
+    if workspace is None:
+        workspace = settings.active_workspace
     from llm.prompts import PLAN_VERIFY_PROMPT
 
     file_contents = {}
@@ -112,8 +115,10 @@ async def _run_functional_verification(
 
 
 async def _verify_intended_files(
-    file_paths: set, project_root: str, workspace: str = "main"
+    file_paths: set, project_root: str, workspace: str | None = None
 ) -> list:
+    if workspace is None:
+        workspace = settings.active_workspace
     missing = []
     for path in file_paths:
         if project_root:
@@ -126,7 +131,9 @@ async def _verify_intended_files(
     return missing
 
 
-async def _check_test_file_exists(project_root: str, workspace: str = "main") -> bool:
+async def _check_test_file_exists(project_root: str, workspace: str | None = None) -> bool:
+    if workspace is None:
+        workspace = settings.active_workspace
     try:
         base = paths.memory_dir(workspace)
         search_dir = base / project_root if project_root else base

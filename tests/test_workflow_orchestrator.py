@@ -241,31 +241,31 @@ async def test_full_orchestration_route(mock_orchestrator_deps):
             new_callable=AsyncMock,
         ) as mock_analyze,
         patch(
-            "orchestration.workflows.orchestrator.decompose_task",
+            "orchestration.workflows.development.decompose_task",
             new_callable=AsyncMock,
         ) as mock_decompose,
         patch(
-            "orchestration.workflows.orchestrator.agent_router.select_best_agent",
+            "orchestration.workflows.development.agent_router.select_best_agent",
             new_callable=AsyncMock,
         ) as mock_router,
         patch(
-            "orchestration.workflows.orchestrator.WorkflowSupervisor.review_and_correct",
+            "orchestration.workflows.development.WorkflowSupervisor.review_and_correct",
             new_callable=AsyncMock,
         ) as mock_supervisor,
         patch(
-            "orchestration.workflows.orchestrator.execute_subtask_safe",
+            "orchestration.workflows.development.execute_subtask_safe",
             new_callable=AsyncMock,
         ) as mock_subtask,
         patch(
-            "orchestration.workflows.orchestrator.ResultAggregator.aggregate_results",
+            "orchestration.workflows.development.ResultAggregator.aggregate_results",
             new_callable=AsyncMock,
         ) as mock_aggregate,
         patch(
-            "orchestration.workflows.orchestrator.update_live_diagram",
+            "orchestration.workflows.development.update_live_diagram",
             new_callable=AsyncMock,
         ),
         patch(
-            "orchestration.workflows.orchestrator.generate_scorecard",
+            "orchestration.workflows.development.generate_scorecard",
             return_value={"subtasks": 2, "completadas": 2},
         ),
     ):
