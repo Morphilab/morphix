@@ -47,6 +47,7 @@ opencode.json
 site/
 
 # ── Internal dev artifacts (not for public repo) ──
+.superpowers/
 docs/superpowers/
 ROADMAP.md
 alembic/README
