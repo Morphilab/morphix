@@ -219,3 +219,51 @@ class TestCollaborativeOrchestrator:
         )
 
         assert "Error" in result
+
+    @pytest.mark.asyncio
+    async def test_cancellation_stops_loop_on_first_check(self):
+        from orchestration.workflows.collaborative import (
+            CollaborativeOrchestrator,
+        )
+
+        template = {
+            "panel": ["developer", "analista"],
+            "rounds": 3,
+            "moderator": "moderador",
+        }
+        events, on_assistant, on_system, on_stats, on_stream = _make_events()
+
+        call_count = 0
+
+        async def mock_call(messages, role="agent", temperature=0.4, tools=None, tool_choice=None):
+            nonlocal call_count
+            call_count += 1
+            return _make_mock_response(f"[{role}] response {call_count}")
+
+        cancelled_calls = 0
+
+        def mock_cancelled():
+            nonlocal cancelled_calls
+            cancelled_calls += 1
+            return True
+
+        with (
+            patch(
+                "orchestration.workflows.collaborative.models.call",
+                side_effect=mock_call,
+            ),
+            patch(
+                "orchestration.workflows.collaborative.agents_registry",
+            ) as registry_mock,
+        ):
+            _setup_agent_mocks(registry_mock, ["developer", "analista", "moderador"])
+            result = await CollaborativeOrchestrator.run(
+                query="What language should we use?",
+                template=template,
+                events=events,
+                cancelled=mock_cancelled,
+            )
+
+        assert result == "Cancelado"
+        assert call_count == 0, f"Expected 0 calls when cancelled, got {call_count}"
+        assert cancelled_calls >= 1, "Cancelled callback should have been called"

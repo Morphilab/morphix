@@ -61,3 +61,23 @@ async def test_post_execution_missing_files():
             add_system_message=AsyncMock(),
         )
         assert "Faltan archivos" in result or "app.py" in result
+
+
+@pytest.mark.asyncio
+async def test_post_execution_no_false_plan_prefix():
+    """Verifica que un reporte vacío NO genera el prefijo 'Plan ejecutado'."""
+    result = await _post_execution_checks(
+        execution_report=[],
+        files_written=[],
+        commit_done=True,
+        intended_files=set(),
+        task="Tarea de prueba",
+        project_root=None,
+        is_dev_task=False,
+        workspace="main",
+        best_agent="developer",
+        allowed_tools=[],
+        add_system_message=AsyncMock(),
+    )
+    assert "Plan ejecutado" not in result
+    assert result == ""

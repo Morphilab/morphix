@@ -96,7 +96,7 @@ async def _execute_plan_actions(
     project_root: str | None,
     workspace: str,
     add_system_message: Any,
-) -> list[dict]:
+) -> tuple[list, bool, bool, set]:
     base_path = paths.memory_dir(workspace)
     base_path_project = base_path / project_root if project_root else base_path
 

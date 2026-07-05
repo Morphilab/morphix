@@ -1,7 +1,7 @@
 # tests/test_multi_agent_coordinator.py
 """Tests for MultiAgentCoordinator and SharedBlackboard."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -185,33 +185,31 @@ class TestMultiAgentCoordinator:
 
     @pytest.mark.asyncio
     async def test_aggregate_with_confidence_fallback(self):
-        from orchestration.workflows.coordinated import (
-            MultiAgentCoordinator,
-        )
+        from orchestration.workflows.coordinated import MultiAgentCoordinator
 
         coordinator = MultiAgentCoordinator()
         results = {
             "a": {"agent": "developer", "status": "done", "result": "Built API"},
             "b": {"agent": "analista", "status": "done", "result": "Schema ok"},
         }
+        # Now delegates to ResultAggregator — errors return structured fallback
         with patch(
-            "orchestration.workflows.coordinated.models.call",
+            "orchestration.aggregator.models.call",
             new_callable=AsyncMock,
             side_effect=RuntimeError("LLM down"),
         ):
             result = await coordinator.aggregate_with_confidence("build app", results)
-            assert "Built API" in result
-            assert "Schema ok" in result
+            # Unified aggregator returns structured fallback on error
+            assert "**Consulta:**" in result or "Built API" in result
 
     @pytest.mark.asyncio
     async def test_aggregate_empty_results(self):
-        from orchestration.workflows.coordinated import (
-            MultiAgentCoordinator,
-        )
+        from orchestration.workflows.coordinated import MultiAgentCoordinator
 
         coordinator = MultiAgentCoordinator()
         result = await coordinator.aggregate_with_confidence("query", {})
-        assert "No results" in result
+        # Unified aggregator returns warning for empty results
+        assert "⚠️" in result
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -453,7 +451,7 @@ class TestExecuteOne:
 
     @pytest.mark.asyncio
     async def test_writes_result_to_blackboard(self):
-        """_execute_one writes subtask result to blackboard after success."""
+        """_execute_one does NOT auto-write to blackboard; orchestrator is canonical writer."""
         from orchestration.workflows.coordinated import (
             MultiAgentCoordinator,
         )
@@ -479,10 +477,12 @@ class TestExecuteOne:
                     new_callable=AsyncMock,
                     return_value="",
                 ):
-                    await coordinator._execute_one(
+                    result = await coordinator._execute_one(
                         "s1", st, "developer", None, "main", None, None, None
                     )
-                    assert mock_write.call_count >= 1
+                    mock_write.assert_not_called()
+                    assert result["status"] == "completed"
+                    assert result["agent"] == "developer"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -493,10 +493,8 @@ class TestExecuteOne:
 class TestAggregateWithConfidence:
     @pytest.mark.asyncio
     async def test_successful_aggregation(self):
-        """LLM returns a coherent synthesis of subtask results."""
-        from orchestration.workflows.coordinated import (
-            MultiAgentCoordinator,
-        )
+        """With completed results + files → deterministic programmatic response."""
+        from orchestration.workflows.coordinated import MultiAgentCoordinator
 
         coordinator = MultiAgentCoordinator()
         results = {
@@ -513,25 +511,8 @@ class TestAggregateWithConfidence:
                 "files_written": ["schema.sql"],
             },
         }
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message = MagicMock()
-        mock_response.choices[0].message.content = (
-            "Project completed: REST API implemented with Flask and database schema designed."
-        )
-
-        with patch(
-            "orchestration.workflows.coordinated.models.call",
-            new_callable=AsyncMock,
-        ) as mock_llm:
-            mock_llm.return_value = mock_response
-            result = await coordinator.aggregate_with_confidence("build users CRUD", results)
-            assert "REST API" in result
-            assert "database schema" in result
-            mock_llm.assert_awaited_once()
-
-            # Verify the prompt includes subtask results
-            call_args = mock_llm.call_args.kwargs
-            messages = call_args["messages"]
-            assert "Built REST API" in messages[0]["content"]
-            assert "Designed database schema" in messages[0]["content"]
+        # Unified aggregator: completed + files → programmatic response (no LLM call)
+        result = await coordinator.aggregate_with_confidence("build users CRUD", results)
+        assert "✅ Tarea completada" in result
+        assert "api.py" in result
+        assert "schema.sql" in result

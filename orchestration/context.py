@@ -81,7 +81,7 @@ async def _emit(callback, *args):
         try:
             await callback(*args)
         except Exception:
-            logger.debug("Error en callback de evento UI", exc_info=True)
+            logger.warning("UI callback failed", exc_info=True)
 
 
 async def emit_system(events: WorkflowEvents, message: str) -> None:
