@@ -442,8 +442,9 @@ class ModelsController:
                 )
                 for chunk in response:
                     chunk_queue.put(chunk)
-            except Exception:
+            except Exception as e:
                 logger.exception("Error en streaming Ollama")
+                chunk_queue.put(e)  # propagate so retry/circuit-breaker works
             finally:
                 chunk_queue.put(None)  # Sentinel: fin del stream
 
@@ -451,54 +452,45 @@ class ModelsController:
 
         while True:
             chunk = await _asyncio.to_thread(chunk_queue.get)
+            if isinstance(chunk, BaseException):
+                raise chunk
             if chunk is None:
                 break
-            if isinstance(chunk, dict):
-                if chunk.get("done"):
+            # ChatResponse (ollama ≥0.6) no es dict pero soporta .get()
+            if chunk.get("done"):
+                yield StreamChunk(
+                    finish_reason=chunk.get("done_reason", "stop"),
+                    is_done=True,
+                )
+                break
+            msg = chunk.get("message", {})
+            if msg.get("content"):
+                yield StreamChunk(text=msg["content"])
+            if msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", {})
                     yield StreamChunk(
-                        finish_reason=chunk.get("done_reason", "stop"),
-                        is_done=True,
+                        tool_name=func.get("name"),
+                        tool_arguments=(
+                            json.dumps(func.get("arguments", {})) if func.get("arguments") else None
+                        ),
+                        tool_call_id=tc.get("id"),
                     )
-                    break
-                msg = chunk.get("message", {})
-                if msg.get("content"):
-                    yield StreamChunk(text=msg["content"])
-                if msg.get("tool_calls"):
-                    for tc in msg["tool_calls"]:
-                        func = tc.get("function", {})
-                        yield StreamChunk(
-                            tool_name=func.get("name"),
-                            tool_arguments=(
-                                json.dumps(func.get("arguments", {}))
-                                if func.get("arguments")
-                                else None
-                            ),
-                            tool_call_id=tc.get("id"),
-                        )
 
     def _normalize_response(self, raw_response: Any) -> Any:
         if hasattr(raw_response, "choices"):
             return raw_response
 
+        has_get = hasattr(raw_response, "get")
         content = (
-            raw_response.get("message", {}).get("content", "")
-            if isinstance(raw_response, dict)
-            else str(raw_response)
+            raw_response.get("message", {}).get("content", "") if has_get else str(raw_response)
         )
-        tool_calls = (
-            raw_response.get("message", {}).get("tool_calls")
-            if isinstance(raw_response, dict)
-            else None
-        )
+        tool_calls = raw_response.get("message", {}).get("tool_calls") if has_get else None
         return _NormalizedResponse(
             choices=[
                 _Choice(
                     message=_Message(content=content, tool_calls=tool_calls),
-                    finish_reason=(
-                        raw_response.get("done_reason", "stop")
-                        if isinstance(raw_response, dict)
-                        else "stop"
-                    ),
+                    finish_reason=(raw_response.get("done_reason", "stop") if has_get else "stop"),
                 )
             ]
         )
