@@ -115,7 +115,7 @@ The service layer ensures the UI files remain thin presentation logic — all da
 | Widget | File | Description |
 |--------|------|-------------|
 | **Chat Block** | `chat_bubble.py` | Full-width dense message blocks with role headers and streaming support |
-| **Agent Panel** | `agent_panel.py` | Agent info/status display with capability overview |
+| **Debate Section** | `debate_section.py` | Collapsible per-agent blocks with streaming and auto-height |
 | **Bash Panel** | `bash_panel.py` | Terminal-output display for bash_manager results |
 
 ### Chat Block (`chat_bubble.py`)
@@ -127,11 +127,12 @@ The service layer ensures the UI files remain thin presentation logic — all da
 - **Full-width design**: No bubble styling — transparent background, full-width blocks for dense conversation display
 - **Timestamp**: UTC time displayed beside the role header
 
-### Agent Panel (`agent_panel.py`)
+### Debate Section (`debate_section.py`)
 
-- **Info display**: Agent name, type, allowed tools, model role, temperature
-- **Status indicator**: Active/idle/error states
-- **Quick-select**: Click to set as `force_agent`
+- **Per-agent collapsible blocks**: Each agent gets an expandable section with colored header
+- **Streaming text**: Real-time chunk-by-chunk text accumulation via `emit_agent_stream`
+- **Status icons**: ⏳ thinking, ✅ ready, ⚠️ error per agent
+- **Auto-height**: Content frame resizes dynamically to fit text (no scrollbar needed)
 
 ### Bash Panel (`bash_panel.py`)
 
