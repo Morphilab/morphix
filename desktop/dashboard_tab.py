@@ -39,32 +39,13 @@ class DashboardTab(QWidget):
         main.addWidget(title)
         main.addSpacing(8)
 
-        # System info group
-        sys_group = QGroupBox("Sistema")
-        sys_group.setStyleSheet(StyleFactory.group_box())
-        sys_layout = QVBoxLayout(sys_group)
+        # Navigation cards — Workflows + Dynamic agents (full width)
+        modules_group = QGroupBox("Módulos")
+        modules_group.setStyleSheet(StyleFactory.group_box())
+        modules_layout = QVBoxLayout(modules_group)
+        modules_layout.setSpacing(12)
 
-        # Mode indicator
-        mode_row = QHBoxLayout()
-        self.mode_icon = QLabel("☁")
-        self.mode_icon.setStyleSheet("font-size: 18px;")
-        self.mode_text = QLabel("Online")
-        self.mode_text.setStyleSheet(
-            f"color: {COLORS['success']}; font-size: 13px; font-weight: bold;"
-        )
-        mode_row.addWidget(self.mode_icon)
-        mode_row.addWidget(self.mode_text)
-        mode_row.addStretch()
-
-        self.offline_btn = QPushButton("Activar Offline")
-        self.offline_btn.setStyleSheet(
-            f"QPushButton {{ background: {ACCENT}; color: #FFF; border-radius: 6px; padding: 6px 12px; font-size: 11px; }}"
-        )
-        self.offline_btn.clicked.connect(self._toggle_offline)
-        mode_row.addWidget(self.offline_btn)
-        sys_layout.addLayout(mode_row)
-
-        sys_layout.addWidget(QLabel("Workspace activo"))
+        # Workspace selector at top of modules
         ws_row = QHBoxLayout()
         ws_row.setSpacing(6)
         self.workspace_combo = QComboBox()
@@ -78,27 +59,7 @@ class DashboardTab(QWidget):
         self.new_ws_btn.setStyleSheet(StyleFactory.secondary_button())
         self.new_ws_btn.clicked.connect(self._create_workspace)
         ws_row.addWidget(self.new_ws_btn)
-        sys_layout.addLayout(ws_row)
-
-        # Self-reflection toggle
-        self.self_reflection_cb = QCheckBox("Self-Reflection (agentes se auto-revisan)")
-        self.self_reflection_cb.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 12px;"
-        )
-        self.self_reflection_cb.toggled.connect(self._toggle_self_reflection)
-        sys_layout.addWidget(self.self_reflection_cb)
-
-        # Plugin count + metrics
-        self.info_label = QLabel("Cargando...")
-        self.info_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        self.info_label.setWordWrap(True)
-        sys_layout.addWidget(self.info_label)
-
-        # Navigation cards — Workflows + Dynamic agents
-        modules_group = QGroupBox("Módulos")
-        modules_group.setStyleSheet(sys_group.styleSheet())
-        modules_layout = QVBoxLayout(modules_group)
-        modules_layout.setSpacing(12)
+        modules_layout.addLayout(ws_row)
 
         # Workflows
         wf_group = QGroupBox("Workflows")
@@ -118,14 +79,33 @@ class DashboardTab(QWidget):
         self.dash_agents_layout.setSpacing(6)
         modules_layout.addWidget(ag_group)
 
-        row = QHBoxLayout()
-        row.addWidget(sys_group, 1)
-        row.addWidget(modules_group, 2)
-        main.addLayout(row, 1)
+        main.addWidget(modules_group, 1)
 
-        # Botones de logs
+        # Bottom row — mode, self-reflection, logs
         log_btn_style = StyleFactory.secondary_button()
         log_row = QHBoxLayout()
+
+        # Mode indicator (icon + toggle)
+        self.mode_icon = QLabel("☁")
+        self.mode_icon.setStyleSheet("font-size: 18px;")
+        log_row.addWidget(self.mode_icon)
+        self.offline_btn = QPushButton("Activar Offline")
+        self.offline_btn.setStyleSheet(
+            f"QPushButton {{ background: {ACCENT}; color: #FFF; border-radius: 6px; padding: 6px 12px; font-size: 11px; }}"
+        )
+        self.offline_btn.clicked.connect(self._toggle_offline)
+        log_row.addWidget(self.offline_btn)
+
+        # Self-reflection
+        self.self_reflection_cb = QCheckBox("Self-Reflection")
+        self.self_reflection_cb.setToolTip("Agentes se auto-revisan")
+        self.self_reflection_cb.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px;"
+        )
+        self.self_reflection_cb.toggled.connect(self._toggle_self_reflection)
+        log_row.addWidget(self.self_reflection_cb)
+
+        log_row.addStretch()
         open_logs_btn = QPushButton("Abrir Logs")
         open_logs_btn.setStyleSheet(log_btn_style)
         open_logs_btn.clicked.connect(self._open_logs)
@@ -138,7 +118,6 @@ class DashboardTab(QWidget):
         restart_btn = QPushButton("Reiniciar")
         restart_btn.setStyleSheet(log_btn_style)
         restart_btn.clicked.connect(self._restart_app)
-        log_row.addStretch()
         log_row.addWidget(open_logs_btn)
         log_row.addWidget(open_lnav_btn)
         log_row.addWidget(dark_btn)
@@ -156,7 +135,6 @@ class DashboardTab(QWidget):
 
     async def _load_data(self):
         try:
-            from core.metrics import metrics as m
             from core.workspaces import get_global_workspaces
 
             ws = get_global_workspaces()
@@ -175,19 +153,10 @@ class DashboardTab(QWidget):
             self.self_reflection_cb.blockSignals(False)
 
             self._refresh_offline_indicators()
-
-            data = m.to_dict()
-            self.info_label.setText(
-                f"Tokens: {data['total_tokens']} | "
-                f"Workflows: {data['completed_workflows']}/{data['total_workflows']} | "
-                f"Uptime: {data['uptime_seconds']}s"
-            )
-
             self._refresh_modules()
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error cargando datos del dashboard")
-            self.info_label.setText(f"Error: {e}")
 
     def _refresh_modules(self):
         """Repuebla las cards de Workflows y Agentes dinámicamente."""
@@ -342,12 +311,8 @@ class DashboardTab(QWidget):
 
         is_off = s.offline_mode
         self.mode_icon.setText("☁" if not is_off else "⛔")
-        self.mode_text.setText("Online" if not is_off else "Offline")
         self.mode_icon.setStyleSheet(
             f"font-size: 18px; color: {'#22C55E' if not is_off else '#F59E0B'};"
-        )
-        self.mode_text.setStyleSheet(
-            f"color: {'#22C55E' if not is_off else '#F59E0B'}; font-size: 13px; font-weight: bold;"
         )
         self.offline_btn.setText("Desactivar Offline" if is_off else "Activar Offline")
 

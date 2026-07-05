@@ -126,8 +126,8 @@ class EditorTab(QWidget):
         self._save_btn = QPushButton("💾 Guardar")
         self._save_btn.setStyleSheet(
             f"QPushButton {{ background: {ACCENT}; color: #FFFFFF; border-radius: 6px; "
-            "padding: 4px 12px; font-size: 11px; font-weight: bold; }}"
-            "QPushButton:disabled { background: #2A2A2A; color: #666; }"
+            f"padding: 4px 12px; font-size: 11px; font-weight: bold; }}"
+            f"QPushButton:disabled {{ background: #2A2A2A; color: #666; }}"
         )
         self._save_btn.clicked.connect(self._save)
         self._save_btn.setEnabled(False)
