@@ -1171,6 +1171,7 @@ class MaestroTab(QWidget):
 
             # Filter tools against active workflow template if available
             effective_tools = None
+            loop_result: dict | None = None
             if agent_tools:
                 expanded_tools = expand_allowed_tools(agent_tools) or []
                 try:
@@ -1237,9 +1238,16 @@ class MaestroTab(QWidget):
                     self._history.append({"role": "assistant", "content": streaming_text})
                 self._on_assistant(streaming_text)
             elif not response or not response.strip():
-                self._on_system(
-                    f"⚠️ El agente no produjo respuesta. Estado: {loop_result.get('status', '?') if isinstance(loop_result, dict) else 'desconocido'}"
+                status = (
+                    (
+                        loop_result.get("status", "?")
+                        if isinstance(loop_result, dict)
+                        else "desconocido"
+                    )
+                    if loop_result is not None
+                    else "N/A"
                 )
+                self._on_system(f"⚠️ El agente no produjo respuesta. Estado: {status}")
 
             final_output = response or streaming_text
             if final_output:
