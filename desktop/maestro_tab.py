@@ -107,10 +107,10 @@ class MaestroTab(QWidget):
             build_execution_panel,
             build_top_bar,
         )
-        from desktop.widgets.agent_panel import AgentPanel
         from desktop.widgets.bash_panel import BashPanel
+        from desktop.widgets.debate_section import DebateSection
 
-        self.agent_panel = AgentPanel()
+        self.debate_section = DebateSection()
         self.bash_panel = BashPanel()
 
         root = QVBoxLayout(self)
@@ -239,6 +239,8 @@ class MaestroTab(QWidget):
         signals.system_message.connect(self._on_system)
         signals.assistant_message.connect(self._on_assistant)
         signals.agent_message.connect(self._on_agent_message)
+        signals.agent_stream.connect(self._on_agent_stream)
+        signals.agent_status.connect(self._on_agent_status)
         signals.user_message.connect(self._on_user)
         signals.stream_chunk.connect(self._on_stream)
         signals.stats_update.connect(self._on_stats)
@@ -297,12 +299,27 @@ class MaestroTab(QWidget):
         self._add_bubble(msg, "user")
 
     def _on_agent_message(self, agent_name: str, label: str, text: str):
-        self.agent_panel.add_response(agent_name, label, text)
         # Store with agent metadata for export, and formatted content for DB
         content = f"[{agent_name.capitalize()} - {label}]\n{text}"
         self._history.append(
             {"role": "agent", "agent": agent_name, "label": label, "content": content}
         )
+
+    def _on_agent_stream(self, agent_name: str, label: str, chunk: str):
+        # Ensure debate section is visible in the chat
+        if self.debate_section.parent() is None:
+            self._add_debate_section()
+        self.debate_section.append_chunk(agent_name, chunk)
+
+    def _on_agent_status(self, agent_name: str, status: str):
+        self.debate_section.set_status(agent_name, status)
+
+    def _add_debate_section(self):
+        """Insert the debate section into the chat layout before the stretch."""
+        idx = self.chat_layout.count() - 1  # before stretch
+        self.chat_layout.insertWidget(idx, self.debate_section)
+        self.chat_container.adjustSize()
+        QTimer.singleShot(50, self._scroll_to_bottom)
 
     def _append_status(self, msg: str, color: str = "#888888"):
         """Append a line to the status log (O(1) — no full-document reparse)."""
@@ -432,6 +449,16 @@ class MaestroTab(QWidget):
 
     def clear_chat(self):
         self._hide_typing()
+        # Remove debate section from layout without deleting the widget
+        debate_idx = None
+        for i in range(self.chat_layout.count()):
+            item = self.chat_layout.itemAt(i)
+            if item and item.widget() is self.debate_section:
+                debate_idx = i
+                break
+        if debate_idx is not None:
+            self.chat_layout.takeAt(debate_idx)
+        # Clear remaining chat widgets
         while self.chat_layout.count() > 0:
             item = self.chat_layout.takeAt(0)
             if item.widget():
@@ -440,7 +467,7 @@ class MaestroTab(QWidget):
         self._streaming_bubble = None
         self._streaming_text = ""
         self.chat_container.adjustSize()
-        self.agent_panel.clear()
+        self.debate_section.clear()
         self._subtask_list.clear()
         self._files_written_list.clear()
         self._last_stats.clear()

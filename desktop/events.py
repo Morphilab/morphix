@@ -36,7 +36,9 @@ class DesktopSignals(QObject):
     system_message = Signal(str)
     assistant_message = Signal(str)
     user_message = Signal(str)
-    agent_message = Signal(str, str, str)  # agent_name, label, text
+    agent_message = Signal(str, str, str)  # agent_name, label, text (deprecated, use agent_stream)
+    agent_stream = Signal(str, str, str)  # agent_name, label, chunk_text
+    agent_status = Signal(str, str)  # agent_name, status
     stats_update = Signal(dict)
     diagram_update = Signal(str, object)
     offline_changed = Signal(bool)
@@ -74,6 +76,12 @@ def build_workflow_events() -> WorkflowEvents:
 
     async def _agent(agent_name: str, label: str, text: str) -> None:
         _get_signals().agent_message.emit(agent_name, label, text)
+
+    async def _agent_stream(agent_name: str, label: str, chunk: str) -> None:
+        _get_signals().agent_stream.emit(agent_name, label, chunk)
+
+    async def _agent_status(agent_name: str, status: str) -> None:
+        _get_signals().agent_status.emit(agent_name, status)
 
     async def _stats(data: dict) -> None:
         _get_signals().stats_update.emit(data)
@@ -115,6 +123,8 @@ def build_workflow_events() -> WorkflowEvents:
         on_assistant_message=_assistant,
         on_user_message=_user,
         on_agent_message=_agent,
+        on_agent_stream=_agent_stream,
+        on_agent_status=_agent_status,
         on_stats_update=_stats,
         on_diagram_update=_diagram,
         on_ui_refresh=_noop,

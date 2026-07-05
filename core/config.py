@@ -92,12 +92,42 @@ class Settings(BaseSettings):
     # ==================== MODEL ROLES (centralizado) ====================
     model_roles: dict[str, dict[str, Any]] = Field(
         default_factory=lambda: {
-            "default": {"provider": "deepseek", "model": "deepseek-v4-flash", "temperature": 0.7},
-            "fast": {"provider": "deepseek", "model": "deepseek-v4-flash", "temperature": 0.3},
-            "reasoning": {"provider": "deepseek", "model": "deepseek-v4-flash", "temperature": 0.0},
-            "agent": {"provider": "deepseek", "model": "deepseek-v4-flash", "temperature": 0.7},
-            "creative": {"provider": "deepseek", "model": "deepseek-v4-flash", "temperature": 0.9},
-            "critique": {"provider": "deepseek", "model": "deepseek-v4-flash", "temperature": 0.0},
+            "default": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "temperature": 0.7,
+                "max_tokens": 4096,
+            },
+            "fast": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "temperature": 0.3,
+                "max_tokens": 1024,
+            },
+            "reasoning": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "temperature": 0.0,
+                "max_tokens": 4096,
+            },
+            "agent": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "temperature": 0.7,
+                "max_tokens": 4096,
+            },
+            "creative": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "temperature": 0.9,
+                "max_tokens": 4096,
+            },
+            "critique": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "temperature": 0.0,
+                "max_tokens": 1024,
+            },
         },
         description="Model configuration by role. Configure in code (core/config.py). Not settable via .env.",
     )

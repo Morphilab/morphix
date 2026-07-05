@@ -11,7 +11,14 @@ from agents.registry import agents_registry
 from agents.service import AgentsService
 from core.utils import clean_llm_response
 from llm import models, tool_calls_from_response
-from orchestration.context import WorkflowEvents, emit_agent, emit_stats, emit_system
+from orchestration.context import (
+    WorkflowEvents,
+    emit_agent,
+    emit_agent_status,
+    emit_agent_stream,
+    emit_stats,
+    emit_system,
+)
 from tools.specs import build_tool_definitions, tool_matches_allowlist
 from tools.wrapper import safe_tool_call
 
@@ -35,6 +42,7 @@ class CollaborativeOrchestrator:
     ) -> str:
         panel = template.get("panel", [])
         rounds = template.get("rounds", 3)
+        round_timeout = template.get("round_timeout", 300)
         moderator_name = template.get("moderator", "moderador")
         requires_project = template.get("requires_project")
 
@@ -109,21 +117,36 @@ class CollaborativeOrchestrator:
                     for name in panel
                 ]
 
-            try:
-                results_raw = await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True), timeout=120
-                )
-            except TimeoutError:
-                logger.warning(f"Round {r} timed out after 120s")
-                await emit_system(events, f"⚠️ Ronda {r} excedió el tiempo límite (120s).")
-                break
+            futures: dict[asyncio.Task, str] = {}
+            for c, n in zip(tasks, panel, strict=True):
+                futures[asyncio.ensure_future(c)] = n
+            done, pending = await asyncio.wait(list(futures), timeout=round_timeout)
+            for fut in pending:
+                fut.cancel()
 
-            for name, result in zip(panel, results_raw, strict=True):
-                if isinstance(result, Exception):
-                    await emit_system(events, f"⚠️ {name.capitalize()}: error — {result}")
-                    round_opinions[name] = f"[Error: {result}]"
+            if pending:
+                logger.warning(
+                    f"Round {r} timed out after {round_timeout}s — {len(pending)} agent(s) pending"
+                )
+                await emit_system(
+                    events,
+                    f"⚠️ Ronda {r} excedió el tiempo límite ({round_timeout}s) — {len(pending)} agente(s) perdieron su turno.",
+                )
+
+            for fut, name in futures.items():
+                if fut in done:
+                    try:
+                        result = fut.result()
+                        if isinstance(result, Exception):
+                            await emit_system(events, f"⚠️ {name.capitalize()}: error — {result}")
+                            round_opinions[name] = f"[Error: {result}]"
+                        else:
+                            round_opinions[name] = str(result)
+                    except Exception as e:
+                        await emit_system(events, f"⚠️ {name.capitalize()}: error — {e}")
+                        round_opinions[name] = f"[Error: {e}]"
                 else:
-                    round_opinions[name] = str(result)
+                    round_opinions[name] = "[Timeout: no respondió a tiempo]"
 
             previous_opinions = round_opinions
             await emit_stats(events, {"status": f"Ronda {r}/{rounds} completada"})
@@ -346,10 +369,16 @@ class CollaborativeOrchestrator:
         except Exception as e:
             logger.error(f"Error in collaborative agent {agent_name}: {e}")
             text = f"[Error: {e}]"
+            await emit_agent_status(events, agent_name, "error")
 
-        stream_callback = events.on_stream_chunk if events else None
-        if stream_callback:
-            await stream_callback("\n\n")
+        # Emit agent response incrementally for UI streaming
+        await emit_agent_status(events, agent_name, "thinking")
+        chunk_size = 4
+        for i in range(0, max(len(text), 1), chunk_size):
+            chunk = text[i : i + chunk_size]
+            await emit_agent_stream(events, agent_name, round_label, chunk)
+            await asyncio.sleep(0.008)  # yield to event loop for UI updates
+        await emit_agent_status(events, agent_name, "ready")
 
         await emit_agent(events, agent_name, round_label, text)
         return text

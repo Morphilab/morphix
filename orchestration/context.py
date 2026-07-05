@@ -52,6 +52,8 @@ class WorkflowEvents:
     on_ui_refresh: Callable[[], Awaitable[None]] | None = None
     on_approval_required: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None
     on_agent_message: Callable[[str, str, str], Awaitable[None]] | None = None
+    on_agent_stream: Callable[[str, str, str], Awaitable[None]] | None = None
+    on_agent_status: Callable[[str, str], Awaitable[None]] | None = None
 
 
 @dataclass
@@ -112,3 +114,13 @@ async def emit_refresh(events: WorkflowEvents) -> None:
 
 async def emit_agent(events: WorkflowEvents, agent_name: str, label: str, text: str) -> None:
     await _emit(events.on_agent_message, agent_name, label, text)
+
+
+async def emit_agent_stream(
+    events: WorkflowEvents, agent_name: str, label: str, chunk: str
+) -> None:
+    await _emit(events.on_agent_stream, agent_name, label, chunk)
+
+
+async def emit_agent_status(events: WorkflowEvents, agent_name: str, status: str) -> None:
+    await _emit(events.on_agent_status, agent_name, status)
