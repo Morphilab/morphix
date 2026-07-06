@@ -1,0 +1,10 @@
+[
+    {
+        "_comment": "Example MCP server config. Copy to workspaces/<name>/mcp_servers.json for workspace-specific servers.",
+        "name": "opencode",
+        "command": "opencode",
+        "args": [],
+        "tools_prefix": "opencode",
+        "enabled": false
+    }
+]

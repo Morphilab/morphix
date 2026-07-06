@@ -1,0 +1,53 @@
+# coordinated.yaml — Multi-Agent Coordinator Workflow
+#
+# Uses the MultiAgentCoordinator to decompose tasks into a DAG,
+# execute independent subtasks in parallel with shared blackboard,
+# and aggregate results with confidence evaluation.
+#
+type: coordinated
+description: "Multi-agent coordinator with DAG execution and shared blackboard"
+decomposition: dag
+execution: parallel_levels
+max_parallel: 5
+max_agent_iterations: 10
+retry_on_failure: true
+retry_max: 2
+phases_enabled: true
+max_phases: 5
+default_phases:
+  - name: design
+    agents: [architect, analista]
+    description: "Design and architecture planning"
+  - name: implement
+    agents: [developer]
+    description: "Code implementation"
+  - name: verify
+    agents: [analista, developer]
+    description: "Testing and verification"
+agents:
+  allowed:
+    - developer
+    - analista
+    - moderador
+    - architect
+tools:
+  allowed:
+    - file_manager
+    - git_manager
+    - bash_manager
+    - lsp_manager
+    - code_exec
+    - test_runner
+    - code_search
+    - diff_editor
+    - web_fetch
+    - web_search
+project:
+  required: false
+stages:
+  task_analysis: true
+  task_decomposition: true
+  agent_assignment: true
+  dag_execution: true
+  confidence_aggregation: true
+  finalization: true
