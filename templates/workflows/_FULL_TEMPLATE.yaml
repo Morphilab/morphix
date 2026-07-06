@@ -1,0 +1,85 @@
+# ═══════════════════════════════════════════════════════════
+# WORKFLOW TEMPLATE — Todos los campos posibles
+# ═══════════════════════════════════════════════════════════
+# Copiá este archivo a workspaces/<nombre>/workflows/<nombre>.yaml
+# y editá solo los campos que necesites.
+# Los campos marcados con ⚠️ son obligatorios.
+# ═══════════════════════════════════════════════════════════
+
+# ⚠️ Nombre único del workflow (snake_case, sin espacios)
+name: mi_workflow
+
+# ⚠️ Tipo de workflow
+# Opciones: development | collaborative | coordinated
+type: development
+
+# Descripción visible en el Dashboard
+description: "Descripción breve de lo que hace este workflow"
+
+# ═══ Estrategia de ejecución ═══
+
+# Descomposición de tareas
+# 'flat': una subtarea tras otra (development)
+# 'dag':  niveles con dependencias y paralelismo (coordinated)
+# 'panel': debate multi-agente en rondas (collaborative)
+decomposition: flat
+
+# Modo de ejecución para subtareas
+# 'sequential': una por una
+# 'parallel_levels': todas las de un nivel en paralelo
+# 'parallel_rounds': rondas de debate paralelas
+execution: sequential
+
+# Máximo de subtareas ejecutándose en paralelo (1-4)
+max_parallel: 1
+
+# Reintentos cuando una subtarea falla
+retry_on_failure: false
+retry_max: 0
+
+# ═══ Agentes y herramientas ═══
+
+agents:
+  # ⚠️ Lista de agentes permitidos (nombres registrados: developer, analista, moderador, conversacional)
+  allowed:
+    - developer
+    - analista
+
+tools:
+  # ⚠️ Lista de herramientas permitidas
+  # Disponibles: file_manager, bash_manager, git_manager, test_runner,
+  # lsp_manager, diff_editor, code_exec, code_search, web_search, web_fetch
+  allowed:
+    - file_manager
+    - bash_manager
+    - git_manager
+    - test_runner
+    - lsp_manager
+    - code_exec
+
+# ═══ Etapas del pipeline (development / coordinated) ═══
+
+stages:
+  task_analysis: true        # Analizar la tarea antes de descomponer
+  task_decomposition: true   # Descomponer en subtareas
+  supervisor_review: true    # Revisar resultados de cada subtarea
+  result_aggregation: true   # Consolidar resultados finales
+  finalization: true         # Guardar, commit, limpiar
+
+# ═══ Proyecto ═══
+
+project:
+  required: false   # ¿Obliga a seleccionar un proyecto antes de ejecutar?
+
+# ═══ SOLO PARA COLLABORATIVE ═══
+# Quitá el # para activar estos campos
+
+# moderator: moderador           # Agente que modera el debate
+# panel:                         # Agentes que participan en el debate
+#   - developer
+#   - analista
+# rounds: 3                      # Número de rondas de debate
+
+# ═══ SOLO PARA COORDINATED ═══
+
+# shared_blackboard: true        # Compartir resultados entre agentes vía blackboard

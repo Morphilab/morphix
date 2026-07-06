@@ -1,0 +1,23 @@
+name: collaborative
+type: collaborative
+description: "Multi-agent panel debate to reach consensus on complex decisions"
+decomposition: panel
+execution: parallel_rounds
+max_parallel: 2
+rounds: 3
+retry_on_failure: false
+retry_max: 0
+moderator: "moderador"
+panel:
+  - "developer"
+  - "analista"
+agents:
+  allowed: ["developer", "analista", "moderador"]
+project:
+  required: false
+stages:
+  task_analysis: true
+  panel_discussion: true
+  moderator_synthesis: true
+  result_aggregation: true
+  finalization: true

@@ -1,0 +1,69 @@
+# ═══════════════════════════════════════════════════════════
+# AGENT TEMPLATE — Todos los campos posibles
+# ═══════════════════════════════════════════════════════════
+# Copiá este archivo a workspaces/<nombre>/agents/<nombre>.yaml
+# y editá solo los campos que necesites.
+# Los campos marcados con ⚠️ son obligatorios.
+# ═══════════════════════════════════════════════════════════
+
+# ⚠️ Nombre único del agente (snake_case, sin espacios)
+name: mi_agente
+
+# Tipo de agente — controla el comportamiento del Safety Net
+# "analysis": solo lectura, Safety Net NUNCA crea archivos
+# "development": lectura/escritura, Safety Net puede crear archivos
+# Cualquier otro valor: igual que "development" (comportamiento seguro por defecto)
+type: development
+
+# ⚠️ System prompt — instrucciones que definen la personalidad y comportamiento
+# Usá '>' para texto multilínea con saltos de línea convertidos a espacios
+# Usá '|' para preservar saltos de línea exactos
+system_prompt: >
+  Eres un asistente experto. Responde de forma clara y concisa.
+
+# Control de longitud de respuestas
+length_guidance: "Sé conciso pero completo."
+
+# Temperatura del modelo (0.0 = determinista, 1.0 = creativo)
+temperature: 0.3
+
+# ⚠️ Herramientas que este agente puede usar
+tools:
+  - file_manager
+  - bash_manager
+  - test_runner
+
+# Palabras clave para enrutamiento automático
+# El router asigna agentes basado en estas keywords
+keywords:
+  - code
+  - script
+  - function
+  - implement
+
+# Prioridad de selección (1-100). Mayor = más probable de ser elegido.
+priority: 50
+
+# ⚠️ Rol de modelo — referencia a config.py model_roles
+# Opciones predefinidas:
+#   agent (DeepSeek v4-flash, temp 0.7) — desarrollo general
+#   fast (DeepSeek v4-flash, temp 0.3) — respuestas rápidas
+#   reasoning (DeepSeek v4-flash, temp 0.0) — análisis lógico
+#   creative (DeepSeek v4-flash, temp 0.9) — contenido creativo
+#   critique (DeepSeek v4-flash, temp 0.0) — evaluación objetiva
+#   default (DeepSeek v4-flash, temp 0.7) — fallback
+model_role: agent
+
+# ═══ OPCIONAL: Override de modelo ═══
+# Solo usá esto si necesitás ajustar temperatura sin cambiar de rol.
+# El provider y model los define model_role en config.py.
+# Quitá el # para activar:
+
+# model_override:
+#   temperature: 0.2   # Solo este campo es válido aquí
+
+# ═══ OPCIONAL: Clave de memoria ═══
+# Key en FAISS donde se guarda el último resultado de este agente.
+# null = no persiste.
+
+last_memory_key: null
