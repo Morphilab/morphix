@@ -198,8 +198,11 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         name="bash_manager",
         description="Ejecuta comandos shell de forma segura en el workspace del proyecto. "
         "IMPORTANTE: El parámetro 'command' es OBLIGATORIO. "
-        "El shell ya está en el directorio del proyecto — no uses 'cd' para navegar. "
-        "Útil para instalar dependencias, ejecutar scripts, pruebas, git, grep, find, etc.",
+        "⚠️ The shell's working directory is ALREADY set to the project root "
+        "(e.g. memory/main/code_projects/<name>). Run scripts directly by name — "
+        "do NOT use 'cd code_projects/...' or any 'cd' command. "
+        "NUNCA uses 'cd' — el shell ya está en el directorio correcto. "
+        "Útil para: python3 script.py, pytest, npm install, git status, grep, find, etc.",
         parameters={
             "command": {
                 "type": "string",

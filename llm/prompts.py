@@ -18,6 +18,10 @@ Reglas:
 - NUNCA asumas el contenido de un proyecto existente sin leer sus archivos.
 - NUNCA uses subtareas genéricas como "analizar el proyecto" o "crear el código".
   Sé específico: nombres de archivo reales, acciones concretas.
+- Si una subtarea crea un archivo (ej: calculadora.py), las subtareas posteriores
+  deben MODIFICAR ese mismo archivo. NUNCA crees un archivo NUEVO con nombre
+  alternativo para la misma funcionalidad (ej: NO calculadora_v2.py, NO
+  calculadora_final.py, NO calculadora_nuevo.py — MODIFICA calculadora.py).
 
 Formato de respuesta: SOLO el siguiente JSON, sin texto extra:
 {{"subtasks": ["subtarea 1", "subtarea 2", ...]}}
@@ -45,6 +49,8 @@ Reglas:
 - Si el proyecto está VACÍO, la primera fase puede ser "implement" o "design".
 - Cada subtarea debe ser concreta y mencionar archivos específicos.
 - Para tareas simples (≤2 archivos), usa 1 fase. Medianas: 2-3. Complejas: 3-4.
+- Los nombres de archivo deben ser CONSISTENTES entre fases. Si la fase "design"
+  crea main.py, la fase "implement" debe MODIFICAR main.py (no crear main_v2.py).
 
 Formato: SOLO el siguiente JSON, sin texto extra:
 {{

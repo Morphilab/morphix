@@ -112,7 +112,10 @@ class MultiAgentCoordinator:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            pass
+            logger.warning(
+                "Failed to parse JSON from LLM response, attempting fallback extraction",
+                exc_info=True,
+            )
         # Try to find JSON between braces containing "subtasks"
         idx = text.find('"subtasks"')
         if idx < 0:
@@ -134,7 +137,9 @@ class MultiAgentCoordinator:
             try:
                 return json.loads(text[start:end])
             except json.JSONDecodeError:
-                pass
+                logger.warning(
+                    "Failed to parse extracted JSON fragment from LLM response", exc_info=True
+                )
         return None
 
     # ── PHASE 2: ASSIGN AGENTS ──
@@ -169,7 +174,9 @@ class MultiAgentCoordinator:
                     assignments[sid] = picked
                     continue
             except Exception:
-                pass
+                logger.warning(
+                    "AgentRouter selection failed, using fallback assignment", exc_info=True
+                )
 
             # Fallback: agent_hint or first allowed
             if hint and (allowed_agents is None or hint in allowed_agents):
@@ -187,7 +194,7 @@ class MultiAgentCoordinator:
         subtasks: list[dict],
         assignments: dict[str, str],
         project_root: str | None = None,
-        workspace: str = "main",
+        workspace: str | None = None,
         allowed_tools: list[str] | None = None,
         events=None,
         session=None,
@@ -201,6 +208,8 @@ class MultiAgentCoordinator:
 
         Returns: {subtask_id: {status, result, agent, files_written, error}}
         """
+        if workspace is None:
+            workspace = settings.active_workspace
         results: dict[str, dict] = {}
         completed: set[str] = set()
         remaining = {st["id"]: st for st in subtasks}
@@ -255,6 +264,17 @@ class MultiAgentCoordinator:
             for (sid, st), raw_result in zip(ready, parallel_results, strict=True):
                 if isinstance(raw_result, BaseException):
                     logger.error(f"Subtask '{sid}' failed: {raw_result}")
+                    if isinstance(raw_result, asyncio.TimeoutError):
+                        logger.warning(
+                            f"Subtask {sid} timed out — not retrying with different agent, marking as failed"
+                        )
+                        results[sid] = {
+                            "status": "failed",
+                            "result": "Timeout after 180s",
+                            "error": "timeout",
+                            "files_written": [],
+                        }
+                        continue
                     # Retry with different agent
                     fallback = next(
                         (
@@ -287,6 +307,23 @@ class MultiAgentCoordinator:
                 else:
                     result = raw_result
 
+                if isinstance(result, dict):
+                    status = result.get("status", "")
+                    error = result.get("error", "")
+                    if status == "skipped":
+                        logger.info(
+                            "⏭️  Subtask %s SKIPPED: %s",
+                            sid,
+                            result.get("result", "")[:120],
+                        )
+                    elif status == "failed":
+                        logger.warning(
+                            "Subtask %s FAILED: %s (agent=%s)",
+                            sid,
+                            error or result.get("result", "unknown")[:120],
+                            result.get("agent", "?"),
+                        )
+
                 results[sid] = result
                 completed.add(sid)
                 remaining.pop(sid, None)
@@ -306,6 +343,19 @@ class MultiAgentCoordinator:
     ) -> dict:
         """Execute a single subtask with one agent, injecting blackboard context."""
         desc = st.get("description", st.get("id", ""))
+
+        # ── Pre-execution skip: avoid redundant work when a previous subtask
+        #     already created the target file with substantial code.
+        should_skip, skip_reason = await self._should_skip_subtask(sid, st, project_root, workspace)
+        if should_skip:
+            logger.info("⏭️  Subtask %s SKIPPED: %s", sid, skip_reason)
+            return {
+                "status": "skipped",
+                "result": f"⏭️  Skipped: {skip_reason}",
+                "agent": agent,
+                "files_written": [],
+                "error": None,
+            }
 
         # Build blackboard context for this agent
         blackboard_ctx = await self.blackboard.get_agent_context()
@@ -371,23 +421,6 @@ class MultiAgentCoordinator:
         if session and hasattr(session, "events") and session.events:
             await emit_agent(session.events, agent, desc[:50], str(result_text)[:500])
 
-        # Write result to blackboard for other agents
-        result_text = result.get("result", "") if isinstance(result, dict) else str(result)
-        await self.blackboard.write(
-            f"subtask_{sid}_result",
-            {
-                "agent": agent,
-                "task": desc[:200],
-                "result": str(result_text)[:500],
-                "status": (
-                    result.get("status", "completed") if isinstance(result, dict) else "completed"
-                ),
-                "files_written": (
-                    result.get("files_written", []) if isinstance(result, dict) else []
-                ),
-            },
-        )
-
         return {
             "status": result.get("status", "done") if isinstance(result, dict) else "done",
             "result": result_text,
@@ -396,52 +429,87 @@ class MultiAgentCoordinator:
             "error": None,
         }
 
+    async def _should_skip_subtask(
+        self,
+        sid: str,
+        st: dict,
+        project_root: str | None,
+        workspace: str,
+    ) -> tuple[bool, str]:
+        """Check if a subtask's work was already done by a previous subtask.
+
+        Heuristic: if the target .py file already exists with multiple function
+        definitions and substantial content (>500 chars), the work is done.
+
+        Returns (should_skip: bool, reason: str).
+        """
+        import re
+
+        from core.path_resolver import paths
+
+        desc = st.get("description", st.get("id", ""))
+
+        # Only skip implement/create/write tasks (never skip verify/test/analyze)
+        implement_kw = ("implement", "crear", "write", "escribir", "codificar", "code")
+        if not any(kw in desc.lower() for kw in implement_kw):
+            return False, ""
+
+        # Extract candidate .py filenames from the subtask description
+        filenames = re.findall(r"[\w_-]+\.py", desc)
+        if not filenames:
+            return False, ""
+
+        if not project_root or not workspace:
+            return False, ""
+
+        base = paths.memory_dir(workspace) / project_root
+        if not base.exists():
+            return False, ""
+
+        for fname in filenames:
+            target = base / fname
+            if not target.exists():
+                continue
+            try:
+                content = target.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            func_count = len(re.findall(r"^\s*def\s+\w+\s*\(", content, re.MULTILINE))
+            if func_count >= 2 and len(content) > 500:
+                return True, (
+                    f"Work already done: '{fname}' exists with {func_count} functions "
+                    f"({len(content)} chars)"
+                )
+
+        return False, ""
+
     # ── PHASE 4: AGGREGATE WITH CONFIDENCE ──
     async def aggregate_with_confidence(
         self,
         query: str,
         results: dict[str, dict],
+        project_root: str | None = None,
+        workspace: str | None = None,
     ) -> str:
-        """Synthesize subtask results into a final response with confidence evaluation.
+        """Delegate to ResultAggregator for unified, deterministic synthesis.
 
-        Asks the LLM to score each result's quality, then synthesize the best
-        information into one coherent answer.
+        Uses the same evaluation logic as the development workflow:
+        - If files exist on disk → programmatic or filtered-LLM response
+        - If no files → normal LLM synthesis (backward-compatible)
         """
-        if not results:
-            return "No results produced."
+        from orchestration.aggregator import ResultAggregator
 
-        # Build results summary for the LLM
-        parts = []
-        for sid, r in results.items():
-            agent = r.get("agent", "?")
-            status = r.get("status", "?")
-            result_text = str(r.get("result", ""))[:600]
-            parts.append(f"Agent: {agent} | Task: {sid} | Status: {status}\n{result_text}")
+        files_written: list[str] = []
+        for r in results.values():
+            if isinstance(r, dict):
+                files_written.extend(r.get("files_written", []))
 
-        results_text = "\n\n---\n\n".join(parts)
-
-        prompt = (
-            "You are a result synthesizer. Review the following agent outputs "
-            "and produce ONE final response to the user.\n\n"
-            f"Original request: {query}\n\n"
-            f"Agent results:\n{results_text}\n\n"
-            "Instructions:\n"
-            "- If results conflict, pick the most reliable one and explain why.\n"
-            "- Combine complementary information into a coherent answer.\n"
-            "- If all results are poor, state what's missing honestly.\n"
-            "- Keep the response concise but complete.\n"
+        return await ResultAggregator.aggregate_results(
+            query=query,
+            results=results,
+            G=None,
+            task_analysis={},
+            files_written=files_written or None,
+            project_root=project_root,
+            workspace=workspace,
         )
-
-        try:
-            response = await models.call(
-                messages=[{"role": "user", "content": prompt}],
-                role="fast",
-                temperature=0.3,
-            )
-            return clean_llm_response(response)
-        except Exception as e:
-            logger.warning(f"Aggregation failed: {e}")
-            # Fallback: simple concatenation
-            return "\n\n".join(
-                f"[{r.get('agent', '?')}] {r.get('result', '')}" for r in results.values()
-            )

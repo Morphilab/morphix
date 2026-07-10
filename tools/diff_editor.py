@@ -5,6 +5,7 @@ import logging
 import re
 
 from agents.audit import log_operation
+from core.config import settings
 from core.path_resolver import paths
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ async def _diff_editor_tool(
     diff_content: str | None = None,
     content: str = "",
     action: str = "apply",
-    workspace: str = "main",
+    workspace: str | None = None,
     project_root: str | None = None,
     path: str = "",
 ) -> dict:
@@ -30,6 +31,8 @@ async def _diff_editor_tool(
         project_root: Directorio del proyecto.
         path: Alias de file_path (aceptado por compatibilidad con LLM).
     """
+    if workspace is None:
+        workspace = settings.active_workspace
     resolved_path = file_path or path
     resolved_content = diff_content or content or None
     if not resolved_path:
@@ -65,6 +68,27 @@ async def _diff_editor_tool(
 
         new_content = "".join(new_lines)
         await asyncio.to_thread(target.write_text, new_content, encoding="utf-8")
+
+        # Post-apply validation: ensure result is syntactically valid Python
+        if resolved_path.endswith(".py"):
+            try:
+                compile(new_content, str(target), "exec")
+            except SyntaxError as e:
+                # Rollback to original — the diff produced invalid code
+                await asyncio.to_thread(target.write_text, original, encoding="utf-8")
+                logger.warning(
+                    "diff_editor produced invalid Python for %s, rolled back: %s",
+                    resolved_path,
+                    e,
+                )
+                return {
+                    "success": False,
+                    "output": (
+                        f"❌ Diff aplicado pero el resultado tiene errores de sintaxis "
+                        f"({e.msg} en línea {e.lineno}). Se revirtió el cambio."
+                    ),
+                }
+
         log_operation("diff_editor_apply", str(target), success=True)
         return {"success": True, "output": f"✅ Diff aplicado correctamente a {resolved_path}."}
 
