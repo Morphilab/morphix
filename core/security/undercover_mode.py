@@ -166,15 +166,7 @@ class UndercoverMode:
         # Apply throttle delay if escalation level 2+
         delay = distillation_tracker.get_throttle_delay()
         if delay > 0:
-            import asyncio as _asyncio
-
-            try:
-                loop = _asyncio.get_running_loop()
-            except RuntimeError:
-                time.sleep(delay)
-            else:
-                # Schedule delay without blocking — caller should await
-                pass
+            time.sleep(delay)
 
         return self.add_watermark(safe, workspace, skip_watermark=skip_watermark)
 

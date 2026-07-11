@@ -4,6 +4,7 @@ import re
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from core.database import get_async_session
 from core.embedding_provider import EmbeddingProvider
@@ -139,17 +140,29 @@ class HistoryService:
     async def perform_rag_search(query: str, limit: int = 6) -> list[dict]:
         async with get_async_session() as session:
             relevant_convs = await HistoryService.semantic_search(query, session)
-            results = []
+            conv_ids = [conv.id for conv in relevant_convs[:limit]]
 
-            for conv in relevant_convs[:limit]:
-                stmt = (
-                    select(Message)
-                    .where(Message.conversation_id == conv.id)  # type: ignore[arg-type]
-                    .order_by(Message.timestamp)  # type: ignore[arg-type]
-                    .limit(5)
+            if not conv_ids:
+                return []
+
+            stmt = (
+                select(Conversation)
+                .where(Conversation.id.in_(conv_ids))  # type: ignore[arg-type,union-attr]
+                .options(selectinload(Conversation.messages))
+            )
+            result = await session.execute(stmt)
+            conversations = {c.id: c for c in result.scalars().unique().all()}
+
+            results = []
+            for conv_id in conv_ids:
+                conv = conversations.get(conv_id)
+                if not conv:
+                    continue
+                messages = (
+                    sorted(conv.messages, key=lambda m: m.timestamp)[:5]  # type: ignore[arg-type]
+                    if conv.messages
+                    else []
                 )
-                result = await session.execute(stmt)
-                messages = result.scalars().all()
 
                 snippet_parts = []
                 for msg in messages:

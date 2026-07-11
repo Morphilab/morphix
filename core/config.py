@@ -191,7 +191,7 @@ class Settings(BaseSettings):
     tool_max_retries: int = Field(default=3, validation_alias="TOOL_MAX_RETRIES")
     tool_backoff_base: float = Field(default=1.5, validation_alias="TOOL_BACKOFF_BASE")
     tool_max_tokens_per_workflow: int = Field(
-        default=8000, validation_alias="TOOL_MAX_TOKENS_PER_WORKFLOW"
+        default=50000, validation_alias="TOOL_MAX_TOKENS_PER_WORKFLOW"
     )
     tool_enable_token_budget: bool = Field(
         default=True, validation_alias="TOOL_ENABLE_TOKEN_BUDGET"

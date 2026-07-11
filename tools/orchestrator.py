@@ -29,6 +29,11 @@ _token_budget_ctx: contextvars.ContextVar[int] = contextvars.ContextVar(
     "tool_token_budget", default=0
 )
 
+# Flag to suppress repeated budget-exceeded warnings within a single workflow
+_budget_warned_ctx: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "tool_budget_warned", default=False
+)
+
 
 class ToolOrchestrator:
     MAX_RETRIES = settings.tool_max_retries
@@ -54,9 +59,11 @@ class ToolOrchestrator:
         parameters: dict[str, Any],
         role: str = "agent",
         max_tokens: int | None = None,
-        workspace: str = "main",
+        workspace: str | None = None,
         session_id: str | None = None,
     ) -> dict[str, Any]:
+        if workspace is None:
+            workspace = settings.active_workspace
         hooks_on = settings.hooks_enabled
         max_retries = settings.tool_max_retries
         backoff_base = settings.tool_backoff_base
@@ -334,8 +341,30 @@ class ToolOrchestrator:
         """Reinicia el presupuesto de tokens al inicio de cada workflow.
         El contextvar garantiza aislamiento entre workflows concurrentes."""
         _token_budget_ctx.set(0)
+        _budget_warned_ctx.set(False)
         ToolOrchestrator.MAX_TOKENS_PER_WORKFLOW = settings.tool_max_tokens_per_workflow
         ToolOrchestrator.ENABLE_TOKEN_BUDGET = settings.tool_enable_token_budget
+
+
+def add_llm_token_usage(total_tokens: int) -> None:
+    """Track actual LLM API tokens in the workflow token budget."""
+    if not ToolOrchestrator.ENABLE_TOKEN_BUDGET:
+        return
+    current = _token_budget_ctx.get()
+    if current is None:
+        return
+    max_budget = ToolOrchestrator.MAX_TOKENS_PER_WORKFLOW
+    new_total = current + total_tokens
+    _token_budget_ctx.set(new_total)
+    if new_total > max_budget:
+        _warned = _budget_warned_ctx.get()
+        if not _warned:
+            _budget_warned_ctx.set(True)
+            logger.warning(
+                "Token budget exceeded by LLM call: %d/%d tokens (further warnings suppressed)",
+                new_total,
+                max_budget,
+            )
 
 
 # Global instance (kept for compatibility; the budget is now context-local)

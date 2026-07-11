@@ -17,6 +17,7 @@ class Conversation(SQLModel, table=True):  # type: ignore[call-arg]
     tags: str | None = None
     workflow_id: int | None = Field(default=None, foreign_key="workflow.id")
     workflow: Optional["Workflow"] = Relationship(back_populates="conversations")
+    messages: list["Message"] = Relationship(back_populates="conversation")
 
 
 class Message(SQLModel, table=True):  # type: ignore[call-arg]
@@ -25,6 +26,7 @@ class Message(SQLModel, table=True):  # type: ignore[call-arg]
     role: str
     content: str
     timestamp: datetime = Field(default_factory=_utc_now)
+    conversation: Optional["Conversation"] = Relationship(back_populates="messages")
 
 
 class Workflow(SQLModel, table=True):  # type: ignore[call-arg]

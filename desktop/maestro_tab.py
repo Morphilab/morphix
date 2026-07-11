@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import threading
 from datetime import UTC, datetime
 
 from PySide6.QtCore import QEvent, Qt, QTimer
@@ -45,6 +46,7 @@ class MaestroTab(QWidget):
         self._history: list[dict] = []
         self._selected_agent: str | None = None
         self._force_agent: str | None = None
+        self._workflow_running_lock = threading.Lock()
         self._workflow_running = False
         self._paused_session: Session | None = None
         self._scroll_pending = False
@@ -562,9 +564,10 @@ class MaestroTab(QWidget):
     def _download_conversation(self):
         if not self._history:
             return
-        if self._workflow_running:
-            self._on_system("⚠️ Espera a que termine el workflow antes de exportar.")
-            return
+        with self._workflow_running_lock:
+            if self._workflow_running:
+                self._on_system("⚠️ Espera a que termine el workflow antes de exportar.")
+                return
 
         fmt = self.download_format.currentText()
         from core.path_resolver import paths
@@ -885,7 +888,9 @@ class MaestroTab(QWidget):
         from core.codebase_indexer import CodebaseIndexer
         from desktop.events import get_signals
 
-        indexer = CodebaseIndexer(workspace="main", project_root=self._current_project_root)
+        indexer = CodebaseIndexer(
+            workspace=settings.active_workspace, project_root=self._current_project_root
+        )
 
         def _on_progress(data: dict):
             try:
@@ -985,8 +990,9 @@ class MaestroTab(QWidget):
             run_async(self._resume_workflow(session, answer))
             return
 
-        if self._workflow_running:
-            return
+        with self._workflow_running_lock:
+            if self._workflow_running:
+                return
         query = self.input_field.toPlainText().strip()
         if not query:
             return
@@ -1011,7 +1017,8 @@ class MaestroTab(QWidget):
         # Chat mode: always direct conversation with an agent
         if self._mode == "chat":
             agent = self._force_agent or "conversacional"
-            self._workflow_running = True
+            with self._workflow_running_lock:
+                self._workflow_running = True
             self._add_bubble(query, "user")
             self.input_field.clear()
             self._show_typing()
@@ -1020,7 +1027,8 @@ class MaestroTab(QWidget):
             run_async(self._run_direct_agent(query, agent))
             return
 
-        self._workflow_running = True
+        with self._workflow_running_lock:
+            self._workflow_running = True
         self._add_bubble(query, "user")
         self.input_field.clear()
         self._show_typing()
@@ -1067,7 +1075,8 @@ class MaestroTab(QWidget):
                 question = ctx.last_clarification or "¿Podrías clarificar?"
                 self._on_system(f"⏸️ Pausa: {question}")
                 self._paused_session = session
-                self._workflow_running = False
+                with self._workflow_running_lock:
+                    self._workflow_running = False
                 self._hide_typing()
                 self.input_field.setPlaceholderText(f"Responde: {question[:60]}...")
                 return
@@ -1126,7 +1135,8 @@ class MaestroTab(QWidget):
             self._on_system(f"❌ Error: {e}")
         finally:
             self._hide_typing()
-            self._workflow_running = False
+            with self._workflow_running_lock:
+                self._workflow_running = False
 
     async def _resume_workflow(self, session, answer: str):
         """Reanuda un workflow pausado tras recibir respuesta de clarificación."""
@@ -1169,7 +1179,8 @@ class MaestroTab(QWidget):
             self._on_system(f"❌ Error: {e}")
         finally:
             self._hide_typing()
-            self._workflow_running = False
+            with self._workflow_running_lock:
+                self._workflow_running = False
             self.input_field.setPlaceholderText("Escribe tu mensaje...")
 
     async def _run_direct_agent(self, query: str, agent: str | None = None):
@@ -1318,4 +1329,5 @@ class MaestroTab(QWidget):
             self._on_system(f"❌ Error: {e}")
         finally:
             self._hide_typing()
-            self._workflow_running = False
+            with self._workflow_running_lock:
+                self._workflow_running = False

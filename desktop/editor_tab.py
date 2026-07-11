@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.config import settings
 from core.path_resolver import paths
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class EditorTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._workspace = "main"
+        self._workspace = settings.active_workspace
         self._project_root: str | None = None
         self._project_dir: Path | None = None
         self._current_file: Path | None = None
@@ -158,9 +159,9 @@ class EditorTab(QWidget):
 
     # ── Proyecto activo ─────────────────────────────────────────────
 
-    def set_project(self, project_root: str | None, workspace: str = "main"):
+    def set_project(self, project_root: str | None, workspace: str | None = None):
         """Llamado por MaestroTab/MainWindow cuando cambia el proyecto activo."""
-        self._workspace = workspace or "main"
+        self._workspace = workspace or settings.active_workspace
         self._set_project(project_root or None)
 
     def _set_project(self, project_root: str | None):

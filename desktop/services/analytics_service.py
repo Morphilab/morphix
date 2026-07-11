@@ -5,9 +5,10 @@ import re
 import time
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from core.database import get_async_session
-from core.models import Conversation, Message
+from core.models import Conversation
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,7 @@ class AnalyticsService:
     async def load_analytics_data():  # <-- Ahora es async
         """Carga y procesa todas las conversaciones de forma asíncrona."""
         async with get_async_session() as session:
-            # Consulta de conversaciones
-            stmt = select(Conversation)
+            stmt = select(Conversation).options(selectinload(Conversation.messages))
             result = await session.execute(stmt)
             convs = result.scalars().all()
 
@@ -32,10 +32,7 @@ class AnalyticsService:
 
             data = []
             for c in convs:
-                # Get messages from the conversation
-                stmt_msgs = select(Message).where(Message.conversation_id == c.id)
-                result_msgs = await session.execute(stmt_msgs)
-                msgs = result_msgs.scalars().all()
+                msgs = c.messages
 
                 content_str = " ".join([m.content for m in msgs])
                 tags_str = c.tags or ""

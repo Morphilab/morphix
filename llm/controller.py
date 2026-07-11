@@ -202,6 +202,8 @@ class ModelsController:
 
                 # Track usage + cache metrics
                 self._track_usage(response)
+                # Track tokens in workflow budget
+                self._track_budget(response)
 
                 cb.record_success()
                 return self._normalize_response(response)
@@ -246,6 +248,7 @@ class ModelsController:
                 options={"temperature": temp},
                 **kwargs,
             )
+            self._track_budget(response)
             ollama_cb.record_success()
             return self._normalize_response(response)
         except Exception as e:
@@ -311,6 +314,7 @@ class ModelsController:
                 _max_tokens = _role_config.get("max_tokens")
 
                 if isinstance(client, AsyncOpenAI):
+                    stream_usage = None
                     async for chunk in self._stream_openai_async(
                         client,
                         model,
@@ -321,8 +325,11 @@ class ModelsController:
                         max_tokens=_max_tokens,
                         **kwargs,
                     ):
+                        if chunk.usage:
+                            stream_usage = chunk.usage
                         yield chunk
                 else:
+                    stream_usage = None
                     async for chunk in self._stream_ollama(
                         client,
                         model,
@@ -331,7 +338,18 @@ class ModelsController:
                         max_tokens=_max_tokens,
                         **kwargs,
                     ):
+                        if chunk.usage:
+                            stream_usage = chunk.usage
                         yield chunk
+                # Track streaming tokens in workflow budget
+                if stream_usage:
+                    total = stream_usage.get("prompt_tokens", 0) + stream_usage.get(
+                        "completion_tokens", 0
+                    )
+                    if total > 0:
+                        from tools.orchestrator import add_llm_token_usage
+
+                        add_llm_token_usage(total)
                 cb.record_success()
                 return  # Success — exit retry loop
             except Exception as e:
@@ -492,8 +510,17 @@ class ModelsController:
                 break
             # ChatResponse (ollama ≥0.6) no es dict pero soporta .get()
             if chunk.get("done"):
+                usage = None
+                pe = chunk.get("prompt_eval_count")
+                ec = chunk.get("eval_count")
+                if pe is not None or ec is not None:
+                    usage = {
+                        "prompt_tokens": pe or 0,
+                        "completion_tokens": ec or 0,
+                    }
                 yield StreamChunk(
                     finish_reason=chunk.get("done_reason", "stop"),
+                    usage=usage,
                     is_done=True,
                 )
                 break
@@ -560,6 +587,19 @@ class ModelsController:
             prompt_cache_hit_tokens=cache_hit,
             prompt_cache_miss_tokens=cache_miss,
         )
+
+    @staticmethod
+    def _track_budget(response: Any) -> None:
+        """Track actual LLM API tokens in the workflow token budget."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        total_tokens = getattr(usage, "total_tokens", 0) or 0
+        if total_tokens <= 0:
+            return
+        from tools.orchestrator import add_llm_token_usage
+
+        add_llm_token_usage(total_tokens)
 
 
 # Single global instance

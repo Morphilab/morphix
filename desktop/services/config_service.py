@@ -1,10 +1,9 @@
 # features/config/services/config_service.py
 import logging
-import os
-import platform
 import subprocess
 import sys
-import threading
+
+from PySide6.QtWidgets import QApplication
 
 from core.config import settings
 from llm import OfflineManager
@@ -29,20 +28,15 @@ class ConfigService:
         """Reinicia la aplicación de forma segura."""
         try:
             logging.info("Iniciando reinicio de aplicación...")
-            python = os.sys.executable
-            script = "run.py"
-
-            if platform.system() == "Windows":
-                subprocess.Popen([python, script], creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:
-                subprocess.Popen(
-                    ["nohup", python, script],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT,
-                    preexec_fn=os.setpgrp,
-                )
-
-            threading.Timer(1.0, lambda: sys.exit(0)).start()
+            python = sys.executable
+            script = sys.argv[0]
+            subprocess.Popen(
+                [python, script, *sys.argv[1:]],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            QApplication.quit()
             return {"success": True}
         except Exception as e:
             logging.error(f"Error en restart: {e}")

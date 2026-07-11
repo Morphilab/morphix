@@ -281,9 +281,10 @@ class MainWindow(QMainWindow):
         """Inicializa el backend y carga las pestañas reales."""
         from core.bootstrap import init_backend as do_init
         from core.bootstrap import start_daemons
+        from core.config import settings
 
         success = await do_init(
-            workspace="main",
+            workspace=settings.active_workspace,
             on_progress=lambda msg: self.status.showMessage(msg, 3000),
         )
         if not success:
