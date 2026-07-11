@@ -219,7 +219,7 @@ class MCPClient:
         except ConnectionError:
             logger.info(f"MCP server '{self.config.name}' stream closed")
         except asyncio.CancelledError:
-            pass
+            logger.warning("MCP read loop cancelled", exc_info=True)
         except Exception:
             logger.exception(f"MCP server '{self.config.name}' read loop error")
 
@@ -243,7 +243,9 @@ class MCPClient:
                 try:
                     self.process.kill()
                 except ProcessLookupError:
-                    pass
+                    logger.warning(
+                        "MCP process already terminated, ignoring kill failure", exc_info=True
+                    )
         self.process = None
         self._initialized = False
         self._tools.clear()

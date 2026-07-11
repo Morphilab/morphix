@@ -12,6 +12,7 @@ import shlex
 from pathlib import Path
 
 from agents.audit import log_operation
+from core.config import settings
 from core.path_resolver import paths
 from tools.registry import tools_registry
 
@@ -105,17 +106,22 @@ def _sanitize_command(command: str) -> tuple[bool, str]:
                 "Ejemplo: 'python3 script.py' en vez de 'cd /root/workspace && python3 script.py'"
             )
 
-    # Additional check: command must contain at least one safe path/command
+    # Validate multi-command chains segment by segment
     if any(c in command for c in (";", "&&", "||", "|")):
-        # Multi-command: require each segment to be safe too
-        pass
+        segments = re.split(r"\s*[;&|]+\s*", command)
+        segments = [s.strip() for s in segments if s.strip()]
+        if len(segments) > 1:
+            for seg in segments:
+                is_safe, reason = _sanitize_command(seg)
+                if not is_safe:
+                    return False, f"Blocked segment '{seg[:60]}': {reason}"
 
     return True, ""
 
 
 async def _bash_tool(
     command: str = "",
-    workspace: str = "main",
+    workspace: str | None = None,
     cwd: str | None = None,
     timeout: int = 30,
     **kwargs,
@@ -131,6 +137,8 @@ async def _bash_tool(
     Returns:
         {"success": bool, "output": str, "exit_code": int}
     """
+    if workspace is None:
+        workspace = settings.active_workspace
     if not command or not command.strip():
         return {
             "success": False,
@@ -178,6 +186,7 @@ async def _bash_tool(
             stderr=asyncio.subprocess.PIPE,
             cwd=work_dir,
             env=env,
+            executable="/bin/bash",
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         exit_code = proc.returncode or 0

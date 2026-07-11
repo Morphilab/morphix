@@ -6,6 +6,7 @@ Task Decomposer - Versión FINAL robusta y refinada (Fase 6)
 import logging
 import re
 
+from core.config import settings
 from core.path_resolver import paths
 from core.utils import clean_llm_response
 from llm import models, parse_json_from_llm
@@ -13,12 +14,14 @@ from llm import models, parse_json_from_llm
 logger = logging.getLogger(__name__)
 
 
-def _build_project_context(project_root: str | None) -> str:
+def _build_project_context(project_root: str | None, workspace: str | None = None) -> str:
     """Scan the project to provide real context to the decomposer LLM."""
+    if workspace is None:
+        workspace = settings.active_workspace
     if not project_root:
         return "PROYECTO NUEVO — sin archivos. La primera subtarea debe CREAR la estructura."
 
-    base = paths.memory_dir("main") / project_root
+    base = paths.memory_dir(workspace) / project_root
     if not base.exists():
         return "PROYECTO NUEVO — sin archivos. La primera subtarea debe CREAR la estructura."
 
@@ -39,18 +42,20 @@ def _build_project_context(project_root: str | None) -> str:
                 content = readme.read_text()[:600]
                 parts.append(f"README.md preview:\n{content}")
             except Exception:
-                pass
+                logger.warning("Failed to read README for project context", exc_info=True)
             break
 
     # Find main script
-    for pattern in ("*.sh", "*.py", "main.*", "src/*.py", "*.js"):
+    for pattern in ("main.*", "*.py", "src/*.py", "*.sh", "*.js"):
         for candidate in sorted(base.glob(pattern)):
             if candidate.is_file():
                 try:
                     content = candidate.read_text()[:600]
                     parts.append(f"\nArchivo principal ({candidate.name}):\n{content}")
                 except Exception:
-                    pass
+                    logger.warning(
+                        "Failed to read main project file for decomposer context", exc_info=True
+                    )
                 break
         else:
             continue
@@ -64,11 +69,15 @@ async def decompose_task(
     is_follow_up: bool = False,
     conversation_history: list[dict] | None = None,
     project_root: str | None = None,
+    max_subtasks: int | None = None,
+    workspace: str | None = None,
 ) -> list[str]:
     """Descompone la tarea en 2-5 subtareas claras y accionables"""
+    if workspace is None:
+        workspace = settings.active_workspace
     from llm.prompts import DECOMPOSE_TASK_PROMPT
 
-    project_context = _build_project_context(project_root)
+    project_context = _build_project_context(project_root, workspace)
     prompt = DECOMPOSE_TASK_PROMPT.format(query=query, project_context=project_context)
 
     if is_follow_up:
@@ -99,7 +108,7 @@ async def decompose_task(
         if remaining < 10:
             prompt += "\nIMPORTANTE: Genera máximo 2 subtareas, el rate de API está bajo."
     except Exception:
-        pass
+        logger.warning("LLM task decomposition failed, using fallback subtasks", exc_info=True)
 
     try:
         response = await models.call(
@@ -146,9 +155,9 @@ async def decompose_task(
                 final_subtasks = [query[:100], f"Verificar el resultado de: {query[:80]}"]
 
         # Max limit from feature flags
-        from core.config import settings
 
-        max_subtasks = settings.max_subtasks
+        if max_subtasks is None:
+            max_subtasks = settings.max_subtasks
         final_subtasks = final_subtasks[:max_subtasks]
 
         logger.info(f"✅ Decompose_task generó {len(final_subtasks)} subtareas")
@@ -165,6 +174,7 @@ async def decompose_task_with_phases(
     is_follow_up: bool = False,
     conversation_history: list[dict] | None = None,
     project_root: str | None = None,
+    workspace: str | None = None,
 ) -> dict:
     """Descompone la tarea en fases con subtareas, para blackboard multi-phase.
 
@@ -172,9 +182,11 @@ async def decompose_task_with_phases(
         {"phases": [...], "strategy": "sequential"}
         or fallback: {"phases": [{"subtasks": [...]}]} (single phase)
     """
+    if workspace is None:
+        workspace = settings.active_workspace
     from llm.prompts import DECOMPOSE_TASK_WITH_PHASES_PROMPT
 
-    project_context = _build_project_context(project_root)
+    project_context = _build_project_context(project_root, workspace)
     prompt = DECOMPOSE_TASK_WITH_PHASES_PROMPT.format(query=query, project_context=project_context)
 
     if is_follow_up:
@@ -204,7 +216,9 @@ async def decompose_task_with_phases(
                 "\nIMPORTANTE: Genera máximo 2 fases con 2 subtareas cada una (API rate bajo)."
             )
     except Exception:
-        pass
+        logger.warning(
+            "Phase-aware decomposition failed, falling back to flat decomposition", exc_info=True
+        )
 
     try:
         response = await models.call(
@@ -242,7 +256,9 @@ async def decompose_task_with_phases(
         logger.warning(f"decompose_task_with_phases falló, usando single-phase: {e}")
 
     # Fallback: single phase with decompose_task
-    subtasks = await decompose_task(query, is_follow_up, conversation_history, project_root)
+    subtasks = await decompose_task(
+        query, is_follow_up, conversation_history, project_root, workspace=workspace
+    )
     return {
         "phases": [
             {

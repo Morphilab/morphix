@@ -12,6 +12,7 @@ import asyncio
 import logging
 import time
 import traceback
+import types
 from io import StringIO
 
 import matplotlib
@@ -34,6 +35,34 @@ from core.path_resolver import paths
 OUTPUT_DIR = paths.charts_dir()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# ==================== SAFE MODULE WRAPPERS ====================
+
+import sqlite3 as _sqlite3
+
+
+class _SafeSQLite3:
+    """sqlite3 wrapper that only allows :memory: databases."""
+
+    def __init__(self):
+        self.PARSE_DECLTYPES = _sqlite3.PARSE_DECLTYPES
+        self.Row = _sqlite3.Row
+        self.sqlite_version = _sqlite3.sqlite_version
+
+    def connect(self, database=":memory:", **kwargs):
+        if database != ":memory:":
+            raise PermissionError("sqlite3: only :memory: databases are allowed in sandbox")
+        return _sqlite3.connect(":memory:", **kwargs)
+
+
+import io as _io
+
+
+class _SafeIO:
+    """io wrapper that only allows StringIO."""
+
+    StringIO = _io.StringIO
+
+
 # ==================== ALLOWED MODULES AND BUILTINS (VERY STRICT) ====================
 SAFE_MODULES = {
     "math": __import__("math"),
@@ -42,9 +71,9 @@ SAFE_MODULES = {
     "datetime": __import__("datetime"),
     "re": __import__("re"),
     "json": __import__("json"),
-    "sqlite3": __import__("sqlite3"),
-    "ast": __import__("ast"),
-    "io": __import__("io"),
+    "sqlite3": _SafeSQLite3(),
+    "ast": types.SimpleNamespace(parse=ast.parse),
+    "io": _SafeIO(),
     "numpy": np,
     "np": np,
     "plt": plt,
@@ -74,6 +103,15 @@ SAFE_BUILTINS = {
     "repr": repr,
     "type": type,
     "isinstance": isinstance,
+    # Standard exception types — needed for try/except blocks
+    "Exception": Exception,
+    "ValueError": ValueError,
+    "TypeError": TypeError,
+    "KeyError": KeyError,
+    "IndexError": IndexError,
+    "AttributeError": AttributeError,
+    "ZeroDivisionError": ZeroDivisionError,
+    "FileNotFoundError": FileNotFoundError,
 }
 
 

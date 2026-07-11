@@ -633,7 +633,8 @@ VALUE: {safe_value}
                 for dist, idx in zip(distances[0], indices[0], strict=False):
                     if idx < 0 or idx >= len(self.documents):
                         continue
-                    if dist > min_similarity * 100 and min_similarity > 0:
+                    similarity_score = 1.0 / (1.0 + dist)
+                    if similarity_score < min_similarity and min_similarity > 0:
                         continue
                     key, val = self.documents[idx]
                     self._access_log[key] = time.time()

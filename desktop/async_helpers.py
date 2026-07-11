@@ -24,7 +24,7 @@ def run_async(coro, loop=None):
         if exc is None:
             return
         if isinstance(exc, asyncio.CancelledError):
-            pass
+            logger.warning("Background coroutine cancelled (Qt asyncio bridge)", exc_info=True)
         else:
             logger.error("Error en corrutina de fondo (Qt→asyncio): %s", exc)
 
