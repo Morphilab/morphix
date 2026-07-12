@@ -14,10 +14,16 @@ panel:
   - "analista"
 agents:
   allowed: ["developer", "analista", "moderador"]
+tools:
+  allowed:
+    - "file_manager"
+    - "code_search"
+    - "web_search"
+    - "web_fetch"
+    - "lsp_manager"
 project:
   required: false
 stages:
-  task_analysis: true
   panel_discussion: true
   moderator_synthesis: true
   result_aggregation: true

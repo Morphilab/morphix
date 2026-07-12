@@ -6,9 +6,11 @@ analyze a question, debate in rounds, and reach consensus via moderator.
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 from agents.registry import agents_registry
 from agents.service import AgentsService
+from core.config import settings
 from core.utils import clean_llm_response
 from llm import models, tool_calls_from_response
 from orchestration.context import (
@@ -35,11 +37,14 @@ class CollaborativeOrchestrator:
         events: WorkflowEvents,
         history: list | None = None,
         project_root: str | None = None,
-        workspace: str = "main",
+        workspace: str | None = None,
         force_agent: str | None = None,
         workflow_allowed_tools: list[str] | None = None,
         start_time: float = 0.0,
+        cancelled: Callable | None = None,
     ) -> str:
+        if workspace is None:
+            workspace = settings.active_workspace
         panel = template.get("panel", [])
         rounds = template.get("rounds", 3)
         round_timeout = template.get("round_timeout", 300)
@@ -78,6 +83,10 @@ class CollaborativeOrchestrator:
         previous_opinions: dict[str, str] = {}
 
         for r in range(1, rounds + 1):
+            if cancelled and cancelled():
+                await emit_system(events, "🛑 Debate cancelado por el usuario")
+                return "Cancelado"
+
             await emit_system(events, f"\n--- **Ronda {r} de {rounds}** ---")
 
             round_opinions: dict[str, str] = {}
@@ -221,7 +230,7 @@ class CollaborativeOrchestrator:
         history: list,
         project_context: str = "",
         project_root: str | None = None,
-        workspace: str = "main",
+        workspace: str | None = None,
         workflow_allowed_tools: list[str] | None = None,
         round_label: str = "",
     ) -> str:
@@ -231,6 +240,8 @@ class CollaborativeOrchestrator:
         to inspect the project before responding. Tool results feed back
         into a second LLM call for an informed response.
         """
+        if workspace is None:
+            workspace = settings.active_workspace
         enriched_query = CollaborativeOrchestrator._build_query(
             query, agent_name, others_opinions, project_context
         )
@@ -344,7 +355,17 @@ class CollaborativeOrchestrator:
                     call_id = tc_data["id"]
                     tool_name = tc_data["function"]["name"]
                     tool_args = _json.loads(tc_data["function"]["arguments"])
-                    result = await safe_tool_call(tool_name, tool_args, role="agent")
+                    try:
+                        result = await safe_tool_call(tool_name, tool_args, role="agent")
+                    except Exception as e:
+                        logger.warning(
+                            f"Tool call '{tool_name}' failed in collaborative agent: {e}"
+                        )
+                        result = {
+                            "success": False,
+                            "error": str(e),
+                            "output": f"Tool error: {e}",
+                        }
                     output = (
                         result.get("output", str(result))
                         if isinstance(result, dict)
