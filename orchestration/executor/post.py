@@ -14,7 +14,7 @@ from typing import Any
 
 
 async def _post_execution_checks(
-    execution_report: dict,
+    execution_report: list,
     files_written: list[str],
     commit_done: bool,
     intended_files: set,
@@ -28,7 +28,11 @@ async def _post_execution_checks(
 ) -> str:
     from tools.specs import build_tool_instructions
 
-    final_answer = "**Plan ejecutado.**\n\n" + "\n".join(execution_report)
+    report_text = "\n".join(execution_report) if execution_report else ""
+    if report_text.strip():
+        final_answer = "**Plan ejecutado.**\n\n" + report_text
+    else:
+        final_answer = ""
 
     if is_dev_task and files_written and not commit_done:
         await add_system_message("🔄 Realizando commit automático...")

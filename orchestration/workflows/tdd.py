@@ -9,6 +9,7 @@ Complete TDD loop:
 import asyncio
 import logging
 
+from core.config import settings
 from core.path_resolver import paths
 from tools.wrapper import safe_tool_call
 
@@ -39,7 +40,7 @@ def _project_has_no_tests(workspace: str, project_root: str | None, files_modifi
 
 async def execute_tdd_loop(
     task: str,
-    workspace: str = "main",
+    workspace: str | None = None,
     project_root: str | None = None,
     allowed_tools: list | None = None,
     agent_type: str | None = None,
@@ -67,6 +68,8 @@ async def execute_tdd_loop(
     Returns:
         {"status": "completed"|"failed", "result": str, "iterations": int}
     """
+    if workspace is None:
+        workspace = settings.active_workspace
     from orchestration.loop import execute_agent_loop
 
     tdd_tools = allowed_tools or ["file_manager", "diff_editor", "test_runner", "git_manager"]
@@ -80,15 +83,28 @@ async def execute_tdd_loop(
         logger.info("🔄 TDD Loop iteración %d/%d", iterations, max_iterations)
 
         # 1. Ejecutar tests
-        test_result = await safe_tool_call(
-            tool_name="test_runner",
-            parameters={
-                "file_path": ".",
-                "workspace": workspace,
-                "project_root": project_root,
-            },
-            role="agent",
-        )
+        try:
+            test_result = await safe_tool_call(
+                tool_name="test_runner",
+                parameters={
+                    "file_path": ".",
+                    "workspace": workspace,
+                    "project_root": project_root,
+                },
+                role="agent",
+            )
+        except Exception as e:
+            logger.error(f"TDD test_runner call failed: {e}")
+            test_result = {
+                "success": False,
+                "error": str(e),
+                "output": {
+                    "output": f"Error running tests: {e}",
+                    "success": False,
+                    "failed_count": 1,
+                    "error_count": 1,
+                },
+            }
 
         test_output_raw = test_result if isinstance(test_result, dict) else {}
         inner_output = (

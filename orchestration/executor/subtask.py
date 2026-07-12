@@ -10,16 +10,12 @@ import logging
 import networkx as nx
 
 from core.memory.manager import memory as memory_manager
-from tools.specs import tool_matches_allowlist
-
-logger = logging.getLogger(__name__)
-
-
 from core.security.undercover_mode import undercover
 from orchestration.diagram import update_live_diagram
 from orchestration.executor.plan import _resolve_agent_and_task
 from orchestration.executor.post import _post_execution_checks
 from orchestration.loop import execute_agent_loop
+from tools.specs import tool_matches_allowlist
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +228,25 @@ async def execute_subtask_safe(
                 files_written.append(path)
                 final_answer = f"✅ Archivo creado directamente: {path}\n\n{content}"
                 await emit_system(events, f"🛟 Archivo creado directamente: {path}")
+                # Verify Safety Net output
+                try:
+                    from orchestration.executor.verify import _run_functional_verification
+
+                    verify_result = await _run_functional_verification(
+                        task=task,
+                        best_agent=best_agent,
+                        allowed_tools=allowed_tools,
+                        project_root=ctx.project_root,
+                        intended_files=set(files_written),
+                        add_system_message=lambda msg: emit_system(events, msg),
+                        workspace=ctx.workspace,
+                    )
+                    if verify_result and "incumplim" in str(verify_result).lower():
+                        logger.warning(
+                            f"Safety Net created {path} but verification found issues: {verify_result}"
+                        )
+                except Exception:
+                    logger.warning("Safety Net verification skipped due to error", exc_info=True)
 
         # 4.3 — Per-subtask functional verification
         verification_report = None
@@ -255,7 +270,7 @@ async def execute_subtask_safe(
 
         if is_dev_task:
             post_check = await _post_execution_checks(
-                [],  # type: ignore[arg-type]
+                [result.get("result", "")] if isinstance(result, dict) else [],
                 [],
                 True,
                 files_written,
@@ -264,7 +279,7 @@ async def execute_subtask_safe(
                 is_dev_task,
                 ctx.workspace,
                 best_agent,
-                allowed_tools,  # type: ignore[arg-type]
+                allowed_tools,
                 lambda msg: emit_system(events, msg),
             )
             if post_check:

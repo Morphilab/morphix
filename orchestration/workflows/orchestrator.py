@@ -6,10 +6,12 @@ to _dispatch_route. All UI interaction flows through the events bridge,
 keeping the orchestrator framework-agnostic.
 """
 
+import asyncio
+import datetime
+import json
 import logging
 import re
 import time
-from typing import Any
 
 import networkx as nx
 
@@ -24,24 +26,20 @@ from core.utils import clean_llm_response
 from core.workflow_state import get_active_workflow
 from core.workspaces import get_global_workspaces
 from llm import parse_plan_json
-from orchestration.aggregator import ResultAggregator
 from orchestration.analyzer import TaskAnalyzer
-from orchestration.decomposer import decompose_task
-from orchestration.diagram import update_live_diagram
 from orchestration.events import Session, WorkflowContext, WorkflowEvents
 from orchestration.executor.plan import _execute_plan_actions
 from orchestration.executor.subtask import execute_subtask_safe
 from orchestration.executor.verify import _extract_and_validate_actions
 from orchestration.finalizer import finalize_workflow
 from orchestration.loader import load_workflow_template
-from orchestration.router import agent_router
-from orchestration.supervisor import WorkflowSupervisor
 from orchestration.utils import generate_scorecard
 from orchestration.workflows.collaborative import CollaborativeOrchestrator
 from tools.wrapper import safe_tool_call
 
 logger = logging.getLogger(__name__)
 
+SUBTASK_TIMEOUT = 300  # seconds — per-subtask timeout for development workflows
 
 # ── Safe emission helpers (canonical in events.py) ──
 from orchestration.events import emit_stats, emit_system
@@ -113,25 +111,6 @@ def _parse_direct_tool_command(query: str) -> dict | None:
                 k, v = part.split("=", 1)
                 params[k.strip()] = v.strip().strip("'\"")
     return {"tool_name": tool_name, "action": action, "params": params}
-
-
-def _build_subtask_list(subtasks, results, current_node, current_status):
-    """Build a list of {name, status} dicts for the progress dashboard."""
-    return [
-        {
-            "name": (t if isinstance(t, str) else t.get("description", str(t)))[:60],
-            "status": (
-                current_status
-                if i == current_node
-                else (
-                    results[i].get("status", "completed")
-                    if i in results and results[i].get("status") == "completed"
-                    else "completed" if i < current_node and i in results else "pending"
-                )
-            ),
-        }
-        for i, t in enumerate(subtasks)
-    ]
 
 
 class WorkflowOrchestrator:
@@ -360,6 +339,11 @@ class WorkflowOrchestrator:
         workflow_allowed_tools = template.get("tools", {}).get("allowed", None)
         if workflow_allowed_tools is not None:
             ctx.allowed_tools = workflow_allowed_tools
+        elif template.get("type") == "collaborative":
+            logger.warning(
+                "⚠️ Collaborative template sin 'tools.allowed'. "
+                "Los agentes del panel usarán todas sus herramientas registradas."
+            )
 
         _validate_template_consistency(template)
 
@@ -388,6 +372,7 @@ class WorkflowOrchestrator:
                 force_agent=ctx.force_agent,
                 workflow_allowed_tools=workflow_allowed_tools,
                 start_time=start_time,
+                cancelled=lambda: ctx.cancelled,
             )
 
         # ── Ruta 3: Coordinada ──
@@ -406,12 +391,25 @@ class WorkflowOrchestrator:
                 session=session,
             )
 
-        # ── Route 4: Development (full orchestration without prior analysis) ──
+        # ── Route 4: Development ──
         if template.get("type") == "development":
+            task_analysis = await TaskAnalyzer.analyze_task(query, is_follow_up=ctx.is_follow_up)
+            if not task_analysis.get("requires_full_orchestration", True):
+                await emit_stats(events, {"status": "Simple chat"})
+                return await WorkflowOrchestrator._run_simple_conversation(
+                    query,
+                    conversation_history,
+                    task_analysis,
+                    template,
+                    allowed_agents,
+                    start_time,
+                    events,
+                    conversation_id,
+                )
             return await WorkflowOrchestrator._run_full_orchestration(
                 query,
                 conversation_history,
-                await TaskAnalyzer.analyze_task(query, is_follow_up=ctx.is_follow_up),
+                task_analysis,
                 ctx,
                 events,
                 project_root,
@@ -607,6 +605,7 @@ class WorkflowOrchestrator:
             is_follow_up=ctx.is_follow_up,
             conversation_history=conversation_history,
             project_root=project_root,
+            workspace=workspaces.current,
         )
         phases = decomposition.get("phases", [])
 
@@ -703,6 +702,9 @@ class WorkflowOrchestrator:
             total_subtasks = len(subtasks)
             subtasks_list = [st.get("description", st.get("id", "")) for st in subtasks]
 
+            if ctx.conversation_id:
+                await coordinator.blackboard.sync_to_db(f"coord_{ctx.conversation_id}")
+
         completed = sum(1 for r in results.values() if r.get("status") == "completed")
         failed = sum(1 for r in results.values() if r.get("status") == "failed")
         await emit_stats(
@@ -716,11 +718,12 @@ class WorkflowOrchestrator:
         )
 
         await emit_system(events, "📊 Aggregating results with confidence evaluation...")
-        final_content = await coordinator.aggregate_with_confidence(query, results)
+        final_content = await coordinator.aggregate_with_confidence(
+            query, results, project_root, workspaces.current
+        )
 
         # Finalize
         from orchestration.finalizer import finalize_workflow
-        from orchestration.utils import generate_scorecard
 
         scorecard = generate_scorecard(
             results=results,
@@ -761,324 +764,21 @@ class WorkflowOrchestrator:
         workflow_allowed_tools: list | None,
         start_time: float,
     ) -> str:
-        # Create shared blackboard for cross-subtask context
-        from orchestration.workflows.blackboard import SharedBlackboard
+        """Delegate to DevelopmentOrchestrator.run()."""
+        from orchestration.workflows.development import DevelopmentOrchestrator
 
-        ctx.blackboard = SharedBlackboard()
-
-        agent_results: list[dict] = []
-
-        # Apply context compression if enabled
-        if settings.context_compression:
-            if (
-                ContextManager.estimate_tokens(conversation_history)
-                > settings.max_context_tokens * 0.8
-            ):
-                conversation_history = ContextManager.compress_history(
-                    conversation_history, max_tokens=settings.max_context_tokens
-                )
-
-        subtasks_list = await decompose_task(
-            query,
-            is_follow_up=ctx.is_follow_up,
-            conversation_history=conversation_history,
-            project_root=project_root,
-        )
-
-        await emit_system(events, f"📊 {len(subtasks_list)} subtareas generadas")
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": len(subtasks_list),
-                "subtasks_completed": 0,
-                "status": "Descomponiendo",
-                "subtask_list": [
-                    {
-                        "name": (t if isinstance(t, str) else t.get("description", str(t)))[:60],
-                        "status": "pending",
-                    }
-                    for t in subtasks_list
-                ],
-            },
-        )
-
-        G = nx.DiGraph()
-        for i, task in enumerate(subtasks_list):
-            if isinstance(task, dict):
-                task_desc = task.get("description", str(task))
-                agent = task.get("agent", settings.fallback_agent)
-            else:
-                task_desc = str(task)
-                agent = settings.fallback_agent
-
-            G.add_node(i, task=task_desc, agent=agent, status="pending")
-            if i > 0:
-                G.add_edge(i - 1, i)
-
-        logger.info("🔍 Supervisor revisando selección de agentes...")
-        router_selections = []
-
-        primary_type = task_analysis.get("primary_type", "mixed")
-
-        for task in subtasks_list:
-            desc = task if isinstance(task, str) else task.get("description", str(task))
-            best_agent = await agent_router.select_best_agent(
-                desc,
-                primary_type=primary_type,
-                allowed_agents=allowed_agents,
-            )
-            router_selections.append(best_agent)
-
-        corrected_agents = await WorkflowSupervisor.review_and_correct(
-            task_analysis,
-            router_selections,
-            subtasks_list,
-            allowed_agents=allowed_agents or [],
-        )
-
-        for node in G.nodes():
-            if node < len(corrected_agents):
-                G.nodes[node]["agent"] = corrected_agents[node]
-
-        await update_live_diagram(G, events)
-
-        results: dict[int, dict[str, Any]] = {}
-        for node in nx.topological_sort(G):
-            forced_agent = corrected_agents[node] if node < len(corrected_agents) else None
-            task_desc = G.nodes[node]["task"]
-            agent = G.nodes[node]["agent"]
-
-            await emit_stats(
-                events,
-                {
-                    "current_agent": agent.capitalize(),
-                    "status": f"Ejecutando subtarea {node + 1}",
-                    "subtask_list": _build_subtask_list(subtasks_list, results, node, "running"),
-                },
-            )
-
-            try:
-                # Filter tool messages without tool_call_id (DeepSeek rejects them)
-                clean_history = [
-                    m
-                    for m in conversation_history
-                    if m.get("role") not in ("tool",) or m.get("tool_call_id")
-                ]
-                result = await execute_subtask_safe(
-                    node=node,
-                    task=task_desc,
-                    G=G,
-                    conversation_history=clean_history,
-                    current_pdf_text=ctx.current_pdf_text,
-                    ctx=ctx,
-                    events=events,
-                    forced_agent=forced_agent,
-                    task_analysis=task_analysis,
-                )
-            except Exception as e:
-                logger.error(f"Subtask {node} failed with exception: {e}")
-                result = {
-                    "status": "failed",
-                    "result": f"Error in subtask {node}: {e}",
-                    "files_written": [],
-                }
-
-            results[node] = result
-
-            # Write to blackboard for cross-subtask context
-            if ctx.blackboard is not None:
-                await ctx.blackboard.write(
-                    f"subtask_{node}_result",
-                    {
-                        "task": task_desc[:200],
-                        "agent": agent,
-                        "status": result.get("status", "completed"),
-                        "files_written": result.get("files_written", []),
-                    },
-                    phase="default",
-                )
-
-            # Append agent/tool messages for export (NOT to LLM conversation_history)
-            result_text = str(result.get("result", ""))[:800]
-            if result_text.strip():
-                agent_results.append(
-                    {
-                        "role": "agent",
-                        "content": f"[{agent.capitalize()} - {str(task_desc)[:60]}]\n{result_text}",
-                    }
-                )
-            files_written = result.get("files_written", [])
-            if files_written:
-                agent_results.append(
-                    {"role": "tool", "content": f"Files written: {', '.join(files_written[:10])}"}
-                )
-            files_written = result.get("files_written", [])
-            if files_written:
-                conversation_history.append(
-                    {
-                        "role": "tool",
-                        "content": f"Files written: {', '.join(files_written[:10])}",
-                    }
-                )
-
-            if result.get("status") == "clarification_needed":
-                ctx.last_clarification = result["clarification_question"]
-                blackboard_snap = ctx.blackboard.snapshot() if ctx.blackboard is not None else None
-                paused_data = {
-                    "subtask_index": node,
-                    "subtasks": subtasks_list,
-                    "results": results,
-                    "corrected_agents": corrected_agents,
-                    "paused_loop_state": result["paused_loop_state"],
-                    "conversation_history": conversation_history,
-                    "task_analysis": task_analysis,
-                    "G_nodes": [G.nodes[i] for i in range(len(G.nodes))],
-                    "blackboard_snapshot": blackboard_snap,
-                }
-                await _save_paused_session(
-                    conv_id=ctx.conversation_id,
-                    query=query,
-                    question=result["clarification_question"],
-                    options=result.get("clarification_options", []),
-                    paused_state=paused_data,
-                )
-                logger.info(
-                    f"⏸️ Workflow pausado en subtarea {node + 1}: {result['clarification_question'][:80]}"
-                )
-                return "[PAUSED:clarification_needed]"
-
-            completed = sum(1 for r in results.values() if r.get("status") == "completed")
-            await emit_stats(
-                events,
-                {
-                    "subtasks_completed": completed,
-                    "subtask_list": _build_subtask_list(subtasks_list, results, node, "completed"),
-                },
-            )
-            await update_live_diagram(G, events)
-
-        # Collect all files modified by subtasks
-        all_files_written = _collect_files_written(results)
-
-        # ────────────────────────────────────────────────────────
-        # ╔══════════════════════════════════════════════════════╗
-        # ║         GLOBAL PROJECT VERIFICATION                  ║
-        # ╚══════════════════════════════════════════════════════╝
-        if project_root:
-            await emit_system(events, "🔍 Realizando verificación global del proyecto...")
-            await emit_stats(
-                events, {"status": "Verificando proyecto", "current_agent": "Verificador"}
-            )
-
-            best_agent = corrected_agents[0] if corrected_agents else settings.default_agent
-
-            global_ok = await _run_global_verification(
-                query=query,
-                project_root=project_root,
-                workspace=ctx.workspace,
-                allowed_tools=workflow_allowed_tools or ["file_manager", "git_manager"],
-                best_agent=best_agent,
-                events=events,
-            )
-            if global_ok:
-                await emit_system(events, "✅ Verificación global superada.")
-            else:
-                await emit_system(
-                    events,
-                    "⚠️ Se detectaron incumplimientos globales; se aplicaron correcciones automáticas.",
-                )
-        # ────────────────────────────────────────────────────────
-        # Update all_files_written with what was actually created
-        if project_root:
-            base = paths.memory_dir(ctx.workspace) / project_root
-            if base.exists():
-                for fpath in base.rglob("*"):
-                    if fpath.is_file() and fpath.suffix in {
-                        ".py",
-                        ".txt",
-                        ".md",
-                        ".yml",
-                        ".yaml",
-                        ".json",
-                        ".cfg",
-                        ".ini",
-                        ".toml",
-                    }:
-                        rel = str(fpath.relative_to(base))
-                        if rel not in all_files_written:
-                            all_files_written.append(rel)
-
-        await emit_system(events, "🔄 Preparando la respuesta final...")
-        await emit_stats(events, {"status": "Sintetizando", "current_agent": "ResultAggregator"})
-
-        try:
-            final_content = await ResultAggregator.aggregate_results(
-                query,
-                results,
-                G,
-                task_analysis,
-                files_written=all_files_written,
-                project_root=project_root,
-                workspace=workspace,
-            )
-        except Exception as e:
-            logger.error(f"Result aggregation failed: {e}")
-            # Fallback: build a simple summary from raw results
-            result_summaries = []
-            for node, r in results.items():
-                status = r.get("status", "unknown")
-                output = r.get("result", str(r))[:200]
-                result_summaries.append(f"- Subtask {node}: {status} — {output}")
-            final_content = (
-                "⚠️ Result aggregation encountered an error. Partial results:\n\n"
-                + "\n".join(result_summaries)
-            )
-
-        # Apply anti-distillation protection
-        from core.security.undercover_mode import undercover
-
-        final_content = undercover.get_safe_response(final_content)
-
-        scorecard = generate_scorecard(
-            results, G, final_content, query, task_analysis, start_time, ctx.enc
-        )
-        elapsed = round(time.monotonic() - start_time, 1)
-
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": len(subtasks_list),
-                "subtasks_completed": len(results),
-                "tokens_used": scorecard.get("tokens", 0),
-                "elapsed_time": f"{elapsed}s",
-                "current_agent": "—",
-                "status": "Completado",
-                "files_written": all_files_written,
-            },
-        )
-
-        export_history = list(conversation_history) + agent_results
-        await finalize_workflow(
+        return await DevelopmentOrchestrator.run(
             query=query,
-            final_output=final_content,
-            conversation_history=export_history,
-            conversation_id=ctx.conversation_id,
-            scorecard=scorecard,
-            subtasks_list=subtasks_list,
+            conversation_history=conversation_history,
             task_analysis=task_analysis,
-            G=G,
+            ctx=ctx,
             events=events,
             project_root=project_root,
-            workspace=ctx.workspace,
-            files_written=all_files_written,
+            workspace=workspace,
+            allowed_agents=allowed_agents,
+            workflow_allowed_tools=workflow_allowed_tools,
+            start_time=start_time,
         )
-
-        if final_content and final_content.strip():
-            from orchestration.events import emit_assistant
-
-            await emit_assistant(events, final_content)
-
-        return final_content
 
     @staticmethod
     async def resume_workflow(session: Session, answer: str) -> str | None:
@@ -1108,14 +808,12 @@ class WorkflowOrchestrator:
                 return None
 
             paused.clarification_answer = answer
-            paused.resolved_at = (
-                __import__("datetime").datetime.now(__import__("datetime").UTC).replace(tzinfo=None)
-            )
+            paused.resolved_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
             db_session.add(paused)
 
         paused_data = paused.paused_state
         if isinstance(paused_data, str):
-            paused_data = __import__("json").loads(paused_data)
+            paused_data = json.loads(paused_data)
         question = paused.clarification_question
 
         # Restore blackboard if saved
@@ -1159,7 +857,6 @@ class WorkflowOrchestrator:
             }
 
         # Ejecutar las subtareas restantes (si hay)
-        import networkx as nx
 
         G = nx.DiGraph()
         for i, task in enumerate(subtasks):
@@ -1170,7 +867,7 @@ class WorkflowOrchestrator:
         conversation_history.append({"role": "user", "content": f"[Clarificación] {answer}"})
 
         for node in range(current_idx + 1, len(subtasks)):
-            if session.is_cancelled:
+            if session.is_cancelled or ctx.cancelled:
                 break
             forced_agent = corrected_agents[node] if node < len(corrected_agents) else None
             task_desc = G.nodes[node]["task"]
@@ -1184,16 +881,19 @@ class WorkflowOrchestrator:
             )
 
             try:
-                subtask_result = await execute_subtask_safe(
-                    node=node,
-                    task=task_desc,
-                    G=G,
-                    conversation_history=conversation_history,
-                    current_pdf_text=ctx.current_pdf_text,
-                    ctx=ctx,
-                    events=events,
-                    forced_agent=forced_agent,
-                    task_analysis=paused_data.get("task_analysis"),
+                subtask_result = await asyncio.wait_for(
+                    execute_subtask_safe(
+                        node=node,
+                        task=task_desc,
+                        G=G,
+                        conversation_history=conversation_history,
+                        current_pdf_text=ctx.current_pdf_text,
+                        ctx=ctx,
+                        events=events,
+                        forced_agent=forced_agent,
+                        task_analysis=paused_data.get("task_analysis"),
+                    ),
+                    timeout=SUBTASK_TIMEOUT,
                 )
                 if subtask_result.get("status") == "clarification_needed":
                     # Pausa anidada — guardar y retornar
@@ -1212,13 +912,13 @@ class WorkflowOrchestrator:
                     )
                     return "[PAUSED:clarification_needed]"
                 paused_results[node] = subtask_result
-            except Exception as e:
+            except (TimeoutError, Exception) as e:
                 logger.error(f"Subtask {node} failed during resume: {e}")
                 paused_results[node] = {"status": "failed", "result": str(e), "files_written": []}
 
         # Finalizar — agregar y finalizar
         query = ctx.query
-        from orchestration.aggregator import ResultAggregator  # noqa: F811
+        from orchestration.aggregator import ResultAggregator
 
         all_files = _collect_files_written(paused_results)
         final_content = await ResultAggregator.aggregate_results(
@@ -1229,6 +929,7 @@ class WorkflowOrchestrator:
             files_written=all_files,
             project_root=ctx.project_root,
             workspace=ctx.workspace,
+            agent_type=paused_data.get("task_analysis", {}).get("primary_type", "developer"),
         )
 
         await finalize_workflow(

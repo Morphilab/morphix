@@ -106,7 +106,7 @@ async def _execute_specialized_agent(
                     try:
                         await on_stream_chunk(chunk.text)
                     except Exception:
-                        pass
+                        logger.warning("Stream chunk callback failed", exc_info=True)
                 if chunk.is_done and not full_text:
                     full_text = chunk.finish_reason or ""
             initial_result = full_text.strip()
