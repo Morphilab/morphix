@@ -1,0 +1,129 @@
+site_name: Morphix Documentation
+site_description: AI-powered coding assistant with multi-agent orchestration
+repo_url: https://github.com/morphilab/morphix
+repo_name: morphilab/morphix
+exclude_docs: superpowers/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            show_source: true
+            show_root_heading: true
+            show_category_heading: true
+            docstring_style: google
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+
+markdown_extensions:
+  - attr_list
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - footnotes
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - User Guide:
+      - user-guide/index.md
+      - GUI Overview: user-guide/gui-overview.md
+      - Maestro Cockpit: user-guide/maestro-cockpit.md
+      - Dashboard: user-guide/dashboard.md
+      - Editor Tab: user-guide/editor-tab.md
+      - History Tab: user-guide/history-tab.md
+      - Config Tab: user-guide/config-tab.md
+      - Analytics Tab: user-guide/analytics-tab.md
+      - Workflows:
+          - Overview: user-guide/workflows.md
+          - Development: user-guide/workflows/development-workflow.md
+          - Coordinated: user-guide/workflows/coordinated-workflow.md
+          - Collaborative: user-guide/workflows/collaborative-workflow.md
+          - TDD: user-guide/workflows/tdd-workflow.md
+      - Agents: user-guide/agents.md
+      - Tools: user-guide/tools.md
+      - Projects & Workspaces: user-guide/projects.md
+      - Export: user-guide/export.md
+      - Prompt Examples: user-guide/prompts-examples.md
+  - Architecture:
+      - architecture/index.md
+      - Design Decisions: architecture/design-decisions.md
+      - Data Flow: architecture/data-flow.md
+      - Workspace System: architecture/workspace-system.md
+      - Streaming: architecture/streaming.md
+      - Security Model: architecture/security-model.md
+      - Memory System: architecture/memory-system.md
+      - MCP Integration: architecture/mcp-integration.md
+      - Layers:
+          - Core Layer: architecture/layers/core-layer.md
+          - LLM Layer: architecture/layers/llm-layer.md
+          - Agents Layer: architecture/layers/agents-layer.md
+          - Tools Layer: architecture/layers/tools-layer.md
+          - Orchestration Layer: architecture/layers/orchestration-layer.md
+          - Desktop Layer: architecture/layers/desktop-layer.md
+  - Developer Guide:
+      - developer-guide/index.md
+      - Adding Tools: developer-guide/adding-tools.md
+      - Adding Agents: developer-guide/adding-agents.md
+      - Adding Workflows: developer-guide/adding-workflows.md
+      - Adding Hooks: developer-guide/adding-hooks.md
+      - Contributing: developer-guide/contributing.md
+      - Testing Guide: developer-guide/testing-guide.md
+  - API Reference:
+      - api-reference/index.md
+      - Core: api-reference/core.md
+      - LLM: api-reference/llm.md
+      - Agents: api-reference/agents.md
+      - Tools: api-reference/tools.md
+      - Orchestration: api-reference/orchestration.md
+      - Desktop: api-reference/desktop.md
+  - Changelog: changelog.md
+  - Testing Manual: MANUAL_DE_PRUEBAS.md
