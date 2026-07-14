@@ -1,0 +1,64 @@
+name: Morphix CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: morphix
+          POSTGRES_PASSWORD: morphix
+          POSTGRES_DB: morphix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://morphix:morphix@localhost:5432/morphix
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+      PASSWORD_HASH: ${{ secrets.PASSWORD_HASH }}
+      UNDERCOVER_MODE: "false"
+      DAEMON_MODE: "false"
+      OFFLINE_MODE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'poetry'
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev,docs
+
+      - name: Run pre-commit
+        run: poetry run pre-commit run --all-files
+
+      - name: Run tests with coverage
+        run: poetry run pytest --cov=core --cov=llm --cov=agents --cov=tools --cov=orchestration --cov-report=xml
+
+      - name: Run mypy type check
+        run: poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/
+
+      - name: Build documentation
+        run: poetry run mkdocs build --strict
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
