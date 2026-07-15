@@ -283,37 +283,37 @@ async def test_development_workflow_e2e():
         ) as mock_decompose,
         # Mock agent routing
         patch(
-            "orchestration.workflows.orchestrator.agent_router.select_best_agent",
+            "orchestration.workflows.development.agent_router.select_best_agent",
             new_callable=AsyncMock,
         ) as mock_router,
         # Mock supervisor correction
         patch(
-            "orchestration.workflows.orchestrator.WorkflowSupervisor.review_and_correct",
+            "orchestration.workflows.development.WorkflowSupervisor.review_and_correct",
             new_callable=AsyncMock,
         ) as mock_supervisor,
         # Mock subtask execution
         patch(
-            "orchestration.workflows.orchestrator.execute_subtask_safe",
+            "orchestration.workflows.development.execute_subtask_safe",
             new_callable=AsyncMock,
         ) as mock_subtask,
         # Mock result aggregation
         patch(
-            "orchestration.workflows.orchestrator.ResultAggregator.aggregate_results",
+            "orchestration.workflows.development.ResultAggregator.aggregate_results",
             new_callable=AsyncMock,
         ) as mock_aggregate,
         # Mock diagram
         patch(
-            "orchestration.workflows.orchestrator.update_live_diagram",
+            "orchestration.workflows.development.update_live_diagram",
             new_callable=AsyncMock,
         ),
         # Mock scorecard
         patch(
-            "orchestration.workflows.orchestrator.generate_scorecard",
+            "orchestration.workflows.development.generate_scorecard",
             return_value={"subtasks": 2, "completadas": 2, "tokens": 1000, "tiempo": "2.5s"},
         ),
         # Mock finalizer
         patch(
-            "orchestration.workflows.orchestrator.finalize_workflow",
+            "orchestration.workflows.development.finalize_workflow",
             new_callable=AsyncMock,
         ),
     ):
