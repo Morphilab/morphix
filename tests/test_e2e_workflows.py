@@ -278,7 +278,7 @@ async def test_development_workflow_e2e():
         ) as mock_analyze,
         # Mock task decomposition
         patch(
-            "orchestration.workflows.orchestrator.decompose_task",
+            "orchestration.workflows.development.decompose_task",
             new_callable=AsyncMock,
         ) as mock_decompose,
         # Mock agent routing
