@@ -148,7 +148,7 @@ class HistoryService:
             stmt = (
                 select(Conversation)
                 .where(Conversation.id.in_(conv_ids))  # type: ignore[arg-type,union-attr]
-                .options(selectinload(Conversation.messages))
+                .options(selectinload(Conversation.messages))  # type: ignore[arg-type]
             )
             result = await session.execute(stmt)
             conversations = {c.id: c for c in result.scalars().unique().all()}
