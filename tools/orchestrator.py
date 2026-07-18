@@ -178,7 +178,7 @@ class ToolOrchestrator:
                     result = (
                         await tool(**parameters)
                         if asyncio.iscoroutinefunction(tool)
-                        else tool(**parameters)
+                        else await asyncio.to_thread(tool, **parameters)
                     )
 
                 duration = time.time() - start_time
@@ -187,7 +187,11 @@ class ToolOrchestrator:
                 )
 
                 # Check internal tool success before logging
-                internal_ok = result.get("success", True) if isinstance(result, dict) else True
+                internal_ok = (
+                    result.get("success", True)
+                    if isinstance(result, dict)
+                    else not str(result).startswith("❌")
+                )
                 if not internal_ok:
                     error_msg = (
                         result.get("output", result.get("text", "unknown error"))
