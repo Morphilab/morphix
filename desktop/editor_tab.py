@@ -399,20 +399,43 @@ class EditorTab(QWidget):
         if not self._inside_project(path):
             self._status_label.setText("❌ Ruta fuera del proyecto")
             return
-        try:
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-            if self._current_file == path:
-                self._current_file = None
-                self._editor.blockSignals(True)
-                self._editor.clear()
-                self._editor.blockSignals(False)
-                self._editor.setReadOnly(True)
-                self._save_btn.setEnabled(False)
-                self._dirty = False
-                self._path_label.setText("Selecciona un archivo del árbol")
-            self._status_label.setText(f"🗑️ Eliminado: {path.name}")
-        except Exception as e:
-            self._status_label.setText(f"❌ Error: {e}")
+
+        from PySide6.QtCore import QThread
+        from PySide6.QtCore import Signal as QSignal
+
+        class _DeleteWorker(QThread):
+            done = QSignal(bool, str)
+
+            def __init__(self, p, is_dir):
+                super().__init__()
+                self._path = p
+                self._is_dir = is_dir
+
+            def run(self):
+                try:
+                    if self._is_dir:
+                        shutil.rmtree(self._path)
+                    else:
+                        self._path.unlink()
+                    self.done.emit(True, "")
+                except Exception as e:
+                    self.done.emit(False, str(e))
+
+        self._delete_worker = _DeleteWorker(path, path.is_dir())
+        self._delete_worker.done.connect(lambda ok, err: self._on_delete_done(path, ok, err))
+        self._delete_worker.start()
+
+    def _on_delete_done(self, path, success, error):
+        if not success:
+            self._status_label.setText(f"❌ Error: {error}")
+            return
+        if self._current_file == path:
+            self._current_file = None
+            self._editor.blockSignals(True)
+            self._editor.clear()
+            self._editor.blockSignals(False)
+            self._editor.setReadOnly(True)
+            self._save_btn.setEnabled(False)
+            self._dirty = False
+            self._path_label.setText("Selecciona un archivo del árbol")
+        self._status_label.setText(f"🗑️ Eliminado: {path.name}")

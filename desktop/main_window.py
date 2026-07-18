@@ -122,16 +122,37 @@ class LoginDialog(QDialog):
                 self._reset_login_ui()
                 return
 
-            if bcrypt.checkpw(password.encode(), settings.password_hash.encode()):
-                self._logged_in = True
-                self.accept()
-            else:
-                self._show_error("Contraseña incorrecta")
-                self._reset_login_ui()
+            import concurrent.futures
+
+            self._login_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            self._login_future = self._login_pool.submit(
+                bcrypt.checkpw, password.encode(), settings.password_hash.encode()
+            )
+            self._poll_login()
         except Exception as e:
             logger.error(f"Error en login: {e}", exc_info=True)
             self._show_error(f"Error: {e!s}")
             self._reset_login_ui()
+
+    def _poll_login(self):
+        """Poll the bcrypt future without blocking the UI."""
+        if self._login_future.done():
+            try:
+                result = self._login_future.result()
+                if result:
+                    self._logged_in = True
+                    self.accept()
+                else:
+                    self._show_error("Contraseña incorrecta")
+                    self._reset_login_ui()
+            except Exception as e:
+                logger.error(f"Error en login: {e}", exc_info=True)
+                self._show_error(f"Error: {e!s}")
+                self._reset_login_ui()
+            finally:
+                self._login_pool.shutdown(wait=False)
+        else:
+            QTimer.singleShot(50, self._poll_login)
 
     def _reset_login_ui(self):
         self.login_btn.setEnabled(True)

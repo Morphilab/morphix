@@ -2,7 +2,6 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication,
     QFrame,
     QLabel,
     QPushButton,
@@ -153,12 +152,10 @@ class DebateSection(QWidget):
     def append_chunk(self, agent_name: str, chunk: str):
         self.start_agent(agent_name)
         self._blocks[agent_name].append_text(chunk)
-        QApplication.processEvents()
 
     def set_status(self, agent_name: str, status: str):
         if agent_name in self._blocks:
             self._blocks[agent_name].set_status(status)
-            QApplication.processEvents()
 
     def clear(self):
         for block in self._blocks.values():

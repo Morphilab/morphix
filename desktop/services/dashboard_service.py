@@ -20,9 +20,17 @@ class DashboardService:
             if platform.system() == "Windows":
                 os.startfile(log_path)  # type: ignore[attr-defined]
             elif platform.system() == "Linux":
-                subprocess.run(["xdg-open", log_path], check=False)
+                subprocess.Popen(
+                    ["xdg-open", log_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             else:
-                subprocess.run(["open", log_path], check=False)
+                subprocess.Popen(
+                    ["open", log_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             return {"success": True}
         except Exception as e:
             logger.error("Error abriendo logs: %s", e)
