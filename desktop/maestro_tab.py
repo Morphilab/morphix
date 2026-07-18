@@ -547,19 +547,43 @@ class MaestroTab(QWidget):
         if not path:
             return
         try:
+            from PySide6.QtCore import QThread
+            from PySide6.QtCore import Signal as QSignal
+
             from tools.pdf_reader import PDFReader
 
-            text = PDFReader.read_pdf(path)
-            if text and not text.startswith("Error"):
-                self._current_pdf_text = text
-                self._on_system(
-                    f"📄 PDF cargado ({len(text)} caracteres): {os.path.basename(path)}"
-                )
-            else:
-                self._on_system(f"❌ {text}")
+            class _PdfWorker(QThread):
+                done = QSignal(str, str)
+
+                def __init__(self, pdf_path):
+                    super().__init__()
+                    self._path = pdf_path
+
+                def run(self):
+                    try:
+                        text = PDFReader.read_pdf(self._path)
+                        self.done.emit(text, "")
+                    except Exception as e:
+                        self.done.emit("", str(e))
+
+            self._pdf_worker = _PdfWorker(path)
+            self._pdf_worker.done.connect(self._on_pdf_loaded)
+            self._pdf_worker.start()
+            self._on_system(f"📄 Cargando PDF: {os.path.basename(path)}...")
         except Exception as e:
             logger.debug(f"Error cargando PDF: {e}", exc_info=True)
             self._on_system(f"❌ Error cargando PDF: {e}")
+
+    def _on_pdf_loaded(self, text, error):
+        if error:
+            self._on_system(f"❌ Error cargando PDF: {error}")
+            return
+        if text and not text.startswith("Error"):
+            self._current_pdf_text = text
+            path = self.pdf_path_field.text().strip()
+            self._on_system(f"📄 PDF cargado ({len(text)} caracteres): {os.path.basename(path)}")
+        else:
+            self._on_system(f"❌ {text}")
 
     def _download_conversation(self):
         if not self._history:
@@ -855,21 +879,43 @@ class MaestroTab(QWidget):
             self._on_system(f"❌ Ya existe un proyecto llamado '{name}'")
             return
 
-        try:
-            self._on_system(f"📂 Copiando '{src_path.name}' → code_projects/{name}...")
-            shutil.copytree(str(src_path), str(dst))
-        except Exception as e:
-            logger.warning("Unhandled exception in MaestroTab", exc_info=True)
-            self._on_system(f"❌ Error copiando proyecto: {e}")
-            return
+        self._on_system(f"📂 Copiando '{src_path.name}' → code_projects/{name}...")
 
-        self._current_project_root = f"code_projects/{name}"
-        self._update_project_display(name)
-        self._refresh_project_list()
+        from PySide6.QtCore import QThread
+        from PySide6.QtCore import Signal as QSignal
+
+        class _CopyWorker(QThread):
+            done = QSignal(bool, str)
+
+            def __init__(self, src, dst):
+                super().__init__()
+                self._src = src
+                self._dst = dst
+
+            def run(self):
+                try:
+                    shutil.copytree(str(self._src), str(self._dst))
+                    self.done.emit(True, "")
+                except Exception as e:
+                    self.done.emit(False, str(e))
+
+        self._copy_worker = _CopyWorker(src_path, dst)
+        self._copy_worker.done.connect(self._on_import_done)
+        self._copy_worker.start()
+
+    def _on_import_done(self, success, error):
+        from pathlib import Path
+
+        if success:
+            name = Path(self._copy_worker._dst).name
+            file_count = sum(1 for _ in Path(self._copy_worker._dst).rglob("*") if _.is_file())
+            self._on_system(f"✅ Proyecto importado: {name} ({file_count} archivos)")
+            self._refresh_project_list()
+        else:
+            logger.warning("Unhandled exception in MaestroTab", exc_info=True)
+            self._on_system(f"❌ Error copiando proyecto: {error}")
         self._preload_btn.setEnabled(True)
         self._preload_status.setText("")
-        file_count = sum(1 for _ in dst.rglob("*") if _.is_file())
-        self._on_system(f"✅ Proyecto '{name}' importado ({file_count} archivos)")
 
     def _preload_project(self):
         if not self._current_project_root:

@@ -144,6 +144,35 @@ class UndercoverMode:
         self, original_response: str, workspace: str = "main", skip_watermark: bool = False
     ) -> str:
         """Clean and protect the final response. Redacts internal terms and checks for injection."""
+        safe = self._clean_response(original_response)
+
+        # Inject honeypot at escalation level 3+
+        if distillation_tracker.is_honeypot_active():
+            safe = honeypot_injector.inject(safe)
+
+        return self.add_watermark(safe, workspace, skip_watermark=skip_watermark)
+
+    async def get_safe_response_async(
+        self, original_response: str, workspace: str = "main", skip_watermark: bool = False
+    ) -> str:
+        """Async version — non-blocking throttle delay via asyncio.sleep."""
+        safe = self._clean_response(original_response)
+
+        # Inject honeypot at escalation level 3+
+        if distillation_tracker.is_honeypot_active():
+            safe = honeypot_injector.inject(safe)
+
+        # Apply throttle delay if escalation level 2+ (non-blocking)
+        delay = distillation_tracker.get_throttle_delay()
+        if delay > 0:
+            import asyncio
+
+            await asyncio.sleep(delay)
+
+        return self.add_watermark(safe, workspace, skip_watermark=skip_watermark)
+
+    def _clean_response(self, original_response: str) -> str:
+        """Redact internal terms and check for injection in LLM output."""
         safe = re.sub(
             r"(?i)(system prompt|internal architecture|self-healing|memory\.write|"
             r"tool_orchestrator|feature_flags|kairos|base_agents|restricted_executor)",
@@ -159,16 +188,7 @@ class UndercoverMode:
                 safe,
             )
 
-        # Inject honeypot at escalation level 3+
-        if distillation_tracker.is_honeypot_active():
-            safe = honeypot_injector.inject(safe)
-
-        # Apply throttle delay if escalation level 2+
-        delay = distillation_tracker.get_throttle_delay()
-        if delay > 0:
-            time.sleep(delay)
-
-        return self.add_watermark(safe, workspace, skip_watermark=skip_watermark)
+        return safe
 
     def check_response(self, response: str) -> bool:
         """Scan LLM/tool output for indirect injection patterns.

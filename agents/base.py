@@ -150,7 +150,7 @@ async def _execute_specialized_agent(
             )
 
         # Apply anti-distillation protection to agent output
-        final_result = undercover.get_safe_response(final_result)
+        final_result = await undercover.get_safe_response_async(final_result)
 
         return final_result
 
