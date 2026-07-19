@@ -65,6 +65,15 @@ class MemoryManager:
             return None
         return self.embedder.encode(text)
 
+    async def _embed_async(self, text: str):
+        """Async wrapper — offloads CPU-bound embedding to a thread."""
+        import asyncio
+
+        if not self.embedder.wait_until_ready(timeout=60):
+            logger.warning("Modelo de embeddings no disponible tras timeout")
+            return None
+        return await asyncio.to_thread(self.embedder.encode, text)
+
     # ==================== HELPERS ====================
     def get_user_summary(self) -> str:
         profile = self.get_user_profile()
@@ -194,7 +203,7 @@ class MemoryManager:
 
         # Pre-compute embedding OUTSIDE the lock to avoid blocking other
         # memory operations while the model generates the vector.
-        embedding = self._embed(str(value))
+        embedding = await self._embed_async(str(value))
         if embedding is None:
             logger.error(f"❌ Embedding no disponible para '{key}'")
             return False
@@ -650,6 +659,46 @@ VALUE: {safe_value}
             except Exception as e:
                 logger.error(f"Error en búsqueda semántica: {e}")
                 return []
+
+    async def search_async(self, query: str, k: int = 5, min_similarity: float = 0.0) -> list[dict]:
+        """Async version — offloads embedding computation to a thread."""
+        import asyncio
+
+        query_emb = await self._embed_async(query)
+        if query_emb is None:
+            return []
+
+        def _faiss_search():
+            with self._lock:
+                if self.index is None or self.index.ntotal == 0:
+                    return []
+                try:
+                    distances, indices = self.index.search(
+                        query_emb.reshape(1, -1), min(k, self.index.ntotal)
+                    )
+                    results = []
+                    for dist, idx in zip(distances[0], indices[0], strict=False):
+                        if idx < 0 or idx >= len(self.documents):
+                            continue
+                        similarity_score = 1.0 / (1.0 + dist)
+                        if similarity_score < min_similarity and min_similarity > 0:
+                            continue
+                        key, val = self.documents[idx]
+                        self._access_log[key] = time.time()
+                        results.append(
+                            {
+                                "key": key,
+                                "value": val,
+                                "distance": float(dist),
+                                "similarity": round(1.0 / (1.0 + float(dist)), 4),
+                            }
+                        )
+                    return results
+                except Exception as e:
+                    logger.error(f"Error en búsqueda semántica: {e}")
+                    return []
+
+        return await asyncio.to_thread(_faiss_search)
 
     def read(self, key: str) -> Any:
         with self._lock:

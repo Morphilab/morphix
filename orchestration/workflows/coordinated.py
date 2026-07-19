@@ -198,6 +198,7 @@ class MultiAgentCoordinator:
         allowed_tools: list[str] | None = None,
         events=None,
         session=None,
+        ctx=None,
     ) -> dict[str, dict]:
         """Execute subtasks respecting DAG dependencies with parallel branches.
 
@@ -215,6 +216,11 @@ class MultiAgentCoordinator:
         remaining = {st["id"]: st for st in subtasks}
 
         while remaining:
+            # Check for user cancellation
+            if ctx and getattr(ctx, "cancelled", False):
+                logger.info("🛑 Coordinated workflow cancelled by user")
+                break
+
             # Find subtasks whose dependencies are all completed
             ready = []
             for sid, st in list(remaining.items()):
@@ -270,7 +276,7 @@ class MultiAgentCoordinator:
                         )
                         results[sid] = {
                             "status": "failed",
-                            "result": "Timeout after 180s",
+                            "result": "Timeout after 300s",
                             "error": "timeout",
                             "files_written": [],
                         }
@@ -385,6 +391,14 @@ class MultiAgentCoordinator:
             else:
                 agent_filtered_tools = expanded_profile
 
+        logger.info(
+            "Subtask '%s' | agent=%s | tools=%s | project_root=%s",
+            sid,
+            agent,
+            agent_filtered_tools,
+            project_root,
+        )
+
         try:
             result = await asyncio.wait_for(
                 execute_agent_loop(
@@ -397,7 +411,7 @@ class MultiAgentCoordinator:
                     session=session,
                     config=AgentLoopConfig(max_agent_iterations=settings.max_agent_iterations),
                 ),
-                timeout=180,
+                timeout=300,
             )
         except TimeoutError:
             return {
@@ -421,11 +435,19 @@ class MultiAgentCoordinator:
         if session and hasattr(session, "events") and session.events:
             await emit_agent(session.events, agent, desc[:50], str(result_text)[:500])
 
+        files_written = result.get("files_written", []) if isinstance(result, dict) else []
+        subtask_status = result.get("status", "done") if isinstance(result, dict) else "done"
+        logger.info(
+            "Subtask '%s' complete | status=%s | files_written=%s",
+            sid,
+            subtask_status,
+            files_written,
+        )
         return {
-            "status": result.get("status", "done") if isinstance(result, dict) else "done",
+            "status": subtask_status,
             "result": result_text,
             "agent": agent,
-            "files_written": result.get("files_written", []) if isinstance(result, dict) else [],
+            "files_written": files_written,
             "error": None,
         }
 
@@ -445,7 +467,7 @@ class MultiAgentCoordinator:
         """
         import re
 
-        from core.path_resolver import paths
+        from core.path_resolver import PathResolver, paths
 
         desc = st.get("description", st.get("id", ""))
 
@@ -462,7 +484,8 @@ class MultiAgentCoordinator:
         if not project_root or not workspace:
             return False, ""
 
-        base = paths.memory_dir(workspace) / project_root
+        normalized_root = PathResolver.normalize_project_root(project_root) or project_root
+        base = paths.memory_dir(workspace) / normalized_root
         if not base.exists():
             return False, ""
 
@@ -471,7 +494,7 @@ class MultiAgentCoordinator:
             if not target.exists():
                 continue
             try:
-                content = target.read_text(encoding="utf-8")
+                content = await asyncio.to_thread(target.read_text, encoding="utf-8")
             except Exception:
                 continue
             func_count = len(re.findall(r"^\s*def\s+\w+\s*\(", content, re.MULTILINE))

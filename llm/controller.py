@@ -120,11 +120,11 @@ class ModelsController:
         stream: bool = False,
         tools: list[dict] | None = None,
         tool_choice: str = "auto",
+        max_retries: int | None = None,
         **kwargs: Any,
     ) -> Any:
         """ÚNICO punto de entrada para todas las llamadas LLM.
-        Soporta function-calling nativo vía tools= (OpenAI, DeepSeek, Grok).
-        Ollama recibe tools como instrucciones textuales."""
+        Soporta function-calling nativo vía tools= (OpenAI, DeepSeek, Grok, Ollama)."""
         self._load_kairos_config()
 
         from core.rate_limiter import get_rate_limiter
@@ -172,7 +172,8 @@ class ModelsController:
         role_config = _settings.model_roles.get(role, _settings.model_roles["default"])
         max_tokens = role_config.get("max_tokens")
 
-        for attempt in range(1, self.max_retries + 1):
+        for attempt in range(1, (max_retries if max_retries is not None else self.max_retries) + 1):
+            _max = max_retries if max_retries is not None else self.max_retries
             try:
                 if isinstance(client, OpenAI):
                     call_kwargs: dict = {
@@ -192,13 +193,16 @@ class ModelsController:
                     ollama_options: dict[str, Any] = {"temperature": temp}
                     if max_tokens:
                         ollama_options["num_predict"] = max_tokens
-                    response = client.chat(
-                        model=model,
-                        messages=messages,
-                        stream=stream,
-                        options=ollama_options,
-                        **kwargs,
-                    )
+                    ollama_kwargs: dict[str, Any] = {
+                        "model": model,
+                        "messages": messages,
+                        "stream": stream,
+                        "options": ollama_options,
+                    }
+                    if tools:
+                        ollama_kwargs["tools"] = tools
+                    ollama_kwargs.update(kwargs)
+                    response = client.chat(**ollama_kwargs)
 
                 # Track usage + cache metrics
                 self._track_usage(response)
@@ -209,15 +213,13 @@ class ModelsController:
                 return self._normalize_response(response)
 
             except (OpenAITimeoutError, httpx.TimeoutException):
-                logger.warning(
-                    "⏳ Timeout en intento %d/%d (rol: %s)", attempt, self.max_retries, role
-                )
+                logger.warning("⏳ Timeout en intento %d/%d (rol: %s)", attempt, _max, role)
             except APIError as e:
-                logger.warning(f"⚠️ APIError en intento {attempt}/{self.max_retries}: {e}")
+                logger.warning(f"⚠️ APIError en intento {attempt}/{_max}: {e}")
             except Exception as e:
                 logger.error(f"Error inesperado en llamada LLM (rol: {role})", exc_info=True)
 
-            if attempt < self.max_retries:
+            if attempt < _max:
                 delay = self.backoff_factor**attempt + 0.5
                 await asyncio.sleep(delay)
 
@@ -246,6 +248,7 @@ class ModelsController:
                 model=model,
                 messages=ollama_messages,
                 options={"temperature": temp},
+                **({"tools": tools} if tools else {}),
                 **kwargs,
             )
             self._track_budget(response)
@@ -336,6 +339,7 @@ class ModelsController:
                         messages,
                         temp,
                         max_tokens=_max_tokens,
+                        tools=tools,
                         **kwargs,
                     ):
                         if chunk.usage:
@@ -375,6 +379,7 @@ class ModelsController:
                 temperature=temperature,
                 tools=tools,
                 tool_choice=tool_choice,
+                max_retries=0,
                 **kwargs,
             )
             text = response.choices[0].message.content if response.choices else ""
@@ -467,7 +472,7 @@ class ModelsController:
                             )
 
     async def _stream_ollama(
-        self, client, model, messages, temp, max_tokens=None, **kwargs
+        self, client, model, messages, temp, max_tokens=None, tools=None, **kwargs
     ) -> AsyncGenerator[StreamChunk, None]:
         """Streaming desde Ollama API con cola para streaming real.
 
@@ -490,6 +495,7 @@ class ModelsController:
                     messages=messages,
                     stream=True,
                     options=ollama_options,
+                    **({"tools": tools} if tools else {}),
                     **kwargs,
                 )
                 for chunk in response:

@@ -442,7 +442,7 @@ async def _build_extra_context(
 
     # 2.5 — Memoria FAISS: buscar tareas similares anteriores
     try:
-        past = memory_manager.search(task, k=2, min_similarity=0.3)
+        past = await memory_manager.search_async(task, k=2, min_similarity=0.3)
         if past:
             past_text = "\n".join(
                 f"- [{r.get('key', '?')}]: {str(r.get('value', ''))[:300]}" for r in past

@@ -193,7 +193,7 @@ class DevelopmentOrchestrator:
                     ),
                     timeout=SUBTASK_TIMEOUT,
                 )
-            except (TimeoutError, Exception) as e:
+            except Exception as e:
                 logger.error(f"Subtask {node} failed with exception: {e}")
                 result = {
                     "status": "failed",
@@ -242,13 +242,16 @@ class DevelopmentOrchestrator:
                     "G_nodes": [G.nodes[i] for i in range(len(G.nodes))],
                     "blackboard_snapshot": blackboard_snap,
                 }
-                await _save_paused_session(
-                    conv_id=ctx.conversation_id,
-                    query=query,
-                    question=result["clarification_question"],
-                    options=result.get("clarification_options", []),
-                    paused_state=paused_data,
-                )
+                try:
+                    await _save_paused_session(
+                        conv_id=ctx.conversation_id,
+                        query=query,
+                        question=result["clarification_question"],
+                        options=result.get("clarification_options", []),
+                        paused_state=paused_data,
+                    )
+                except Exception:
+                    logger.warning("Failed to save paused session (DB error)", exc_info=True)
                 logger.info(
                     f"⏸️ Workflow pausado en subtarea {node + 1}: {result['clarification_question'][:80]}"
                 )
@@ -341,7 +344,7 @@ class DevelopmentOrchestrator:
 
         from core.security.undercover_mode import undercover
 
-        final_content = undercover.get_safe_response(final_content)
+        final_content = await undercover.get_safe_response_async(final_content)
 
         scorecard = generate_scorecard(
             results, G, final_content, query, task_analysis, start_time, ctx.enc

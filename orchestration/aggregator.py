@@ -2,6 +2,7 @@
 ResultAggregator - Síntesis FINAL optimizada (con protección contra vacíos)
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -77,7 +78,7 @@ class ResultAggregator:
                 for fname in files_written[:10]:
                     resolved = _paths.memory_dir(workspace) / project_root / fname
                     if resolved.exists():
-                        content = resolved.read_text(encoding="utf-8")
+                        content = await asyncio.to_thread(resolved.read_text, encoding="utf-8")
                         if len(content) > 6000:
                             content = content[:6000] + "\n... [truncado]"
                         actual_files_text += (

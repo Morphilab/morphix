@@ -110,14 +110,19 @@ def main():
 
     exit_code = app.exec()
 
-    # ── Graceful shutdown: stop daemons, cancel tasks, close loop ──
+    # ── Graceful shutdown: stop daemons, dispose DB, cancel tasks, close loop ──
     from core.bootstrap import stop_daemons
+    from core.database import dispose_engine
 
     async def _shutdown():
         try:
             await stop_daemons()
         except Exception:
             logger.warning("Error stopping daemons", exc_info=True)
+        try:
+            await dispose_engine()
+        except Exception:
+            logger.warning("Error disposing DB engine", exc_info=True)
 
     loop.run_until_complete(_shutdown())
 

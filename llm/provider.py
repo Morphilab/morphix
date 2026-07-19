@@ -189,5 +189,5 @@ class LLMProvider:
         logger.info(f"Usando Ollama con modelo '{ollama_model}' (rol: {role})")
         import ollama
 
-        client = ollama.Client(host=settings.ollama_base_url)
+        client = ollama.Client(host=settings.ollama_base_url, timeout=settings.llm_timeout)
         return client, ollama_model, temp
