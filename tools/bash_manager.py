@@ -159,7 +159,7 @@ async def _bash_tool(
     if cwd is None and kwargs.get("project_root"):
         cwd = kwargs["project_root"]
     work_dir = str(base / cwd) if cwd else str(base)
-    work_dir = os.path.abspath(work_dir)
+    work_dir = os.path.abspath(work_dir)  # noqa: F823
 
     # Security: ensure work_dir is within workspace
     try:
@@ -187,6 +187,7 @@ async def _bash_tool(
             cwd=work_dir,
             env=env,
             executable="/bin/bash",
+            start_new_session=True,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         exit_code = proc.returncode or 0
@@ -206,10 +207,20 @@ async def _bash_tool(
     except TimeoutError:
         logger.warning(f"Bash timeout ({timeout}s): {command[:80]}...")
         try:
-            proc.kill()
-            await proc.wait()  # Clean up zombie process
+            import os
+            import signal
+
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGKILL)
         except Exception:
-            logger.warning("Failed to kill timed-out process; may be orphaned")
+            try:
+                proc.kill()
+            except Exception:
+                logger.warning("Failed to kill timed-out process; may be orphaned")
+        try:
+            await proc.wait()
+        except Exception:
+            pass
         return {
             "success": False,
             "output": f"⏱️ Timeout: command exceeded {timeout}s.",

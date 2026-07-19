@@ -63,6 +63,7 @@ def _get_async_engine():
         # The running loop changed (e.g. per-test event loops). The pooled
         # asyncpg connections belong to a now-closed loop — drop the stale
         # engine/factory and recreate them bound to the current loop.
+        # Note: old engine connections are cleaned up by GC.
         _async_engine = None
         _async_session_factory = None
     if _async_engine is None:

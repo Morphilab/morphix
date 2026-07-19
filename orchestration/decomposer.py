@@ -16,6 +16,32 @@ logger = logging.getLogger(__name__)
 
 def _build_project_context(project_root: str | None, workspace: str | None = None) -> str:
     """Scan the project to provide real context to the decomposer LLM."""
+    import asyncio
+
+    async def _scan() -> str:
+        return _scan_project_sync(project_root, workspace)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # Already inside an event loop — offload blocking I/O to thread
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                _scan_project_sync,
+                project_root,
+                workspace,
+            )
+            return future.result(timeout=10)
+    return _scan_project_sync(project_root, workspace)
+
+
+def _scan_project_sync(project_root: str | None, workspace: str | None = None) -> str:
+    """Synchronous project scan (runs in thread when called from async context)."""
     if workspace is None:
         workspace = settings.active_workspace
     if not project_root:

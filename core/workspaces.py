@@ -17,7 +17,20 @@ logger = logging.getLogger(__name__)
 class Workspaces:
     def __init__(self):
         self.current = "main"
-        self._switch_lock = asyncio.Lock()
+        self._switch_lock: asyncio.Lock | None = None
+        self._switch_lock_loop: asyncio.AbstractEventLoop | None = None
+
+    def _get_switch_lock(self) -> asyncio.Lock:
+        """Return a lock bound to the current running loop (per-loop pattern)."""
+        loop = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        if self._switch_lock is None or (loop is not None and self._switch_lock_loop is not loop):
+            self._switch_lock = asyncio.Lock()
+            self._switch_lock_loop = loop
+        return self._switch_lock
 
     async def list_workspaces(self) -> list[str]:
         try:
@@ -32,7 +45,7 @@ class Workspaces:
             name = "main"
         name = self._validate_workspace_name(name)
 
-        async with self._switch_lock:
+        async with self._get_switch_lock():
             return await self._do_switch_workspace(name, retries)
 
     async def _do_switch_workspace(self, name: str, retries: int) -> bool:

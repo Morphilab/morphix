@@ -60,7 +60,7 @@ class CollaborativeOrchestrator:
         # Build project context if available
         project_context = ""
         if project_root and (requires_project in (True, "optional", "true")):
-            project_context = CollaborativeOrchestrator._build_project_context(
+            project_context = await CollaborativeOrchestrator._build_project_context(
                 project_root, workspace
             )
             if project_context:
@@ -506,36 +506,39 @@ class CollaborativeOrchestrator:
         return "\n\n".join(parts)
 
     @staticmethod
-    def _build_project_context(project_root: str, workspace: str) -> str:
+    async def _build_project_context(project_root: str, workspace: str) -> str:
         """Construye un resumen del proyecto para inyectar en el debate."""
+        import asyncio
+
         from core.path_resolver import paths
 
         base = paths.memory_dir(workspace) / project_root
         if not base.exists():
             return ""
 
-        lines = []
-        try:
-            # Estructura de directorios (primer nivel)
-            items = sorted(base.iterdir())[:30]
-            dirs = [d.name + "/" for d in items if d.is_dir() and not d.name.startswith(".")]
-            files = [f.name for f in items if f.is_file() and not f.name.startswith(".")]
+        def _scan_sync() -> list[str]:
+            lines = []
+            try:
+                items = sorted(base.iterdir())[:30]
+                dirs = [d.name + "/" for d in items if d.is_dir() and not d.name.startswith(".")]
+                files = [f.name for f in items if f.is_file() and not f.name.startswith(".")]
 
-            if dirs:
-                lines.append(f"Directorios: {', '.join(dirs)}")
-            if files:
-                lines.append(f"Archivos: {', '.join(files[:15])}")
+                if dirs:
+                    lines.append(f"Directorios: {', '.join(dirs)}")
+                if files:
+                    lines.append(f"Archivos: {', '.join(files[:15])}")
 
-            # requirements.txt or pyproject.toml (first 20 lines)
-            for fname in ("requirements.txt", "pyproject.toml", "package.json"):
-                fpath = base / fname
-                if fpath.exists():
-                    content = fpath.read_text(encoding="utf-8")[:800]
-                    lines.append(f"\n{fname}:\n{content}")
-                    break
-        except Exception:
-            pass
+                for fname in ("requirements.txt", "pyproject.toml", "package.json"):
+                    fpath = base / fname
+                    if fpath.exists():
+                        content = fpath.read_text(encoding="utf-8")[:800]
+                        lines.append(f"\n{fname}:\n{content}")
+                        break
+            except Exception:
+                logger.debug("File read skipped during project context scan", exc_info=True)
+            return lines
 
+        lines = await asyncio.to_thread(_scan_sync)
         return "\n".join(lines) if lines else ""
 
     @staticmethod

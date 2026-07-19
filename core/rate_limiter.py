@@ -20,11 +20,24 @@ class RateLimiter:
         self.max_per_hour = max_per_hour
         self._minute_window: deque[float] = deque()
         self._hour_window: deque[float] = deque()
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Return a lock bound to the current running loop."""
+        loop = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        if self._lock is None or (loop is not None and self._lock_loop is not loop):
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
 
     async def acquire(self) -> bool:
         """Intenta adquirir un slot. Retorna True si está permitido, False si debe esperar."""
-        async with self._lock:
+        async with self._get_lock():
             now = time.time()
             # Clean old entries
             while self._minute_window and now - self._minute_window[0] > 60:
@@ -52,7 +65,7 @@ class RateLimiter:
 
     async def remaining(self) -> int:
         """Número de slots disponibles en la ventana actual."""
-        async with self._lock:
+        async with self._get_lock():
             now = time.time()
             while self._minute_window and now - self._minute_window[0] > 60:
                 self._minute_window.popleft()

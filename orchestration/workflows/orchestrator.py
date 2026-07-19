@@ -539,7 +539,7 @@ class WorkflowOrchestrator:
         # Apply anti-distillation protection
         from core.security.undercover_mode import undercover
 
-        final_content = undercover.get_safe_response(final_content)
+        final_content = await undercover.get_safe_response_async(final_content)
 
         scorecard = {
             "subtasks": 1,
@@ -639,6 +639,7 @@ class WorkflowOrchestrator:
                     allowed_tools=workflow_allowed_tools,
                     events=events,
                     session=session,
+                    ctx=ctx,
                 )
 
                 # Write to blackboard with phase namespace
@@ -697,6 +698,7 @@ class WorkflowOrchestrator:
                 allowed_tools=workflow_allowed_tools,
                 events=events,
                 session=session,
+                ctx=ctx,
             )
             all_files_written.extend(_collect_files_written(results))
             total_subtasks = len(subtasks)
@@ -898,18 +900,21 @@ class WorkflowOrchestrator:
                 if subtask_result.get("status") == "clarification_needed":
                     # Pausa anidada — guardar y retornar
                     ctx.last_clarification = subtask_result["clarification_question"]
-                    await _save_paused_session(
-                        conv_id=conv_id,
-                        query=paused_data.get("query", ""),
-                        question=subtask_result["clarification_question"],
-                        options=subtask_result.get("clarification_options", []),
-                        paused_state={
-                            **paused_data,
-                            "subtask_index": node,
-                            "paused_loop_state": subtask_result["paused_loop_state"],
-                            "corrected_agents": corrected_agents,
-                        },
-                    )
+                    try:
+                        await _save_paused_session(
+                            conv_id=conv_id,
+                            query=paused_data.get("query", ""),
+                            question=subtask_result["clarification_question"],
+                            options=subtask_result.get("clarification_options", []),
+                            paused_state={
+                                **paused_data,
+                                "subtask_index": node,
+                                "paused_loop_state": subtask_result["paused_loop_state"],
+                                "corrected_agents": corrected_agents,
+                            },
+                        )
+                    except Exception:
+                        logger.warning("Failed to save paused session (DB error)", exc_info=True)
                     return "[PAUSED:clarification_needed]"
                 paused_results[node] = subtask_result
             except (TimeoutError, Exception) as e:
@@ -1001,33 +1006,37 @@ async def _run_global_verification(
     if not base.exists():
         return True
 
-    files_text = []
-    total_chars = 0
-    max_chars = 10_000  # un poco menos para dejar espacio al informe LSP
+    def _read_project_files_sync() -> list[str]:
+        """Read project files synchronously (runs in thread)."""
+        texts = []
+        total = 0
+        max_chars_local = 10_000
+        for fpath in base.rglob("*"):
+            if fpath.is_file() and fpath.suffix in {
+                ".py",
+                ".txt",
+                ".md",
+                ".example",
+                ".gitignore",
+                ".yml",
+                ".yaml",
+            }:
+                rel_path = str(fpath.relative_to(base))
+                try:
+                    content = fpath.read_text(encoding="utf-8")
+                    if not content.strip():
+                        content = "[ARCHIVO VACÍO]"
+                except Exception:
+                    content = "[No se pudo leer]"
+                entry = f"--- {rel_path} ---\n{content}\n"
+                if total + len(entry) > max_chars_local:
+                    texts.append("(... y otros archivos omitidos por límite de tamaño)")
+                    break
+                texts.append(entry)
+                total += len(entry)
+        return texts
 
-    for fpath in base.rglob("*"):
-        if fpath.is_file() and fpath.suffix in {
-            ".py",
-            ".txt",
-            ".md",
-            ".example",
-            ".gitignore",
-            ".yml",
-            ".yaml",
-        }:
-            rel_path = str(fpath.relative_to(base))
-            try:
-                content = fpath.read_text(encoding="utf-8")
-                if not content.strip():
-                    content = "[ARCHIVO VACÍO]"
-            except Exception:
-                content = "[No se pudo leer]"
-            entry = f"--- {rel_path} ---\n{content}\n"
-            if total_chars + len(entry) > max_chars:
-                files_text.append("(... y otros archivos omitidos por límite de tamaño)")
-                break
-            files_text.append(entry)
-            total_chars += len(entry)
+    files_text = await asyncio.to_thread(_read_project_files_sync)
 
     if not files_text:
         return True
