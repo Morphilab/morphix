@@ -45,12 +45,3 @@ opencode.json
 
 # ── Docs build ──
 site/
-
-# ── Internal dev artifacts (not for public repo) ──
-.superpowers/
-docs/superpowers/
-AGENTS.md
-dev/
-charts/
-docs/analysis/
-alembic/README
