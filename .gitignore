@@ -49,12 +49,8 @@ site/
 # ── Internal dev artifacts (not for public repo) ──
 .superpowers/
 docs/superpowers/
-ROADMAP.md
-alembic/README
 AGENTS.md
-CAPABILITIES.md
-CHANGELOG.md
-PENDING.md
+dev/
 charts/
 docs/analysis/
-docinterno/
+alembic/README
