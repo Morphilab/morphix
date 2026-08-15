@@ -1,4 +1,4 @@
-# features/maestro/services/task_analyzer.py
+# orchestration/analyzer.py
 """
 Task Analyzer — detección de tipo de tarea con caché LRU.
 """

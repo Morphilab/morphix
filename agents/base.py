@@ -16,6 +16,18 @@ from llm.prompts import get_prompt
 logger = logging.getLogger(__name__)
 
 
+def _self_reflection_enabled() -> bool:
+    """Auto-reflexión del agente: lee del flag runtime (kairos) con fallback a Settings.
+
+    El dashboard escribe vía kairos.set("AGENT_SELF_REFLECTION", ...) — leer
+    solo Settings haría el toggle inerte.
+    """
+    from core.config import settings as app_settings
+    from core.feature_flags import kairos
+
+    return bool(kairos.get("AGENT_SELF_REFLECTION", app_settings.agent_self_reflection))
+
+
 async def _execute_specialized_agent(
     agent_type: str,
     task: str,
@@ -117,7 +129,7 @@ async def _execute_specialized_agent(
 
         # ── 6. Self-reflection (controlled by feature flag) ──
         final_result = initial_result
-        if app_settings.agent_self_reflection:
+        if _self_reflection_enabled():
             try:
                 critique = await models.call(
                     messages=[

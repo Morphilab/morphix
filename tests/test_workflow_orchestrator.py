@@ -34,7 +34,6 @@ def _make_events():
         on_system_message=on_system,
         on_assistant_message=on_assistant,
         on_stats_update=on_stats,
-        on_diagram_update=AsyncMock(),
         on_ui_refresh=AsyncMock(),
     )
     return events, on_assistant, on_system, on_stats
@@ -253,7 +252,7 @@ async def test_full_orchestration_route(mock_orchestrator_deps):
             new_callable=AsyncMock,
         ) as mock_supervisor,
         patch(
-            "orchestration.workflows.development.execute_subtask_safe",
+            "orchestration.workflows.development.run_subtask_safe",
             new_callable=AsyncMock,
         ) as mock_subtask,
         patch(
@@ -453,3 +452,112 @@ async def test_development_route(mock_orchestrator_deps):
                 session=Session(context=ctx, events=events)
             )
             assert result == "Resultado de desarrollo orquestrado"
+
+
+@pytest.mark.asyncio
+async def test_development_route_propagates_project_root(mock_orchestrator_deps):
+    """La ruta development propaga ctx.project_root (nunca None) al full orchestration."""
+    from orchestration.workflows.orchestrator import WorkflowOrchestrator
+
+    with (
+        patch(
+            "orchestration.workflows.orchestrator.TaskAnalyzer.analyze_task",
+            new_callable=AsyncMock,
+        ) as mock_analyze,
+        patch.object(
+            WorkflowOrchestrator,
+            "_run_full_orchestration",
+            new_callable=AsyncMock,
+        ) as mock_full_orch,
+    ):
+        mock_analyze.return_value = {
+            "primary_type": "mixed",
+            "requires_full_orchestration": True,
+        }
+        mock_full_orch.return_value = "Resultado de desarrollo orquestrado"
+
+        ctx = _make_ctx(query="Tarea de desarrollo", mode="orchestrate")
+        with patch(
+            "orchestration.workflows.orchestrator.load_workflow_template",
+            return_value={
+                "project": {},
+                "agents": {},
+                "tools": {},
+                "type": "development",
+            },
+        ):
+            events, _on_assistant, _on_system, _ = _make_events()
+            await WorkflowOrchestrator.run_full_workflow(
+                session=Session(context=ctx, events=events)
+            )
+
+        # 6º argumento posicional = project_root (debe ser ctx.project_root, no None)
+        assert mock_full_orch.call_args is not None
+        passed_project_root = mock_full_orch.call_args[0][5]
+        assert (
+            passed_project_root == "."
+        ), f"Expected ctx.project_root ('.'), got {passed_project_root!r}"
+
+
+@pytest.mark.asyncio
+async def test_run_full_workflow_attaches_emitter(mock_orchestrator_deps):
+    """El Session sale de run_full_workflow con emitter adjunto (spec §3.1)."""
+    from orchestration.emitter import WorkflowEmitter
+    from orchestration.workflows.orchestrator import WorkflowOrchestrator
+
+    with patch(
+        "orchestration.workflows.orchestrator.TaskAnalyzer.analyze_task",
+        new_callable=AsyncMock,
+    ) as mock_analyze:
+        mock_analyze.return_value = {
+            "primary_type": "simple_conversation",
+            "requires_full_orchestration": False,
+        }
+        with patch(
+            "agents.service.AgentsService.execute_agent",
+            new_callable=AsyncMock,
+            return_value="¡Hola!",
+        ):
+            ctx = _make_ctx(query="Hola")
+            events, _on_assistant, _on_system, _ = _make_events()
+            session = Session(context=ctx, events=events)
+            assert session.emitter is None
+            await WorkflowOrchestrator.run_full_workflow(session=session)
+            assert isinstance(session.emitter, WorkflowEmitter)
+
+
+@pytest.mark.asyncio
+async def test_simple_conversation_loop_receives_events(mock_orchestrator_deps):
+    """La ruta simple con tools pasa events al loop (spec G1)."""
+    from orchestration.workflows.orchestrator import WorkflowOrchestrator
+
+    captured: dict = {}
+
+    async def _fake_loop(**kwargs):
+        captured.update(kwargs)
+        return {"status": "completed", "result": "respuesta", "files_written": []}
+
+    with patch(
+        "orchestration.workflows.orchestrator.TaskAnalyzer.analyze_task",
+        new_callable=AsyncMock,
+    ) as mock_analyze:
+        mock_analyze.return_value = {
+            "primary_type": "simple_conversation",
+            "requires_full_orchestration": False,
+        }
+        # El agente necesita tools para que la ruta use execute_agent_loop
+        with patch(
+            "agents.registry.agents_registry.get_profile",
+            return_value={"tools": ["file_manager"]},
+        ):
+            with patch(
+                "orchestration.loop.execute_agent_loop",
+                new=_fake_loop,
+            ):
+                ctx = _make_ctx(query="Hola")
+                events, _on_assistant, _on_system, _ = _make_events()
+                await WorkflowOrchestrator.run_full_workflow(
+                    session=Session(context=ctx, events=events)
+                )
+
+    assert captured.get("events") is events

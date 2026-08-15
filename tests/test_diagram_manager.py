@@ -25,18 +25,22 @@ async def test_update_live_diagram_returns_html_with_valid_graph():
     }[n]
 
     events = MagicMock()
-    events.on_diagram_update = AsyncMock()
     events.on_ui_refresh = AsyncMock()
 
     result = await update_live_diagram(g, events)
     assert result is not None
     assert "COMPLETED" in result
-    events.on_diagram_update.assert_awaited_once()
+    events.on_ui_refresh.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_update_live_diagram_handles_none_events():
+    """Sin events el diagrama se renderiza igual (snapshot a charts/ conservado)."""
     g = MagicMock()
     g.number_of_nodes.return_value = 1
+    g.nodes.return_value = [0]
+    g.nodes.__getitem__.side_effect = lambda n: {
+        0: {"task": "Test", "agent": "developer", "status": "completed"},
+    }[n]
     result = await update_live_diagram(g, None)
-    assert result is None
+    assert result is not None

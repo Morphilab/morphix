@@ -1,4 +1,4 @@
-# features/maestro/services/task_decomposer.py
+# orchestration/decomposer.py
 """
 Task Decomposer - Versión FINAL robusta y refinada (Fase 6)
 """
@@ -12,6 +12,38 @@ from core.utils import clean_llm_response
 from llm import models, parse_json_from_llm
 
 logger = logging.getLogger(__name__)
+
+
+def _recent_history_context(conversation_history: list | None) -> str:
+    """Últimos 6 mensajes user/assistant como contexto de continuación.
+
+    Compartido por decompose_task y decompose_task_with_phases.
+    """
+    if not conversation_history:
+        return ""
+    last_msgs = conversation_history[-6:]
+    return "\n".join(
+        f"[{m['role']}]: {str(m.get('content', ''))[:200]}"
+        for m in last_msgs
+        if m.get("role") in ("user", "assistant")
+    )
+
+
+async def _append_rate_limit_hint(prompt: str, threshold: int, hint: str, log_msg: str) -> str:
+    """Añade una nota de rate-limit al prompt si el rate restante está bajo.
+
+    Compartido por decompose_task y decompose_task_with_phases.
+    """
+    try:
+        from core.rate_limiter import get_rate_limiter
+
+        rl = get_rate_limiter()
+        remaining = await rl.remaining()
+        if remaining < threshold:
+            prompt += hint
+    except Exception:
+        logger.warning(log_msg, exc_info=True)
+    return prompt
 
 
 def _build_project_context(project_root: str | None, workspace: str | None = None) -> str:
@@ -107,14 +139,7 @@ async def decompose_task(
     prompt = DECOMPOSE_TASK_PROMPT.format(query=query, project_context=project_context)
 
     if is_follow_up:
-        history_context = ""
-        if conversation_history:
-            last_msgs = conversation_history[-6:]
-            history_context = "\n".join(
-                f"[{m['role']}]: {str(m.get('content', ''))[:200]}"
-                for m in last_msgs
-                if m.get("role") in ("user", "assistant")
-            )
+        history_context = _recent_history_context(conversation_history)
         prompt = (
             "⚠️ CONTEXTO IMPORTANTE: Esta es una conversación DE CONTINUACIÓN. "
             "El proyecto YA EXISTE en disco con archivos creados previamente. "
@@ -126,15 +151,12 @@ async def decompose_task(
         )
 
     # Rate limiter awareness: request fewer subtasks if rate is low
-    try:
-        from core.rate_limiter import get_rate_limiter
-
-        rl = get_rate_limiter()
-        remaining = await rl.remaining()
-        if remaining < 10:
-            prompt += "\nIMPORTANTE: Genera máximo 2 subtareas, el rate de API está bajo."
-    except Exception:
-        logger.warning("LLM task decomposition failed, using fallback subtasks", exc_info=True)
+    prompt = await _append_rate_limit_hint(
+        prompt,
+        threshold=10,
+        hint="\nIMPORTANTE: Genera máximo 2 subtareas, el rate de API está bajo.",
+        log_msg="Rate limiter check failed, continuing without throttle hint",
+    )
 
     try:
         response = await models.call(
@@ -216,14 +238,7 @@ async def decompose_task_with_phases(
     prompt = DECOMPOSE_TASK_WITH_PHASES_PROMPT.format(query=query, project_context=project_context)
 
     if is_follow_up:
-        history_context = ""
-        if conversation_history:
-            last_msgs = conversation_history[-6:]
-            history_context = "\n".join(
-                f"[{m['role']}]: {str(m.get('content', ''))[:200]}"
-                for m in last_msgs
-                if m.get("role") in ("user", "assistant")
-            )
+        history_context = _recent_history_context(conversation_history)
         prompt = (
             "⚠️ CONTEXTO IMPORTANTE: Esta es una conversación DE CONTINUACIÓN. "
             "El proyecto YA EXISTE en disco. Usa máximo 2 fases. "
@@ -232,19 +247,12 @@ async def decompose_task_with_phases(
         )
 
     # Rate limiter awareness
-    try:
-        from core.rate_limiter import get_rate_limiter
-
-        rl = get_rate_limiter()
-        remaining = await rl.remaining()
-        if remaining < 5:
-            prompt += (
-                "\nIMPORTANTE: Genera máximo 2 fases con 2 subtareas cada una (API rate bajo)."
-            )
-    except Exception:
-        logger.warning(
-            "Phase-aware decomposition failed, falling back to flat decomposition", exc_info=True
-        )
+    prompt = await _append_rate_limit_hint(
+        prompt,
+        threshold=5,
+        hint="\nIMPORTANTE: Genera máximo 2 fases con 2 subtareas cada una (API rate bajo).",
+        log_msg="Rate limiter check failed, continuing without throttle hint",
+    )
 
     try:
         response = await models.call(

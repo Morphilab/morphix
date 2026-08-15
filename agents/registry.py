@@ -1,4 +1,4 @@
-# core/agents_registry.py
+# agents/registry.py
 import logging
 from collections.abc import Callable
 

@@ -7,14 +7,73 @@ import logging
 from typing import Any
 
 from core.config import settings
+from core.path_resolver import paths as _paths
 from core.utils import clean_llm_response
 from llm import models
 
 logger = logging.getLogger(__name__)
 
+# Requisitos explícitos detectables en la tarea → tokens que deben existir
+# en el código generado. Validación determinista mínima de conformidad
+# (evidencia 2026-08-14: numeros.py degradado sin bucle reportado como éxito).
+_CONFORMANCE_RULES: dict[str, tuple[str, ...]] = {
+    "bucle": ("for ", "while "),
+    "ciclo": ("for ", "while "),
+    "loop": ("for ", "while "),
+    "funcion": ("def ",),
+    "función": ("def ",),
+    "function": ("def ",),
+    "clase": ("class ",),
+    "class": ("class ",),
+}
+
+_CONFORMANCE_EXTENSIONS = (".py", ".js", ".ts", ".go", ".rs", ".java")
+
 
 class ResultAggregator:
     """Handles intelligent result aggregation and synthesis"""
+
+    @staticmethod
+    async def _conformance_violations(
+        query: str,
+        files_written: list[str] | None,
+        project_root: str | None,
+        workspace: str,
+    ) -> list[str]:
+        """Validación determinista de conformidad: si la tarea exige un
+        constructo (bucle/función/clase) y NINGÚN archivo de código generado
+        lo contiene, se reporta una violación. Sin prompt engineering."""
+        if not files_written or not project_root:
+            return []
+        q = query.lower()
+        required = [(kw, toks) for kw, toks in _CONFORMANCE_RULES.items() if kw in q]
+        if not required:
+            return []
+        relevant = [f for f in files_written if f.lower().endswith(_CONFORMANCE_EXTENSIONS)]
+        if not relevant:
+            return []
+        violations: list[str] = []
+        for kw, tokens in required:
+            found = False
+            for fname in relevant[:5]:
+                resolved = _paths.memory_dir(workspace) / project_root / fname
+                if not resolved.exists():
+                    continue
+                try:
+                    content = await asyncio.to_thread(
+                        resolved.read_text, encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    continue
+                lower = content.lower()
+                if any(tok in lower for tok in tokens):
+                    found = True
+                    break
+            if not found:
+                violations.append(
+                    f"la tarea exigía '{kw}' pero ningún archivo generado lo contiene"
+                )
+        return violations
 
     @staticmethod
     async def aggregate_results(
@@ -52,10 +111,6 @@ class ResultAggregator:
 
             await memory_manager.save_user_correction(query, "corrección guardada")
 
-        # Early exit: no results at all
-        if not results:
-            return "⚠️ No se generaron resultados."
-
         files_block = ""
         if files_written:
             files_block = (
@@ -73,8 +128,6 @@ class ResultAggregator:
         actual_files_text = ""
         if files_written and project_root and workspace:
             try:
-                from core.path_resolver import paths as _paths
-
                 for fname in files_written[:10]:
                     resolved = _paths.memory_dir(workspace) / project_root / fname
                     if resolved.exists():
@@ -125,6 +178,29 @@ class ResultAggregator:
             len(files_written or []),
             total,
         )
+        if completed_count == 0 and total > 0:
+            logger.warning(
+                "⚠️ 0/%d subtareas completadas — el workflow no generó resultados",
+                total,
+            )
+
+        # Conformidad mínima: si la tarea exigía un constructo y el código no
+        # lo contiene, el trabajo NO está completo — degradar a partial
+        # (evidencia 2026-08-14: numeros.py sin bucle reportado como éxito).
+        conformance_violations: list[str] = []
+        if files_written:
+            try:
+                conformance_violations = await ResultAggregator._conformance_violations(
+                    query, files_written, project_root, workspace
+                )
+            except Exception:
+                logger.warning("Conformance check failed — se omite", exc_info=True)
+        if conformance_violations and workflow_status == "success":
+            logger.warning(
+                "Aggregator: conformidad insatisfecha — degradando a partial: %s",
+                conformance_violations,
+            )
+            workflow_status = "partial"
 
         # ── SUCCESS: build programmatic response, no LLM call needed ──
         if workflow_status == "success":
@@ -144,6 +220,13 @@ class ResultAggregator:
                 "archivos listados abajo. NO menciones timeouts ni subtareas "
                 "fallidas.\n\n"
             )
+            if conformance_violations:
+                context_note = (
+                    "NOTA DE CONFORMIDAD: los archivos existen pero NO satisfacen "
+                    "un requisito explícito de la tarea: "
+                    + "; ".join(conformance_violations)
+                    + ". Menciónalo con honestidad y propón la corrección.\n\n"
+                )
         else:
             results_for_llm = results
             context_note = ""

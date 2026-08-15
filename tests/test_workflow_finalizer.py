@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from orchestration.finalizer import _extract_personal_facts, finalize_workflow
+from orchestration.finalizer import (
+    _extract_personal_facts,
+    _truncate_safe_summary,
+    finalize_workflow,
+)
 
 
 @pytest.fixture
@@ -41,7 +45,6 @@ def mock_deps():
 async def test_finalize_workflow_basic(mock_deps):
     """Verifica que finalize_workflow completa sin errores con datos mínimos."""
     events = MagicMock()
-    events.on_diagram_update = AsyncMock()
 
     await finalize_workflow(
         query="Crear test.py",
@@ -64,7 +67,6 @@ async def test_finalize_workflow_with_files_triggers_commit(mock_deps):
         new_callable=AsyncMock,
     ) as mock_commit:
         events = MagicMock()
-        events.on_diagram_update = AsyncMock()
 
         await finalize_workflow(
             query="commit test",
@@ -87,7 +89,6 @@ async def test_finalize_workflow_handles_db_error(mock_deps):
     mock_deps.side_effect = RuntimeError("BD caída")
 
     events = MagicMock()
-    events.on_diagram_update = AsyncMock()
 
     # No debe lanzar excepción
     await finalize_workflow(
@@ -139,3 +140,65 @@ class TestExtractPersonalFacts:
 
             result = await _extract_personal_facts("Hola", "test")
             assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_extract_facts_rejects_trivial_name_only(self):
+        """Perfil trivial (solo name, p. ej. 'ChatGPT' de un contexto contaminado)
+        no debe devolverse como hecho — rompe el bucle de contaminación
+        (evidencia 2026-08-14: prueba 2 re-escribió user_profile con el dato stale)."""
+        with patch(
+            "llm.controller.models.call",
+            new_callable=AsyncMock,
+        ) as mock_call:
+            mock_call.return_value = MagicMock()
+            mock_call.return_value.choices = [MagicMock()]
+            mock_call.return_value.choices[0].message.content = '{"name": "ChatGPT"}'
+
+            result = await _extract_personal_facts("Hola", "Crea script.py")
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_extract_facts_keeps_name_with_context(self):
+        """Un nombre acompañado de otro dato contextual SÍ es un hecho válido."""
+        with patch(
+            "llm.controller.models.call",
+            new_callable=AsyncMock,
+        ) as mock_call:
+            mock_call.return_value = MagicMock()
+            mock_call.return_value.choices = [MagicMock()]
+            mock_call.return_value.choices[0].message.content = '{"name": "Ana", "city": "Lima"}'
+
+            result = await _extract_personal_facts("Hola", "Me llamo Ana y vivo en Lima")
+            assert result.get("name") == "Ana"
+            assert result.get("city") == "Lima"
+
+
+class TestTruncateSafeSummary:
+    def test_short_summary_unchanged(self):
+        assert _truncate_safe_summary("hola mundo") == "hola mundo"
+
+    def test_exactly_4000_chars_not_truncated(self):
+        """Un resumen de exactamente 4000 chars NO fue cortado — no debe recortarse."""
+        s = "a" * 4000
+        assert _truncate_safe_summary(s) == s
+
+    def test_over_4000_truncated_to_last_period(self):
+        s = ("a" * 3000) + ". fin de frase " + ("b" * 2000)
+        out = _truncate_safe_summary(s)
+        assert len(out) <= 4000
+        assert out.endswith(".")
+        assert len(out) < len(s)
+
+
+def test_build_subtask_list_shows_failed_as_failed():
+    """Un subtask con status 'failed' no debe mostrarse como 'completed'."""
+    from orchestration.workflows.development import _build_subtask_list
+
+    out = _build_subtask_list(
+        ["a", "b"],
+        {0: {"status": "failed"}},
+        current_node=1,
+        current_status="running",
+    )
+    assert out[0]["status"] == "failed"
+    assert out[1]["status"] == "running"

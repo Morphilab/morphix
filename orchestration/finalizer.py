@@ -15,6 +15,23 @@ from orchestration.diagram import update_live_diagram
 
 logger = logging.getLogger(__name__)
 
+_MAX_SUMMARY_CHARS = 4000
+
+
+def _truncate_safe_summary(final_output: str) -> str:
+    """Recorta el resumen a _MAX_SUMMARY_CHARS solo si el original fue cortado.
+
+    Un output de exactamente 4000 chars es íntegro (no fue truncado por el
+    slice) y no debe recortarse de más; solo los outputs >4000 se recortan
+    al último punto de frase si existe uno razonable.
+    """
+    safe_summary = final_output[:_MAX_SUMMARY_CHARS].strip()
+    if len(final_output) > _MAX_SUMMARY_CHARS and not safe_summary.endswith((".", "!", "?")):
+        last_period = safe_summary.rfind(".")
+        if last_period > 1000:
+            safe_summary = safe_summary[: last_period + 1]
+    return safe_summary
+
 
 async def _extract_personal_facts(final_output: str, query: str) -> dict:
     prompt = f"""Extrae SOLO información personal del usuario del siguiente texto.
@@ -46,36 +63,24 @@ Responde solo el JSON:"""
         )
         raw = clean_llm_response(response)
 
-        # Robust JSON extraction: try whole text, then first balanced object
-        facts = None
-        try:
-            facts = json.loads(raw)
-        except json.JSONDecodeError:
-            # Extract first JSON object from the response
-            start = raw.find("{")
-            if start >= 0:
-                depth = 0
-                end = start
-                for i in range(start, len(raw)):
-                    if raw[i] == "{":
-                        depth += 1
-                    elif raw[i] == "}":
-                        depth -= 1
-                        if depth == 0:
-                            end = i + 1
-                            break
-                if end > start:
-                    try:
-                        facts = json.loads(raw[start:end])
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            "Failed to parse facts JSON from subtask response", exc_info=True
-                        )
+        # Parser unificado de JSON (mismo que decomposer/loop — no duplicar
+        # la extracción de llaves balanceadas a mano).
+        from llm import parse_json_from_llm
+
+        facts = parse_json_from_llm(raw, default=None)
 
         if not isinstance(facts, dict):
             return {}
         # Filter out null/empty values
-        return {k: v for k, v in facts.items() if v is not None and v != ""}
+        facts = {k: v for k, v in facts.items() if v is not None and v != ""}
+        # Rompe el bucle de contaminación: un perfil trivial (solo name,
+        # p. ej. "ChatGPT" proveniente de una conversación ya contaminada)
+        # no debe re-escribir user_profile (evidencia 2026-08-14, prueba 2).
+        from core.utils import is_trivial_profile
+
+        if is_trivial_profile(facts):
+            return {}
+        return facts
     except Exception as e:
         logger.warning(f"⚠️ No se pudo extraer perfil estructurado: {e}")
         return {}
@@ -170,11 +175,7 @@ async def finalize_workflow(
 
     # 4. Save complete summary of the last response
     try:
-        safe_summary = final_output[:4000].strip()
-        if len(safe_summary) == 4000 and not safe_summary.endswith((".", "!", "?")):
-            last_period = safe_summary.rfind(".")
-            if last_period > 1000:
-                safe_summary = safe_summary[: last_period + 1]
+        safe_summary = _truncate_safe_summary(final_output)
 
         await memory_manager.write("user_profile_last_update", safe_summary, validated=True)
         logger.info(f"📝 user_profile_last_update guardado ({len(safe_summary)} caracteres)")

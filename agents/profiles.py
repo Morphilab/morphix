@@ -1,4 +1,4 @@
-# core/agent_profiles.py
+# agents/profiles.py
 """
 Global built-in agent profiles.
 Only 'conversacional' is kept as the universal minimum fallback agent.

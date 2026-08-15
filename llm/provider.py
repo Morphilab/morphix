@@ -5,6 +5,7 @@ import httpx
 
 from core.circuit_breaker import CircuitBreakerRegistry
 from core.config import settings
+from core.constants import DEFAULT_PROVIDER_NAME
 from llm.offline import OfflineManager
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,16 @@ class LLMProvider:
 
     @classmethod
     def get_provider_name(cls, role: str) -> str:
-        """Devuelve el nombre del proveedor para un rol dado."""
+        """Devuelve el nombre del proveedor para un rol dado.
+
+        Contempla el modo offline: aunque el rol esté configurado con un
+        proveedor en la nube (p.ej. deepseek), si el sistema está offline la
+        llamada real va a Ollama, así que el proveedor efectivo es "ollama".
+        """
+        if settings.offline_mode or cls._offline_manager.is_offline():
+            return "ollama"
         role_config = settings.model_roles.get(role, settings.model_roles["default"])
-        return role_config.get("provider", "deepseek")
+        return role_config.get("provider", DEFAULT_PROVIDER_NAME)
 
     @classmethod
     def get_client(cls, role: str, temperature: float | None = None, force_ollama: bool = False):
@@ -44,7 +52,7 @@ class LLMProvider:
 
         # Try online providers according to configuration
         role_config = settings.model_roles.get(role, settings.model_roles["default"])
-        provider = role_config.get("provider", "deepseek")
+        provider = role_config.get("provider", DEFAULT_PROVIDER_NAME)
         model = role_config["model"]
         temp = temperature if temperature is not None else role_config.get("temperature", 0.7)
 
@@ -118,7 +126,7 @@ class LLMProvider:
             return cls._create_ollama_client(role, temperature)
 
         role_config = settings.model_roles.get(role, settings.model_roles["default"])
-        provider = role_config.get("provider", "deepseek")
+        provider = role_config.get("provider", DEFAULT_PROVIDER_NAME)
         model = role_config["model"]
         temp = temperature if temperature is not None else role_config.get("temperature", 0.7)
 
@@ -184,7 +192,7 @@ class LLMProvider:
     def _create_ollama_client(cls, role: str, temperature: float | None = None):
         """Crea un cliente Ollama usando la configuración de model_roles."""
         role_config = settings.model_roles.get(role, settings.model_roles["default"])
-        ollama_model = settings.ollama_model or role_config.get("model", "phi3:mini")
+        ollama_model = role_config.get("ollama_model") or settings.ollama_model
         temp = temperature if temperature is not None else role_config.get("temperature", 0.7)
         logger.info(f"Usando Ollama con modelo '{ollama_model}' (rol: {role})")
         import ollama

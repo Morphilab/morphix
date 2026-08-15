@@ -102,3 +102,42 @@ def save_status_snapshot(html: str, filename: str | None = None) -> Path:
     path.write_text(html, encoding="utf-8")
     logger.debug("Workflow status guardado: %s", path)
     return path
+
+
+def render_from_subtasks(
+    subtask_list: list[dict], phase: str | None = None, active_phase: str | None = None
+) -> str:
+    """Genera HTML de tarjetas de estado agrupadas por fase (spec §3.4).
+
+    Deriva exclusivamente de subtask_list (el mismo dato que la lista de
+    Subtareas de la UI) — cero drift entre ambas vistas. La agrupación por
+    fase se muestra como encabezado; si no hay fase, lista plana.
+    """
+    if not subtask_list:
+        return "<p style='color:#888; text-align:center'>Workflow vacío</p>"
+
+    phase_header = ""
+    if phase:
+        phase_header = (
+            f"<div style='color:#F59E0B; font-size:12px; font-weight:bold; "
+            f"margin:10px 0 4px 0'>📂 {_clean_text(phase, 60)}</div>"
+        )
+
+    cards: list[str] = []
+    for item in subtask_list:
+        name = item.get("name", "Subtarea")
+        status = item.get("status", "pending")
+        agent = item.get("agent") or "—"
+        icon = STATUS_ICONS.get(status, "⚫")
+        color = STATUS_COLORS.get(status, "#888")
+        cards.append(
+            CARD_TEMPLATE.format(
+                color=color,
+                icon=icon,
+                status_label=status.upper(),
+                task=_clean_text(str(name), 120),
+                agent=_clean_text(str(agent), 40),
+            )
+        )
+
+    return HTML_TEMPLATE.format(cards=phase_header + "".join(cards))

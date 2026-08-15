@@ -13,14 +13,19 @@ from agents.service import AgentsService
 from core.config import settings
 from core.utils import clean_llm_response
 from llm import models, tool_calls_from_response
+from llm.tool_calls import (
+    detect_provider_from_raw_tool_call,
+    normalize_tool_call,
+    tool_result_message,
+)
 from orchestration.context import (
     WorkflowEvents,
     emit_agent,
     emit_agent_status,
     emit_agent_stream,
-    emit_stats,
     emit_system,
 )
+from orchestration.emitter import WorkflowEmitter
 from tools.specs import build_tool_definitions, tool_matches_allowlist
 from tools.wrapper import safe_tool_call
 
@@ -42,9 +47,11 @@ class CollaborativeOrchestrator:
         workflow_allowed_tools: list[str] | None = None,
         start_time: float = 0.0,
         cancelled: Callable | None = None,
+        emitter: "WorkflowEmitter | None" = None,
     ) -> str:
         if workspace is None:
             workspace = settings.active_workspace
+        emitter = emitter or WorkflowEmitter(None)  # no-op si no hay emitter (legacy)
         panel = template.get("panel", [])
         rounds = template.get("rounds", 3)
         round_timeout = template.get("round_timeout", 300)
@@ -78,7 +85,15 @@ class CollaborativeOrchestrator:
         await emit_system(
             events, f"🤝 **Debate colaborativo iniciado** — {len(panel)} agentes, {rounds} rondas"
         )
-        await emit_stats(events, {"status": f"Ronda 1/{rounds}", "current_agent": "Panel"})
+        await emitter.emit(
+            status=f"Ronda 1/{rounds}",
+            current_agent="Panel",
+            phase="Ronda 1",
+            subtask_list=[
+                {"name": f"Ronda {r}", "status": "running"} for r in range(1, rounds + 1)
+            ],
+            subtasks_total=rounds,
+        )
 
         previous_opinions: dict[str, str] = {}
 
@@ -158,14 +173,26 @@ class CollaborativeOrchestrator:
                     round_opinions[name] = "[Timeout: no respondió a tiempo]"
 
             previous_opinions = round_opinions
-            await emit_stats(events, {"status": f"Ronda {r}/{rounds} completada"})
+            await emitter.emit(
+                status=f"Ronda {r}/{rounds} completada",
+                current_agent="Panel",
+                phase=f"Ronda {r}",
+                subtasks_completed=r,
+                subtask_list=[
+                    {"name": f"Ronda {i}", "status": "completed" if i <= r else "pending"}
+                    for i in range(1, rounds + 1)
+                ],
+            )
 
         # ── MODERATOR: Final synthesis ──
         await emit_system(
             events, f"\n⚖️ **{moderator_name.capitalize()}** sintetizando consenso final..."
         )
-        await emit_stats(
-            events, {"status": "Consenso final", "current_agent": moderator_name.capitalize()}
+        await emitter.emit(
+            status="Consenso final",
+            current_agent=moderator_name.capitalize(),
+            phase="Consenso",
+            subtasks_completed=rounds,
         )
 
         debate_summary = CollaborativeOrchestrator._build_debate_summary(
@@ -185,7 +212,16 @@ class CollaborativeOrchestrator:
             final_answer = CollaborativeOrchestrator._fallback_consensus(debate_summary)
 
         await emit_system(events, "✅ Debate colaborativo finalizado.")
-        await emit_stats(events, {"status": "Completado", "current_agent": "—"})
+        await emitter.emit(
+            status="Completado",
+            current_agent="—",
+            phase=None,
+            subtasks_total=rounds,
+            subtasks_completed=rounds,
+            subtask_list=[
+                {"name": f"Ronda {i}", "status": "completed"} for i in range(1, rounds + 1)
+            ],
+        )
 
         # ── Unified finalization (shared with development/coordinated) ──
         from orchestration.finalizer import finalize_workflow
@@ -294,72 +330,49 @@ class CollaborativeOrchestrator:
             )
             text = clean_llm_response(response)
 
-            # Extract reasoning_content (DeepSeek thinking mode — must be passed back)
-            reasoning = None
-            try:
-                choice = response.choices[0]
-                msg = choice.message
-                reasoning = getattr(msg, "reasoning_content", None)
-            except (AttributeError, IndexError, TypeError):
-                pass
-
             # If agent requested tools, execute and feed results back
             tool_calls = tool_calls_from_response(response)
             if tool_calls and effective_tools:
+                provider_kind = detect_provider_from_raw_tool_call(tool_calls[0])
+
                 # Build assistant message WITH tool_calls (API requirement)
+                # NOTE: reasoning_content is NOT re-sent — thinking models
+                # amplify their own reasoning chains from history.
                 assistant_msg: dict = {
                     "role": "assistant",
                     "content": text or None,
                     "tool_calls": [],
                 }
-                if reasoning:
-                    assistant_msg["reasoning_content"] = reasoning
-                for tc in tool_calls[:3]:  # max 3 tool calls per round
-                    tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
-                    tc_func = (
-                        tc.get("function", {})
-                        if isinstance(tc, dict)
-                        else getattr(tc, "function", None)
-                    )
-                    name = (
-                        tc_func.get("name", "")
-                        if isinstance(tc_func, dict)
-                        else getattr(tc_func, "name", "") if tc_func else ""
-                    )
-                    raw_args = (
-                        tc_func.get("arguments", "{}")
-                        if isinstance(tc_func, dict)
-                        else getattr(tc_func, "arguments", "{}") if tc_func else "{}"
-                    )
-                    if isinstance(raw_args, str):
-                        try:
-                            args = _json.loads(raw_args)
-                        except Exception:
-                            args = {}
-                    else:
-                        args = raw_args if isinstance(raw_args, dict) else {}
+
+                normalized = []
+                for i, tc in enumerate(tool_calls[:3]):  # max 3 tool calls per round
+                    ntc = normalize_tool_call(tc, index=i)
+                    normalized.append(ntc)
                     if project_root:
-                        args.setdefault("project_root", project_root)
-                    args.setdefault("workspace", workspace)
+                        ntc["arguments"].setdefault("project_root", project_root)
+                    ntc["arguments"].setdefault("workspace", workspace)
+                    # Serialize args per provider: dict for Ollama, string for OpenAI
+                    serialized_args = (
+                        ntc["arguments"]
+                        if provider_kind == "ollama"
+                        else _json.dumps(ntc["arguments"])
+                    )
                     assistant_msg["tool_calls"].append(
                         {
-                            "id": tc_id,
+                            "id": ntc["id"],
                             "type": "function",
-                            "function": {"name": name, "arguments": _json.dumps(args)},
+                            "function": {"name": ntc["name"], "arguments": serialized_args},
                         }
                     )
                 messages.append(assistant_msg)
 
-                # Execute tools and append results with matching tool_call_id
-                for tc_data in assistant_msg["tool_calls"]:
-                    call_id = tc_data["id"]
-                    tool_name = tc_data["function"]["name"]
-                    tool_args = _json.loads(tc_data["function"]["arguments"])
+                # Execute tools and append results with provider-native format
+                for ntc in normalized:
                     try:
-                        result = await safe_tool_call(tool_name, tool_args, role="agent")
+                        result = await safe_tool_call(ntc["name"], ntc["arguments"], role="agent")
                     except Exception as e:
                         logger.warning(
-                            f"Tool call '{tool_name}' failed in collaborative agent: {e}"
+                            f"Tool call '{ntc['name']}' failed in collaborative agent: {e}"
                         )
                         result = {
                             "success": False,
@@ -372,11 +385,9 @@ class CollaborativeOrchestrator:
                         else str(result)
                     )
                     messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "content": f"[{tool_name}]: {output}",
-                        }
+                        tool_result_message(
+                            provider_kind, ntc["name"], ntc["id"], f"[{ntc['name']}]: {output}"
+                        )
                     )
 
                 # Second call — now valid: tool messages follow assistant with tool_calls

@@ -16,10 +16,20 @@ from pathlib import Path
 
 from core.codebase_indexer import CodebaseIndexer
 from core.config import settings
+from core.constants import PROJECTS_DIR_NAME
 from core.context_manager import ContextManager
 from core.memory.manager import memory as memory_manager
 from core.utils import clean_llm_response
 from llm import models, tool_calls_from_response
+from llm.tool_calls import (
+    detect_provider_from_raw_tool_call,
+    has_tool_association,
+    is_valid_tool_call,
+    log_raw_tool_args,
+    model_supports_tool_calling,
+    normalize_arguments,
+    tool_result_message,
+)
 from orchestration.context import Session, emit_stats, emit_system
 from tools.specs import build_tool_definitions, build_tool_instructions
 from tools.wrapper import safe_tool_call
@@ -37,6 +47,7 @@ class AgentLoopConfig:
 
     max_agent_iterations: int = 15
     max_stall_iterations: int = 2
+    max_tool_call_repairs: int = 2
     context_compression_threshold: float = 0.7
     context_compression_enabled: bool = True
 
@@ -46,6 +57,7 @@ class AgentLoopConfig:
         return cls(
             max_agent_iterations=getattr(settings, "max_agent_iterations", 8),
             max_stall_iterations=2,
+            max_tool_call_repairs=2,
             context_compression_threshold=getattr(settings, "context_compression_threshold", 0.7),
             context_compression_enabled=settings.context_compression,
         )
@@ -68,6 +80,7 @@ async def _accumulate_stream(stream, on_chunk) -> tuple[str, list[dict], str | N
     """
     full_text = ""
     tool_call_by_id: dict[str, dict] = {}
+    orphan_args: dict[str, str] = {}
     finish_reason = None
     reasoning = ""
 
@@ -88,7 +101,11 @@ async def _accumulate_stream(stream, on_chunk) -> tuple[str, list[dict], str | N
             if tid not in tool_call_by_id:
                 tool_call_by_id[tid] = {
                     "id": tid,
-                    "function": {"name": chunk.tool_name, "arguments": ""},
+                    "function": {
+                        "name": chunk.tool_name,
+                        # Re-attach arguments that arrived before the name
+                        "arguments": orphan_args.pop(tid, ""),
+                    },
                 }
             else:
                 tool_call_by_id[tid]["function"]["name"] = chunk.tool_name
@@ -103,9 +120,20 @@ async def _accumulate_stream(stream, on_chunk) -> tuple[str, list[dict], str | N
                         "function": {"name": chunk.tool_name, "arguments": ""},
                     }
                 else:
-                    # Arguments arrived before name — defer, don't seed with empty name
+                    # Arguments arrived before name — buffer them (bug 2026-08-15:
+                    # `continue` descartaba los args y el tool call quedaba incompleto)
+                    orphan_args[tid] = orphan_args.get(tid, "") + chunk.tool_arguments
                     continue
             tool_call_by_id[tid]["function"]["arguments"] += chunk.tool_arguments
+
+        # Ollama native format: complete tool call (name + arguments) in a
+        # single chunk WITHOUT an id — synthesise one instead of dropping it.
+        if chunk.tool_arguments and chunk.tool_name and not chunk.tool_call_id:
+            tid = f"call_{len(tool_call_by_id)}"
+            tool_call_by_id[tid] = {
+                "id": tid,
+                "function": {"name": chunk.tool_name, "arguments": chunk.tool_arguments},
+            }
 
         if chunk.is_done:
             finish_reason = chunk.finish_reason
@@ -130,6 +158,11 @@ async def _accumulate_stream(stream, on_chunk) -> tuple[str, list[dict], str | N
     tool_calls = list(tool_call_by_id.values()) if tool_call_by_id else []
 
     return full_text, tool_calls, finish_reason, reasoning
+
+
+def _has_any_valid_tool_call(parsed: list[dict]) -> bool:
+    """Backwards-compatible wrapper delegating to the provider-aware normaliser."""
+    return any(is_valid_tool_call(tc) for tc in parsed)
 
 
 def _is_modifying_action(tool_name: str, parameters: dict) -> bool:
@@ -212,6 +245,7 @@ async def _execute_tool_calls_and_check_stall(
     workspace: str,
     events,
     repeat_tracker: dict[str, int] | None = None,
+    provider_kind: str = "openai",
 ) -> dict | tuple[int, bool, list, int, dict | None]:
     """Execute parsed tool calls, track progress, check stall.
 
@@ -221,6 +255,9 @@ async def _execute_tool_calls_and_check_stall(
     repeat_tracker: optional dict mapping tool:args_hash → count.
     If the same non-modifying tool+args repeats 3+ times without
     progress, the stall counter is incremented. Resets on modification.
+
+    provider_kind: "ollama" | "openai" — determines the native format of
+    tool-result messages.
     """
     if repeat_tracker is None:
         repeat_tracker = {}
@@ -230,11 +267,12 @@ async def _execute_tool_calls_and_check_stall(
             question = tc["arguments"].get("question", "")
             options = tc["arguments"].get("options") or []
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": f"[ask_clarification]: {question}",
-                }
+                tool_result_message(
+                    provider_kind,
+                    tc["name"],
+                    tc["id"],
+                    f"[ask_clarification]: {question}",
+                )
             )
             return {
                 "status": "clarification_needed",
@@ -266,11 +304,12 @@ async def _execute_tool_calls_and_check_stall(
             repeat_tracker[call_key] = repeat_tracker.get(call_key, 0) + 1
 
         messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": f"[{tc['name']}]: {result_output}",
-            }
+            tool_result_message(
+                provider_kind,
+                tc["name"],
+                tc["id"],
+                f"[{tc['name']}]: {result_output}",
+            )
         )
 
     # Repetitive non-modifying calls override tool_success progress
@@ -442,7 +481,7 @@ async def _build_extra_context(
 
     # 2.5 — Memoria FAISS: buscar tareas similares anteriores
     try:
-        past = await memory_manager.search_async(task, k=2, min_similarity=0.3)
+        past = await memory_manager.search_async(task, k=2, min_similarity=0.5)
         if past:
             past_text = "\n".join(
                 f"- [{r.get('key', '?')}]: {str(r.get('value', ''))[:300]}" for r in past
@@ -467,6 +506,17 @@ async def _build_extra_context(
             logger.warning("CodebaseIndexer no disponible, omitiendo.", exc_info=True)
 
     return "\n\n".join(parts)
+
+
+def _is_trivial_profile(profile: dict | None) -> bool:
+    """Perfil trivial: sin datos útiles más allá del nombre (o vacío).
+
+    Los perfiles auto-inferidos con solo un nombre (ej. {"name": "ChatGPT"})
+    contaminan las tareas: el agente ancla su salida en ese dato stale.
+    """
+    from core.utils import is_trivial_profile
+
+    return is_trivial_profile(profile)
 
 
 async def execute_agent_loop(
@@ -523,7 +573,37 @@ async def execute_agent_loop(
             + enriched_context
         )
 
-    tools_defs = build_tool_definitions(allowed_tools)
+    from llm.provider import LLMProvider
+
+    initial_provider = LLMProvider.get_provider_name("agent")
+    provider_kind: str = "ollama" if initial_provider == "ollama" else "openai"
+
+    # ── Model capability gate (síntesis 3.2 + 3.6) ──
+    role_config = settings.model_roles.get("agent", settings.model_roles["default"])
+    active_model: str = (
+        str(role_config.get("ollama_model") or settings.ollama_model)
+        if initial_provider == "ollama"
+        else str(role_config["model"])
+    )
+    native_tools_supported = model_supports_tool_calling(active_model)
+    if not native_tools_supported:
+        logger.warning(
+            "Modelo '%s' sin soporte de tool calling (model_capabilities) — "
+            "degradando a modo texto + Safety Net.",
+            active_model,
+        )
+        if events:
+            await emit_system(
+                events,
+                f"⚠️ El modelo '{active_model}' no soporta tool calling nativo — "
+                "usando modo texto.",
+            )
+
+    tools_defs = (
+        build_tool_definitions(allowed_tools, provider_kind=provider_kind)
+        if native_tools_supported
+        else []
+    )
     tool_instructions_text = build_tool_instructions(allowed_tools, project_root, plan_mode=False)
 
     messages = list(history) if history else []
@@ -534,7 +614,7 @@ async def execute_agent_loop(
 
     profile_context = ""
     user_profile = memory_manager.get_user_profile()
-    if user_profile and any(user_profile.values()):
+    if user_profile and not _is_trivial_profile(user_profile):
         summary = memory_manager.get_user_summary()
         if summary:
             profile_context = f"\n[PERFIL DEL USUARIO]:\n{summary}\n"
@@ -550,10 +630,12 @@ async def execute_agent_loop(
         f"{enriched_context}\n"
         f"{profile_context}\n"
         "Reglas importantes:\n"
-        "- Los paths en file_manager son relativos al project root. NO antepongas directorios como 'code_projects/'.\n"
-        "  Ejemplo: para crear 'api_tareas/main.py', usa path='api_tareas/main.py', NO 'code_projects/api_tareas/main.py'.\n"
-        "- NUNCA uses paths absolutos como '/home/user/code_projects/...'. Todos los paths son relativos al project root.\n"
-        "- Antes de escribir código, LEELO primero con file_manager(action='read', path='archivo.py').\n"
+        f"- Los paths en file_manager son relativos al project root. NO antepongas directorios como '{PROJECTS_DIR_NAME}/'.\n"
+        f"  Ejemplo: para crear 'api_tareas/main.py', usa path='api_tareas/main.py', NO '{PROJECTS_DIR_NAME}/api_tareas/main.py'.\n"
+        f"- NUNCA uses paths absolutos como '/home/user/{PROJECTS_DIR_NAME}/...'. Todos los paths son relativos al project root.\n"
+        "- Para archivos NUEVOS escribe directamente con file_manager(action='write', path=..., content=...).\n"
+        "  NO intentes leerlos primero: no existen y la lectura te hará perder tiempo.\n"
+        "- Para MODIFICAR un archivo EXISTENTE, LEELO primero con file_manager(action='read', path='archivo.py').\n"
         "- Después de escribir, VERIFICA que el archivo existe con file_manager(action='read', path='archivo.py').\n"
         "- bash_manager SIEMPRE requiere el parámetro 'command'. Sin él, la herramienta falla.\n"
         "  Ejemplo correcto: command='pytest tests/'. NO llames bash_manager() sin command.\n"
@@ -566,7 +648,15 @@ async def execute_agent_loop(
         "- Si recibes contexto compartido de otros agentes (Shared Context), LEELO primero.\n"
         "  Puede contener resultados previos que eviten trabajo duplicado.\n"
         "- Si una acción falla, NO la repitas. Prueba otra estrategia.\n"
-        "- Cuando la tarea esté completa, responde con un RESUMEN de lo hecho.\n"
+        "- SI tu modelo soporta function-calling, DEBES usar file_manager o\n"
+        "  diff_editor para crear o modificar archivos. Las llamadas a\n"
+        "  file_manager requieren SIEMPRE los parámetros 'action' y 'path'.\n"
+        "  Sin ellos la herramienta falla y la subtarea se estanca.\n"
+        "- Si NO soportas function-calling, responde con el código completo\n"
+        "  en bloques ```. El progreso REAL requiere archivos en disco —\n"
+        "  responder solo con texto eventualmente agota los intentos.\n"
+        "- Cuando la tarea esté completa Y los archivos estén escritos, responde con\n"
+        "  un RESUMEN de lo que creaste.\n"
         "- Si te estancas, explica por qué y sugiere alternativas."
     )
 
@@ -578,6 +668,7 @@ async def execute_agent_loop(
     files_written: list[str] = []
     consecutive_stalls = 0
     repeat_tracker: dict[str, int] = {}
+    tool_call_repairs = 0
 
     for iteration in range(1, config.max_agent_iterations + 1):
         if events and iteration > 1:
@@ -587,7 +678,7 @@ async def execute_agent_loop(
                     "status": f"Agent iteration {iteration}/{config.max_agent_iterations}",
                     "current_agent": agent_type or "agent",
                     "actions_taken": actions_taken,
-                    "files_written": len(files_written),
+                    "files_written": list(files_written),
                 },
             )
 
@@ -604,8 +695,10 @@ async def execute_agent_loop(
                 )
                 from core.cache_manager import cache_manager
 
-                # Filter orphaned tool messages (missing tool_call_id causes DeepSeek 400)
-                messages = [m for m in messages if m.get("role") != "tool" or m.get("tool_call_id")]
+                # Filter orphaned tool messages (missing association field causes provider errors)
+                messages = [
+                    m for m in messages if m.get("role") != "tool" or has_tool_association(m)
+                ]
 
                 messages = cache_manager.stabilize_messages(messages, max_tokens=target)
 
@@ -625,13 +718,14 @@ async def execute_agent_loop(
 
             if streamed_tool_calls:
                 # Build assistant_msg from accumulated stream tool_calls
+                # NOTE: reasoning_content is NOT re-sent to the model —
+                # thinking models amplify their own reasoning chains when
+                # they see them in history, growing context and latency.
                 assistant_msg: dict = {
                     "role": "assistant",
                     "content": streamed_text or None,
                     "tool_calls": [],
                 }
-                if reasoning:
-                    assistant_msg["reasoning_content"] = reasoning
                 for tc in streamed_tool_calls:
                     assistant_msg["tool_calls"].append(
                         {
@@ -651,14 +745,51 @@ async def execute_agent_loop(
                     tool_name = tc["function"]["name"]
                     if not tool_name:
                         continue
-                    try:
-                        args = json.loads(tc["function"]["arguments"])
-                    except (json.JSONDecodeError, TypeError):
-                        args = {}
+                    args = normalize_arguments(tc["function"]["arguments"])
                     parsed.append({"name": tool_name, "id": tc["id"], "arguments": args})
 
                 if not parsed:
                     continue
+
+                # Safety net: if all tool calls have empty/invalid args,
+                # treat as text response instead of executing broken tools
+                if not _has_any_valid_tool_call(parsed):
+                    if tool_call_repairs < config.max_tool_call_repairs:
+                        logger.warning(
+                            "Tool calls empty — repair %d/%d",
+                            tool_call_repairs + 1,
+                            config.max_tool_call_repairs,
+                        )
+                        from core.metrics import metrics as _metrics
+
+                        _metrics.record_tool_call_repair(active_model)
+                        for tc in parsed:
+                            messages.append(
+                                tool_result_message(
+                                    provider_kind,
+                                    tc["name"],
+                                    tc["id"],
+                                    "Error: la llamada no incluye argumentos válidos. "
+                                    "Debes proporcionar parámetros con valores reales "
+                                    "como action='write' y path='archivo.py'.",
+                                )
+                            )
+                        tool_call_repairs += 1
+                        continue
+                    else:
+                        logger.warning("Tool calls empty — repair budget exhausted, using text")
+                        from core.metrics import metrics as _metrics
+
+                        _metrics.record_tool_call_repair(active_model)
+                        if events:
+                            await emit_system(
+                                events,
+                                "⚠️ El modelo no generó tool calls válidas — "
+                                "degradando a respuesta de texto.",
+                            )
+                        final_result = streamed_text.strip()
+                        final_result = clean_llm_response(final_result)
+                        break
 
                 result = await _execute_tool_calls_and_check_stall(
                     parsed,
@@ -673,6 +804,7 @@ async def execute_agent_loop(
                     workspace,
                     events,
                     repeat_tracker,
+                    provider_kind=provider_kind,
                 )
                 if isinstance(result, dict):
                     return result
@@ -696,16 +828,16 @@ async def execute_agent_loop(
             tool_calls = tool_calls_from_response(response)
 
             if tool_calls:
+                # Detect provider from the raw tool-call format
+                provider_kind = detect_provider_from_raw_tool_call(tool_calls[0])
+                # NOTE: reasoning_content is NOT re-sent to the model —
+                # thinking models amplify their own reasoning chains when
+                # they see them in history, growing context and latency.
                 assistant_msg = {
                     "role": "assistant",
                     "content": None,
                     "tool_calls": [],
                 }
-                choice = response.choices[0] if hasattr(response, "choices") else None
-                if choice and hasattr(choice, "message"):
-                    reasoning: str | None = getattr(choice.message, "reasoning_content", None)  # type: ignore[no-redef]
-                    if reasoning:
-                        assistant_msg["reasoning_content"] = reasoning
 
                 for tc in tool_calls:
                     func = tc.function if hasattr(tc, "function") else tc.get("function", {})
@@ -742,20 +874,59 @@ async def execute_agent_loop(
                     if not tool_name:
                         continue
                     call_id = assistant_msg["tool_calls"][i]["id"]
-                    try:
-                        arguments = (
-                            json.loads(func.arguments)
-                            if hasattr(func, "arguments")
-                            else func.get("arguments", {})
-                        )
-                        if isinstance(arguments, str):
-                            arguments = json.loads(arguments)
-                    except (json.JSONDecodeError, TypeError):
-                        arguments = {}
+                    raw_args = (
+                        func.arguments if hasattr(func, "arguments") else func.get("arguments", {})
+                    )
+                    log_raw_tool_args(f"non-streaming:{tool_name}", raw_args)
+                    arguments = normalize_arguments(raw_args)
                     parsed.append({"name": tool_name, "id": call_id, "arguments": arguments})
 
                 if not parsed:
                     continue
+
+                # Safety net: if all tool calls have empty/invalid args,
+                # treat as text response instead of executing broken tools
+                if not _has_any_valid_tool_call(parsed):
+                    if tool_call_repairs < config.max_tool_call_repairs:
+                        logger.warning(
+                            "Tool calls empty — repair %d/%d",
+                            tool_call_repairs + 1,
+                            config.max_tool_call_repairs,
+                        )
+                        from core.metrics import metrics as _metrics
+
+                        _metrics.record_tool_call_repair(active_model)
+                        for tc in parsed:
+                            messages.append(
+                                tool_result_message(
+                                    provider_kind,
+                                    tc["name"],
+                                    tc["id"],
+                                    "Error: la llamada no incluye argumentos válidos. "
+                                    "Debes proporcionar parámetros con valores reales "
+                                    "como action='write' y path='archivo.py'.",
+                                )
+                            )
+                        tool_call_repairs += 1
+                        continue
+                    else:
+                        logger.warning("Tool calls empty — repair budget exhausted, using text")
+                        from core.metrics import metrics as _metrics
+
+                        _metrics.record_tool_call_repair(active_model)
+                        if events:
+                            await emit_system(
+                                events,
+                                "⚠️ El modelo no generó tool calls válidas — "
+                                "degradando a respuesta de texto.",
+                            )
+                        choice = response.choices[0] if hasattr(response, "choices") else None
+                        content = ""
+                        if choice and hasattr(choice, "message"):
+                            content = choice.message.content or ""
+                        final_result = str(content) if content else str(response)
+                        final_result = clean_llm_response(final_result)
+                        break
 
                 result = await _execute_tool_calls_and_check_stall(
                     parsed,
@@ -770,6 +941,7 @@ async def execute_agent_loop(
                     workspace,
                     events,
                     repeat_tracker,
+                    provider_kind=provider_kind,
                 )
                 if isinstance(result, dict):
                     return result
@@ -779,6 +951,17 @@ async def execute_agent_loop(
                 continue
 
             # No tool calls — LLM dio respuesta final
+            choice = response.choices[0] if hasattr(response, "choices") else None
+            content = ""
+            if choice and hasattr(choice, "message"):
+                content = choice.message.content or ""
+            final_result = str(content) if content else str(response)
+            final_result = clean_llm_response(final_result)
+            break
+
+        else:
+            # ── Modo texto: sin tools nativas (modelo sin soporte o lista vacía) ──
+            response = await models.call(messages=messages, role="agent")
             choice = response.choices[0] if hasattr(response, "choices") else None
             content = ""
             if choice and hasattr(choice, "message"):
@@ -801,7 +984,7 @@ async def execute_agent_loop(
                 "current_agent": agent_type or "agent",
                 "actions_taken": actions_taken,
                 "iterations": iteration,
-                "files_written": len(files_written),
+                "files_written": list(files_written),
             },
         )
 

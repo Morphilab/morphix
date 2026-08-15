@@ -7,7 +7,10 @@ como la GUI PySide6 puedan usarlos sin dependencias mutuas.
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from orchestration.emitter import WorkflowEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,6 @@ class WorkflowEvents:
     on_assistant_message: Callable[[str], Awaitable[None]] | None = None
     on_user_message: Callable[[str], Awaitable[None]] | None = None
     on_stream_chunk: Callable[[str], Awaitable[None]] | None = None
-    on_diagram_update: Callable[[str, Any], Awaitable[None]] | None = None
     on_stats_update: Callable[[dict], Awaitable[None]] | None = None
     on_ui_refresh: Callable[[], Awaitable[None]] | None = None
     on_approval_required: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None
@@ -65,6 +67,7 @@ class Session:
 
     context: WorkflowContext
     events: WorkflowEvents
+    emitter: "WorkflowEmitter | None" = None
 
     def cancel(self) -> None:
         """Mark the workflow as cancelled."""
@@ -98,10 +101,6 @@ async def emit_user(events: WorkflowEvents, message: str) -> None:
 
 async def emit_stream_chunk(events: WorkflowEvents, chunk: str) -> None:
     await _emit(events.on_stream_chunk, chunk)
-
-
-async def emit_diagram(events: WorkflowEvents, mermaid_code: str, graph: Any = None) -> None:
-    await _emit(events.on_diagram_update, mermaid_code, graph)
 
 
 async def emit_stats(events: WorkflowEvents, stats: dict) -> None:

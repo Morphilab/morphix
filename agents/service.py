@@ -1,4 +1,4 @@
-# features/agents/services/agents_service.py
+# agents/service.py
 import logging
 
 from core.config import settings

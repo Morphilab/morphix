@@ -1,4 +1,4 @@
-# features/maestro/services/supervisor.py
+# orchestration/supervisor.py
 """
 WorkflowSupervisor - Versión Dinámica basada en perfiles de agentes
 """

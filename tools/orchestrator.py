@@ -1,4 +1,4 @@
-# core/tools_orchestrator.py
+# tools/orchestrator.py
 """
 Tool Orchestrator Avanzado - Versión Final Robusta (Prioridad 3)
 - Retries y backoff alineados con models_controller
@@ -24,14 +24,47 @@ from tools.registry import tools_registry
 
 logger = logging.getLogger(__name__)
 
-# Token budget isolated per async context (Python 3.12+ copies contextvars in create_task)
-_token_budget_ctx: contextvars.ContextVar[int] = contextvars.ContextVar(
-    "tool_token_budget", default=0
-)
 
-# Flag to suppress repeated budget-exceeded warnings within a single workflow
-_budget_warned_ctx: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "tool_budget_warned", default=False
+# Token budget — estado mutable compartido por referencia entre el task raíz
+# del workflow y sus subtasks (asyncio.create_task/gather copian el ContextVar,
+# pero el OBJETO es el mismo → las mutaciones de los hijos son visibles para el
+# raíz). Esto hace el presupuesto determinista en cualquier topología
+# (secuencial como development, o gather como coordinated).
+class _TokenBudgetState:
+    __slots__ = ("total", "max_budget", "warned")
+
+    def __init__(self, max_budget: int) -> None:
+        self.total = 0
+        self.max_budget = max_budget
+        self.warned = False
+
+    def reserve(self, estimated: int) -> bool:
+        """Reserva tokens de forma atómica (sync, sin awaits).
+
+        Cierra el TOCTOU del check-then-charge: bajo ejecución paralela
+        (gather) dos tareas podían leer el mismo total, pasar ambas el
+        chequeo y cargar después, excediendo el presupuesto. Al reservar en
+        el mismo paso sincrónico, el loop no puede entrelazar las tareas.
+
+        Retorna False si la reserva excedería el presupuesto (sin cargar).
+        """
+        if self.total + estimated > self.max_budget:
+            return False
+        self.total += estimated
+        return True
+
+    def reconcile(self, estimated: int, actual: int) -> None:
+        """Reemplaza la reserva por el gasto real de tokens.
+
+        Bajo paralelismo el total puede exceder max por la varianza entre
+        estimación y gasto real de cada tool (best-effort, acotado por
+        tool); la defensa principal es reserve() contra el overcommit.
+        """
+        self.total += actual - estimated
+
+
+_token_budget_ctx: contextvars.ContextVar[_TokenBudgetState | None] = contextvars.ContextVar(
+    "tool_token_budget", default=None
 )
 
 
@@ -61,6 +94,7 @@ class ToolOrchestrator:
         max_tokens: int | None = None,
         workspace: str | None = None,
         session_id: str | None = None,
+        skip_budget: bool = False,
     ) -> dict[str, Any]:
         if workspace is None:
             workspace = settings.active_workspace
@@ -129,31 +163,33 @@ class ToolOrchestrator:
                     "output": f"❌ Operation '{tool_name}' was denied by user.",
                 }
 
-        # Token budget — isolated per async context (contextvars)
+        # Token budget — estado mutable compartido entre tasks (ver _TokenBudgetState)
         estimated = ToolOrchestrator._estimate_tokens(parameters)
-        current_budget = _token_budget_ctx.get()
-        max_budget = ToolOrchestrator.MAX_TOKENS_PER_WORKFLOW
-        if ToolOrchestrator.ENABLE_TOKEN_BUDGET and current_budget + estimated > max_budget:
-            if hooks_on:
-                await hooks_registry.dispatch(
-                    "on_token_budget_exceeded",
-                    HookContext(
-                        hook_point="on_token_budget_exceeded",
-                        tool_name=tool_name,
-                        parameters=parameters,
-                        role=role,
-                        workspace=workspace,
-                        session_id=session_id,
+        budget_state = _token_budget_ctx.get()
+        budget_reserved = False
+        if ToolOrchestrator.ENABLE_TOKEN_BUDGET and budget_state is not None and not skip_budget:
+            if not budget_state.reserve(estimated):
+                if hooks_on:
+                    await hooks_registry.dispatch(
+                        "on_token_budget_exceeded",
+                        HookContext(
+                            hook_point="on_token_budget_exceeded",
+                            tool_name=tool_name,
+                            parameters=parameters,
+                            role=role,
+                            workspace=workspace,
+                            session_id=session_id,
+                        ),
+                    )
+                return {
+                    "success": False,
+                    "error": "token_budget_exceeded",
+                    "output": (
+                        f"❌ Presupuesto de tokens excedido "
+                        f"({budget_state.total + estimated}/{budget_state.max_budget})"
                     ),
-                )
-            return {
-                "success": False,
-                "error": "token_budget_exceeded",
-                "output": (
-                    f"❌ Presupuesto de tokens excedido "
-                    f"({current_budget + estimated}/{max_budget})"
-                ),
-            }
+                }
+            budget_reserved = True
 
         start_time = time.time()
         last_error = None
@@ -198,13 +234,24 @@ class ToolOrchestrator:
                         if isinstance(result, dict)
                         else str(result)
                     )
-                    # Fast-fail: skip retry for file-not-found or path errors
+                    # Fast-fail: skip retry for unrecoverable failures
+                    # (file/path, security blocks, budget, git/diff state)
                     fast_fail_keywords = [
                         "no se encontró",
                         "no encontrado",
                         "not found",
                         "file not found",
                         "fuera del workspace",
+                        "bloqueado por seguridad",
+                        "blocked for security",
+                        "blocked segment",
+                        "presupuesto de tokens excedido",
+                        "presupuesto excedido",
+                        "token_budget_exceeded",
+                        "no hay un repositorio git",
+                        "no hay repositorio git",
+                        "se revirtió el cambio",
+                        "no se pudo aplicar el diff",
                     ]
                     if any(kw in str(error_msg).lower() for kw in fast_fail_keywords):
                         logger.warning(
@@ -244,18 +291,20 @@ class ToolOrchestrator:
                     }
 
                 # Verificar presupuesto con tokens reales antes de contabilizar
-                new_total = current_budget + actual_tokens
-                if ToolOrchestrator.ENABLE_TOKEN_BUDGET and new_total > max_budget:
-                    logger.warning(
-                        f"Tool {tool_name} excede presupuesto con tokens reales "
-                        f"({new_total}/{max_budget}). Resultado descartado."
-                    )
-                    return {
-                        "success": False,
-                        "error": "token_budget_exceeded",
-                        "output": f"❌ Presupuesto excedido ({new_total}/{max_budget})",
-                    }
-                _token_budget_ctx.set(new_total)
+                if budget_reserved and budget_state is not None:
+                    projected = budget_state.total + (actual_tokens - estimated)
+                    if projected > budget_state.max_budget:
+                        budget_state.reconcile(estimated, 0)  # reembolsa la reserva
+                        logger.warning(
+                            f"Tool {tool_name} excede presupuesto con tokens reales "
+                            f"({projected}/{budget_state.max_budget}). Resultado descartado."
+                        )
+                        return {
+                            "success": False,
+                            "error": "token_budget_exceeded",
+                            "output": f"❌ Presupuesto excedido ({projected}/{budget_state.max_budget})",
+                        }
+                    budget_state.reconcile(estimated, actual_tokens)
 
                 logger.info(
                     f"✅ Tool {tool_name} OK (attempt {attempt}) | tokens={actual_tokens} | duration={duration:.2f}s"
@@ -329,8 +378,12 @@ class ToolOrchestrator:
         # ALLOW_CODE_EXECUTION flag gating
         if tool_name in ("code_exec", "bash_manager") and not settings.allow_code_execution:
             return False
+        # Extension point de permisos dinámicos por-tool (kairos):
+        # hoy no hay callers que registren claves `allow_*`, por lo que el
+        # default es allow. Si se implementa, registrar las claves en
+        # core/feature_flags.py::_init_flags y NO confiar en el default.
         key = f"allow_{tool_name}_{role}"
-        return kairos.get(key, kairos.get(f"allow_{tool_name}", True))  # dynamic permission flags
+        return kairos.get(key, kairos.get(f"allow_{tool_name}", True))
 
     @staticmethod
     def _estimate_tokens(parameters: dict[str, Any]) -> int:
@@ -343,33 +396,41 @@ class ToolOrchestrator:
     @staticmethod
     def reset_token_budget():
         """Reinicia el presupuesto de tokens al inicio de cada workflow.
-        El contextvar garantiza aislamiento entre workflows concurrentes."""
-        _token_budget_ctx.set(0)
-        _budget_warned_ctx.set(False)
+
+        El estado es un objeto mutable: los tasks hijos lo comparten por
+        referencia, así que la acumulación es visible para el task raíz
+        (topología determinista, coordinated y development)."""
         ToolOrchestrator.MAX_TOKENS_PER_WORKFLOW = settings.tool_max_tokens_per_workflow
         ToolOrchestrator.ENABLE_TOKEN_BUDGET = settings.tool_enable_token_budget
+        _token_budget_ctx.set(_TokenBudgetState(ToolOrchestrator.MAX_TOKENS_PER_WORKFLOW))
 
 
 def add_llm_token_usage(total_tokens: int) -> None:
     """Track actual LLM API tokens in the workflow token budget."""
     if not ToolOrchestrator.ENABLE_TOKEN_BUDGET:
         return
-    current = _token_budget_ctx.get()
-    if current is None:
+    state = _token_budget_ctx.get()
+    if state is None:
         return
-    max_budget = ToolOrchestrator.MAX_TOKENS_PER_WORKFLOW
-    new_total = current + total_tokens
-    _token_budget_ctx.set(new_total)
-    if new_total > max_budget:
-        _warned = _budget_warned_ctx.get()
-        if not _warned:
-            _budget_warned_ctx.set(True)
-            logger.warning(
-                "Token budget exceeded by LLM call: %d/%d tokens (further warnings suppressed)",
-                new_total,
-                max_budget,
-            )
+    state.total += total_tokens
+    if state.total > state.max_budget and not state.warned:
+        state.warned = True
+        logger.warning(
+            "Token budget exceeded by LLM call: %d/%d tokens (further warnings suppressed)",
+            state.total,
+            state.max_budget,
+        )
 
 
 # Global instance (kept for compatibility; the budget is now context-local)
 tool_orchestrator = ToolOrchestrator()
+
+
+def get_llm_token_usage() -> int:
+    """Tokens LLM acumulados en el workflow actual (budget ContextVar).
+
+    Retorna 0 si no hay presupuesto activo (p. ej. tests o chat simple
+    sin reset_token_budget previo).
+    """
+    state = _token_budget_ctx.get()
+    return state.total if state is not None else 0

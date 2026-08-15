@@ -18,7 +18,6 @@ def _make_events():
         on_system_message=on_system,
         on_assistant_message=on_assistant,
         on_stats_update=on_stats,
-        on_diagram_update=AsyncMock(),
         on_ui_refresh=AsyncMock(),
     )
     return events, on_assistant, on_system, on_stats, on_stream

@@ -45,3 +45,36 @@ def test_clean_text_truncates_long():
     result = _clean_text(long_text, max_len=100)
     assert len(result) <= 103
     assert result.endswith("...")
+
+
+def test_renders_cards_grouped_by_phase():
+    from orchestration.status import render_from_subtasks
+
+    subtask_list = [
+        {"name": "Diseñar", "status": "completed"},
+        {"name": "Implementar", "status": "running"},
+        {"name": "Verificar", "status": "pending"},
+    ]
+    html = render_from_subtasks(subtask_list, phase="implement")
+
+    assert "Diseñar" in html
+    assert "Implementar" in html
+    assert "Verificar" in html
+    assert "COMPLETED" in html.upper()
+    assert "RUNNING" in html.upper()
+    assert "implement" in html.lower()
+
+
+def test_empty_list_returns_placeholder():
+    from orchestration.status import render_from_subtasks
+
+    html = render_from_subtasks([], phase=None)
+    assert "Workflow vacío" in html
+
+
+def test_escapes_html_in_task_names():
+    from orchestration.status import render_from_subtasks
+
+    html = render_from_subtasks([{"name": "<script>alert(1)</script>", "status": "pending"}])
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html

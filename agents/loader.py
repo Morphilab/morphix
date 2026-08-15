@@ -1,4 +1,4 @@
-# core/agent_loader.py
+# agents/loader.py
 import logging
 
 import yaml

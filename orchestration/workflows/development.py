@@ -6,27 +6,26 @@ Extracted from WorkflowOrchestrator._run_full_orchestration to follow the same
 module-per-workflow pattern used by coordinated.py, collaborative.py, and tdd.py.
 """
 
-import asyncio
 import logging
-import time
 from typing import Any
 
 import networkx as nx
 
 from core.config import settings
+from core.constants import SUBTASK_TIMEOUT_SECONDS
 from core.context_manager import ContextManager
 from core.path_resolver import paths
 from orchestration.aggregator import ResultAggregator
-from orchestration.decomposer import decompose_task
-from orchestration.diagram import update_live_diagram
-from orchestration.events import (
+from orchestration.context import (
     WorkflowContext,
     WorkflowEvents,
     emit_assistant,
-    emit_stats,
     emit_system,
 )
-from orchestration.executor.subtask import execute_subtask_safe
+from orchestration.decomposer import decompose_task
+from orchestration.diagram import update_live_diagram
+from orchestration.emitter import WorkflowEmitter
+from orchestration.executor.subtask import run_subtask_safe
 from orchestration.finalizer import finalize_workflow
 from orchestration.router import agent_router
 from orchestration.supervisor import WorkflowSupervisor
@@ -40,23 +39,23 @@ from orchestration.workflows.orchestrator import (
 
 logger = logging.getLogger(__name__)
 
-SUBTASK_TIMEOUT = 300  # seconds — per-subtask timeout for development workflows
+SUBTASK_TIMEOUT = SUBTASK_TIMEOUT_SECONDS  # backward-compat alias
 
 
 def _build_subtask_list(subtasks, results, current_node, current_status):
     """Build a list of {name, status} dicts for the progress dashboard."""
+
+    def _status(i):
+        if i == current_node:
+            return current_status
+        if i in results:
+            return results[i].get("status", "completed")
+        return "completed" if i < current_node else "pending"
+
     return [
         {
             "name": (t if isinstance(t, str) else t.get("description", str(t)))[:60],
-            "status": (
-                current_status
-                if i == current_node
-                else (
-                    results[i].get("status", "completed")
-                    if i in results and results[i].get("status") == "completed"
-                    else "completed" if i < current_node and i in results else "pending"
-                )
-            ),
+            "status": _status(i),
         }
         for i, t in enumerate(subtasks)
     ]
@@ -76,8 +75,11 @@ class DevelopmentOrchestrator:
         allowed_agents: list | None,
         workflow_allowed_tools: list | None,
         start_time: float,
+        emitter: "WorkflowEmitter | None" = None,
     ) -> str:
         ctx.blackboard = SharedBlackboard()
+
+        emitter = emitter or WorkflowEmitter(None)  # no-op si no hay emitter (invocaciones legacy)
 
         agent_results: list[dict] = []
 
@@ -99,20 +101,18 @@ class DevelopmentOrchestrator:
         )
 
         await emit_system(events, f"📊 {len(subtasks_list)} subtareas generadas")
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": len(subtasks_list),
-                "subtasks_completed": 0,
-                "status": "Descomponiendo",
-                "subtask_list": [
-                    {
-                        "name": (t if isinstance(t, str) else t.get("description", str(t)))[:60],
-                        "status": "pending",
-                    }
-                    for t in subtasks_list
-                ],
-            },
+        await emitter.emit(
+            subtasks_total=len(subtasks_list),
+            subtasks_completed=0,
+            status="Descomponiendo",
+            phase="Descomponiendo",
+            subtask_list=[
+                {
+                    "name": (t if isinstance(t, str) else t.get("description", str(t)))[:60],
+                    "status": "pending",
+                }
+                for t in subtasks_list
+            ],
         )
 
         G = nx.DiGraph()
@@ -164,42 +164,30 @@ class DevelopmentOrchestrator:
             task_desc = G.nodes[node]["task"]
             agent = G.nodes[node]["agent"]
 
-            await emit_stats(
-                events,
-                {
-                    "current_agent": agent.capitalize(),
-                    "status": f"Ejecutando subtarea {node + 1}",
-                    "subtask_list": _build_subtask_list(subtasks_list, results, node, "running"),
-                },
+            await emitter.emit(
+                current_agent=agent.capitalize(),
+                status=f"Ejecutando subtarea {node + 1}",
+                phase="Ejecutando",
+                subtask_list=_build_subtask_list(subtasks_list, results, node, "running"),
             )
 
-            try:
-                clean_history = [
-                    m
-                    for m in conversation_history
-                    if m.get("role") not in ("tool",) or m.get("tool_call_id")
-                ]
-                result = await asyncio.wait_for(
-                    execute_subtask_safe(
-                        node=node,
-                        task=task_desc,
-                        G=G,
-                        conversation_history=clean_history,
-                        current_pdf_text=ctx.current_pdf_text,
-                        ctx=ctx,
-                        events=events,
-                        forced_agent=forced_agent,
-                        task_analysis=task_analysis,
-                    ),
-                    timeout=SUBTASK_TIMEOUT,
-                )
-            except Exception as e:
-                logger.error(f"Subtask {node} failed with exception: {e}")
-                result = {
-                    "status": "failed",
-                    "result": f"Error in subtask {node}: {e}",
-                    "files_written": [],
-                }
+            clean_history = [
+                m
+                for m in conversation_history
+                if m.get("role") not in ("tool",) or m.get("tool_call_id") or m.get("tool_name")
+            ]
+            result = await run_subtask_safe(
+                node=node,
+                task=task_desc,
+                G=G,
+                conversation_history=clean_history,
+                current_pdf_text=ctx.current_pdf_text,
+                ctx=ctx,
+                events=events,
+                forced_agent=forced_agent,
+                task_analysis=task_analysis,
+                timeout=SUBTASK_TIMEOUT,
+            )
 
             results[node] = result
 
@@ -258,12 +246,10 @@ class DevelopmentOrchestrator:
                 return "[PAUSED:clarification_needed]"
 
             completed = sum(1 for r in results.values() if r.get("status") == "completed")
-            await emit_stats(
-                events,
-                {
-                    "subtasks_completed": completed,
-                    "subtask_list": _build_subtask_list(subtasks_list, results, node, "completed"),
-                },
+            await emitter.emit(
+                subtasks_completed=completed,
+                phase="Ejecutando",
+                subtask_list=_build_subtask_list(subtasks_list, results, node, "completed"),
             )
             await update_live_diagram(G, events)
 
@@ -275,8 +261,8 @@ class DevelopmentOrchestrator:
         # ╚══════════════════════════════════════════════════════╝
         if project_root:
             await emit_system(events, "🔍 Realizando verificación global del proyecto...")
-            await emit_stats(
-                events, {"status": "Verificando proyecto", "current_agent": "Verificador"}
+            await emitter.emit(
+                status="Verificando", current_agent="WorkflowSupervisor", phase="Verificando"
             )
 
             best_agent = corrected_agents[0] if corrected_agents else settings.default_agent
@@ -317,7 +303,9 @@ class DevelopmentOrchestrator:
                             all_files_written.append(rel)
 
         await emit_system(events, "🔄 Preparando la respuesta final...")
-        await emit_stats(events, {"status": "Sintetizando", "current_agent": "ResultAggregator"})
+        await emitter.emit(
+            status="Sintetizando", current_agent="ResultAggregator", phase="Sintetizando"
+        )
 
         try:
             final_content = await ResultAggregator.aggregate_results(
@@ -349,19 +337,15 @@ class DevelopmentOrchestrator:
         scorecard = generate_scorecard(
             results, G, final_content, query, task_analysis, start_time, ctx.enc
         )
-        elapsed = round(time.monotonic() - start_time, 1)
 
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": len(subtasks_list),
-                "subtasks_completed": len(results),
-                "tokens_used": scorecard.get("tokens", 0),
-                "elapsed_time": f"{elapsed}s",
-                "current_agent": "—",
-                "status": "Completado",
-                "files_written": all_files_written,
-            },
+        await emitter.emit(
+            subtasks_total=len(subtasks_list),
+            subtasks_completed=len(results),
+            current_agent="—",
+            status="Completado",
+            files_written=list(all_files_written),
+            phase=None,
+            subtask_list=_build_subtask_list(subtasks_list, results, None, "completed"),
         )
 
         export_history = list(conversation_history) + agent_results

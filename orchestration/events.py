@@ -10,7 +10,6 @@ from orchestration.context import (  # noqa: F401
     _emit,
     emit_agent,
     emit_assistant,
-    emit_diagram,
     emit_refresh,
     emit_stats,
     emit_stream_chunk,

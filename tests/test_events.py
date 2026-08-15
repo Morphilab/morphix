@@ -8,7 +8,6 @@ from orchestration.events import (
     WorkflowEvents,
     emit_agent,
     emit_assistant,
-    emit_diagram,
     emit_refresh,
     emit_stats,
     emit_system,
@@ -42,7 +41,7 @@ class TestWorkflowEvents:
         events = WorkflowEvents()
         assert events.on_system_message is None
         assert events.on_assistant_message is None
-        assert events.on_diagram_update is None
+        assert events.on_stats_update is None
 
     def test_events_with_callbacks(self):
         cb = AsyncMock()
@@ -84,14 +83,6 @@ class TestEmitHelpers:
         events = WorkflowEvents(on_agent_message=cb)
         await emit_agent(events, "analista", "Ronda 1", "respuesta del agente")
         cb.assert_awaited_once_with("analista", "Ronda 1", "respuesta del agente")
-
-    @pytest.mark.asyncio
-    async def test_emit_diagram(self):
-        cb = AsyncMock()
-        events = WorkflowEvents(on_diagram_update=cb)
-        graph = {"nodes": 3}
-        await emit_diagram(events, "graph TD; A-->B", graph)
-        cb.assert_awaited_once_with("graph TD; A-->B", graph)
 
     @pytest.mark.asyncio
     async def test_emit_stats(self):

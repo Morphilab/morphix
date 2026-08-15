@@ -1,4 +1,4 @@
-# features/maestro/services/diagram_manager.py
+# orchestration/diagram.py
 """
 Diagram Manager — gestión de estado del workflow en vivo.
 Uses StatusRenderer (HTML) instead of Mermaid. No external dependencies.
@@ -15,11 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 async def update_live_diagram(G: Any, events: Any) -> str | None:
-    """Actualiza el estado en vivo disparando eventos.
+    """Actualiza el estado en vivo del workflow.
+
+    Ya NO emite por events (el signal diagram_update se eliminó de la frontera,
+    spec §3.4): la UI deriva el diagrama localmente de cada stats_update.
+    Conserva la construcción del grafo y el snapshot a charts/.
 
     Args:
         G: Grafo NetworkX del workflow (None = sin diagrama).
-        events: WorkflowEvents con on_diagram_update y on_ui_refresh.
+        events: WorkflowEvents (se conserva por compatibilidad de firma).
 
     Returns:
         El HTML generado, o None si no hay diagrama.
@@ -27,10 +31,6 @@ async def update_live_diagram(G: Any, events: Any) -> str | None:
     try:
         if G is None:
             logger.debug("Modo conversación simple: diagrama omitido (G=None)")
-            return None
-
-        if events is None:
-            logger.warning("events es None, no se puede actualizar diagrama")
             return None
 
         logger.debug(
@@ -43,10 +43,7 @@ async def update_live_diagram(G: Any, events: Any) -> str | None:
         # Persist the snapshot off the event loop to avoid blocking the UI pump.
         await asyncio.to_thread(save_status_snapshot, html)
 
-        if events.on_diagram_update is not None:
-            await events.on_diagram_update(html, G)
-
-        if events.on_ui_refresh is not None:
+        if events is not None and events.on_ui_refresh is not None:
             await events.on_ui_refresh()
 
         logger.debug("✅ Diagrama actualizado correctamente")

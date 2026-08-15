@@ -278,3 +278,36 @@ def test_project_has_no_tests_filesystem(tmp_path):
         assert _project_has_no_tests("main", "code_projects/lab", []) is True
         (tmp_path / "test_es_primo.py").write_text("def test_x():\n    assert True\n")
         assert _project_has_no_tests("main", "code_projects/lab", []) is False
+
+
+@pytest.mark.asyncio
+async def test_tdd_loop_passes_events_to_agent_loop():
+    """TDD reenvía events al loop → bash/stats/clarificación llegan a la UI (spec G1)."""
+    from orchestration.workflows.tdd import execute_tdd_loop
+
+    events = AsyncMock()
+    with patch(
+        "orchestration.loop.execute_agent_loop",
+        new_callable=AsyncMock,
+        return_value={
+            "status": "completed",
+            "result": "ok",
+            "iterations": 1,
+            "files_written": ["test_x.py"],
+        },
+    ) as mock_loop:
+        with patch(
+            "orchestration.workflows.tdd.safe_tool_call",
+            return_value={"success": True, "output": "no tests found"},
+        ):
+            await execute_tdd_loop(
+                task="crea tests",
+                workspace="main",
+                events=events,
+                max_iterations=1,
+            )
+
+    assert mock_loop.await_count >= 1
+    kwargs = mock_loop.await_args.kwargs
+    assert kwargs.get("events") is events
+    assert events.on_stats_update.await_count >= 1

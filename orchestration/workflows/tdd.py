@@ -8,9 +8,12 @@ Complete TDD loop:
 
 import asyncio
 import logging
+from typing import Any
 
 from core.config import settings
+from core.constants import SUBTASK_TIMEOUT_SECONDS
 from core.path_resolver import paths
+from orchestration.context import emit_stats
 from tools.wrapper import safe_tool_call
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,7 @@ async def execute_tdd_loop(
     agent_type: str | None = None,
     conversation_history: list | None = None,
     max_iterations: int = MAX_TDD_ITERATIONS,
+    events: Any = None,
 ) -> dict:
     """Ciclo TDD automatizado completo.
 
@@ -156,6 +160,28 @@ async def execute_tdd_loop(
             error_count,
         )
 
+        if events:
+            await emit_stats(
+                events,
+                {
+                    "status": f"Iteración {iterations}/{max_iterations}",
+                    "current_agent": agent_type or "TDD Agent",
+                    "subtask_list": [
+                        {
+                            "name": f"TDD iteración {i}",
+                            "status": (
+                                "completed"
+                                if i < iterations
+                                else ("running" if i == iterations else "pending")
+                            ),
+                        }
+                        for i in range(1, max_iterations + 1)
+                    ],
+                    "phase": f"Iteración {iterations}/{max_iterations}",
+                    "iterations": iterations,
+                },
+            )
+
         try:
             agent_result = await asyncio.wait_for(
                 execute_agent_loop(
@@ -166,11 +192,14 @@ async def execute_tdd_loop(
                     project_root=project_root,
                     workspace=workspace,
                     extra_context=f"Modo TDD. Iteración {iterations}/{max_iterations}.",
+                    events=events,
                 ),
-                timeout=300,
+                timeout=SUBTASK_TIMEOUT_SECONDS,
             )
         except TimeoutError:
-            logger.warning("TDD Loop: iteración %d agotó timeout (300s)", iterations)
+            logger.warning(
+                "TDD Loop: iteración %d agotó timeout (%ds)", iterations, SUBTASK_TIMEOUT_SECONDS
+            )
             return {
                 "status": "failed",
                 "result": f"TDD iteration {iterations} timed out after 300s.",

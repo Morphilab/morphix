@@ -155,3 +155,52 @@ async def test_extra_context_from_task_analysis(mock_dependencies):
     call_kwargs = mock_dependencies["agent_loop"].call_args.kwargs
     assert "developer" in call_kwargs["extra_context"]
     assert "SQLAlchemy async" in call_kwargs["extra_context"]
+
+
+@pytest.mark.asyncio
+async def test_direct_file_creation_skips_existing_file():
+    """Safety Net no debe sobrescribir un archivo que ya existe con contenido."""
+    from orchestration.executor.subtask import _direct_file_creation
+
+    with (
+        patch("llm.models.call", new_callable=AsyncMock) as mock_llm,
+        patch("tools.file_manager.FileManager.execute", new_callable=AsyncMock) as mock_fm,
+    ):
+        resp = MagicMock()
+        resp.choices = [MagicMock()]
+        resp.choices[0].message.content = '{"file": "numeros.py", "content": "print(1)\\nprint(2)"}'
+        mock_llm.return_value = resp
+        mock_fm.return_value = "def main():\n    for i in range(1, 6):\n        print(i)\n"
+
+        path, content = await _direct_file_creation("Ejecutar numeros.py", "proj", "main")
+
+        assert path is None
+        assert content is None
+        assert mock_fm.await_count == 1  # solo lectura; nunca escribe
+        assert mock_fm.call_args_list[0].kwargs.get("action") == "read"
+
+
+@pytest.mark.asyncio
+async def test_direct_file_creation_writes_when_file_missing():
+    """Safety Net sí escribe cuando el archivo no existe todavía."""
+    from orchestration.executor.subtask import _direct_file_creation
+
+    with (
+        patch("llm.models.call", new_callable=AsyncMock) as mock_llm,
+        patch("tools.file_manager.FileManager.execute", new_callable=AsyncMock) as mock_fm,
+    ):
+        resp = MagicMock()
+        resp.choices = [MagicMock()]
+        resp.choices[0].message.content = '{"file": "numeros.py", "content": "print(1)\\nprint(2)"}'
+        mock_llm.return_value = resp
+        mock_fm.side_effect = [
+            "ℹ️ El archivo 'numeros.py' no existe todavía (es un archivo nuevo).",
+            "Archivo 'numeros.py' escrito correctamente.",
+        ]
+
+        path, content = await _direct_file_creation("Crear numeros.py", "proj", "main")
+
+        assert path == "numeros.py"
+        assert content is not None
+        assert mock_fm.await_count == 2
+        assert mock_fm.call_args_list[1].kwargs.get("action") == "write"

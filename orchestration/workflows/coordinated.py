@@ -1,4 +1,4 @@
-# features/maestro/services/multi_agent_coordinator.py
+# orchestration/workflows/coordinated.py
 """Multi-Agent Coordinator — manager-worker pattern with DAG execution.
 
 Replaces the sequential linear subtask execution in full orchestration
@@ -18,9 +18,16 @@ import logging
 from typing import Any
 
 from core.config import settings
+from core.constants import SUBTASK_TIMEOUT_SECONDS
 from core.utils import clean_llm_response
 from llm import models
-from orchestration.context import emit_agent
+from orchestration.context import (
+    emit_agent,
+    emit_agent_status,
+    emit_agent_stream,
+    emit_stats,
+)
+from orchestration.emitter import WorkflowEmitter
 from orchestration.loop import AgentLoopConfig, execute_agent_loop
 from orchestration.router import AgentRouter
 from orchestration.workflows.blackboard import SharedBlackboard
@@ -148,6 +155,8 @@ class MultiAgentCoordinator:
         subtasks: list[dict],
         allowed_agents: list[str] | None = None,
         force_agent: str | None = None,
+        events=None,
+        emitter: "WorkflowEmitter | None" = None,
     ) -> dict[str, str]:
         """Assign the best agent for each subtask.
 
@@ -157,8 +166,9 @@ class MultiAgentCoordinator:
         Returns: {subtask_id: agent_name}
         """
         assignments: dict[str, str] = {}
+        total = len(subtasks)
 
-        for st in subtasks:
+        for i, st in enumerate(subtasks):
             sid = st["id"]
             if force_agent:
                 assignments[sid] = force_agent
@@ -166,6 +176,26 @@ class MultiAgentCoordinator:
 
             hint = st.get("agent_hint", "")
             desc = st.get("description", "")
+
+            if emitter is not None:
+                await emitter.emit(
+                    status=f"Assigning agents ({i + 1}/{total})",
+                    current_agent="Coordinator",
+                    phase="design",
+                    subtasks_total=total,
+                    subtask_list=[
+                        {"name": str(s.get("description", s))[:60], "status": "pending"}
+                        for s in subtasks
+                    ],
+                )
+            elif events:
+                await emit_stats(
+                    events,
+                    {
+                        "status": f"Assigning agents ({i + 1}/{total})",
+                        "current_agent": "Coordinator",
+                    },
+                )
 
             # Try AgentRouter first
             try:
@@ -399,6 +429,9 @@ class MultiAgentCoordinator:
             project_root,
         )
 
+        if session and hasattr(session, "events") and session.events:
+            await emit_agent_status(session.events, agent, "thinking")
+
         try:
             result = await asyncio.wait_for(
                 execute_agent_loop(
@@ -411,12 +444,12 @@ class MultiAgentCoordinator:
                     session=session,
                     config=AgentLoopConfig(max_agent_iterations=settings.max_agent_iterations),
                 ),
-                timeout=300,
+                timeout=SUBTASK_TIMEOUT_SECONDS,
             )
         except TimeoutError:
             return {
                 "status": "failed",
-                "result": "Subtask timed out after 180s",
+                "result": "Subtask timed out after 300s",
                 "agent": agent,
                 "files_written": [],
                 "error": "Timeout",
@@ -434,6 +467,12 @@ class MultiAgentCoordinator:
         result_text = result.get("result", "") if isinstance(result, dict) else str(result)
         if session and hasattr(session, "events") and session.events:
             await emit_agent(session.events, agent, desc[:50], str(result_text)[:500])
+            await emit_agent_status(session.events, agent, "ready")
+            chunk_size = 4
+            for i in range(0, len(result_text), chunk_size):
+                await emit_agent_stream(
+                    session.events, agent, desc[:50], result_text[i : i + chunk_size]
+                )
 
         files_written = result.get("files_written", []) if isinstance(result, dict) else []
         subtask_status = result.get("status", "done") if isinstance(result, dict) else "done"

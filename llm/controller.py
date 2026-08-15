@@ -12,15 +12,19 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import httpx
 from openai import APIError, AsyncOpenAI, OpenAI
 from openai import APITimeoutError as OpenAITimeoutError
 
+from core.constants import TOOL_CALL_TIMEOUT_SECONDS
 from llm.provider import LLMProvider
+from llm.tool_calls import log_raw_tool_args, normalize_arguments, sanitize_messages_for_ollama
 
 
 @dataclass
@@ -56,6 +60,71 @@ class StreamChunk:
 
 logger = logging.getLogger(__name__)
 
+# Deadline per non-streaming LLM call (seconds). Reasoning models can
+# generate for minutes when their chain of thought grows; without a
+# deadline a single call can stall a whole workflow silently.
+_LLM_CALL_DEADLINE = float(TOOL_CALL_TIMEOUT_SECONDS)
+
+# OpenAI-style kwargs the Ollama SDK does not accept (client.chat would
+# raise TypeError). They are translated/ignored in the Ollama path.
+_OLLAMA_UNSUPPORTED_KWARGS = {
+    "max_tokens",
+    "max_completion_tokens",
+    "tool_choice",
+    "response_format",
+    "reasoning_effort",
+    "stream_options",
+}
+
+
+def _response_tokens(response: Any) -> int | None:
+    """Best-effort token usage extraction from an LLM response."""
+    try:
+        usage = getattr(response, "usage", None)
+        if usage is not None and getattr(usage, "total_tokens", None) is not None:
+            return int(usage.total_tokens)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    try:
+        pe = response.get("prompt_eval_count")
+        ec = response.get("eval_count")
+        if pe is not None or ec is not None:
+            return int(pe or 0) + int(ec or 0)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return None
+
+
+def _is_reasoning_starved(response: Any) -> bool:
+    """Detect responses cut by the token cap before emitting content.
+
+    Thinking models consume the max_tokens budget in reasoning_content.
+    When the budget runs out mid-reasoning, the API returns
+    finish_reason='length' with empty content and no tool calls.
+    """
+    # OpenAI-compatible shape
+    try:
+        choice = response.choices[0]
+        finish = getattr(choice, "finish_reason", None)
+        if finish == "length":
+            msg = getattr(choice, "message", None)
+            if msg is not None:
+                content = getattr(msg, "content", None)
+                tool_calls = getattr(msg, "tool_calls", None)
+                if not content and not tool_calls:
+                    return True
+    except (AttributeError, IndexError, TypeError):
+        pass
+    # Ollama shape
+    try:
+        if response.get("done_reason") == "length":
+            msg = response.get("message", {})
+            if not msg.get("content") and not msg.get("tool_calls"):
+                return True
+    except (AttributeError, TypeError):
+        pass
+    return False
+
 
 class ModelsController:
     """Controlador centralizado de llamadas LLM con retries y fallback.
@@ -88,7 +157,7 @@ class ModelsController:
                         else self._max_retries
                     )
                     self._timeout = (
-                        app_settings.llm_timeout_seconds if self._timeout is None else self._timeout
+                        app_settings.llm_timeout if self._timeout is None else self._timeout
                     )
                     self._backoff_factor = (
                         app_settings.llm_backoff_factor
@@ -171,10 +240,24 @@ class ModelsController:
 
         role_config = _settings.model_roles.get(role, _settings.model_roles["default"])
         max_tokens = role_config.get("max_tokens")
+        # Caller-provided max_tokens override (OpenAI style) — absorbed into
+        # effective_max_tokens so the starvation retry (B3) doubles THIS value,
+        # not the role default (bug 2026-08-15: kwargs.update re-aplicaba el
+        # override del caller y el reintento nunca crecía el presupuesto).
+        caller_max_tokens = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens")
+        effective_max_tokens: int | None = caller_max_tokens or max_tokens
+        global_enabled = _settings.tool_calling_global
+        effective_tools = (
+            tools if role_config.get("tool_calling", True) and global_enabled else None
+        )
+        ollama_safe_kwargs = {
+            k: v for k, v in kwargs.items() if k not in _OLLAMA_UNSUPPORTED_KWARGS
+        }
 
         for attempt in range(1, (max_retries if max_retries is not None else self.max_retries) + 1):
             _max = max_retries if max_retries is not None else self.max_retries
             try:
+                _start = time.monotonic()
                 if isinstance(client, OpenAI):
                     call_kwargs: dict = {
                         "model": model,
@@ -182,27 +265,61 @@ class ModelsController:
                         "temperature": temp,
                         "stream": stream,
                     }
-                    if max_tokens:
-                        call_kwargs["max_tokens"] = max_tokens
-                    if tools:
-                        call_kwargs["tools"] = tools
+                    if effective_max_tokens:
+                        call_kwargs["max_tokens"] = effective_max_tokens
+                    if effective_tools:
+                        call_kwargs["tools"] = effective_tools
                         call_kwargs["tool_choice"] = tool_choice
                     call_kwargs.update(kwargs)
-                    response = client.chat.completions.create(**call_kwargs)
+                    if effective_max_tokens:
+                        call_kwargs["max_tokens"] = effective_max_tokens
+                    if stream:
+                        response = client.chat.completions.create(**call_kwargs)
+                    else:
+                        response = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                partial(client.chat.completions.create, **call_kwargs)
+                            ),
+                            timeout=_LLM_CALL_DEADLINE,
+                        )
                 else:
                     ollama_options: dict[str, Any] = {"temperature": temp}
-                    if max_tokens:
-                        ollama_options["num_predict"] = max_tokens
+                    if effective_max_tokens:
+                        ollama_options["num_predict"] = effective_max_tokens
                     ollama_kwargs: dict[str, Any] = {
                         "model": model,
-                        "messages": messages,
+                        "messages": sanitize_messages_for_ollama(messages),
                         "stream": stream,
                         "options": ollama_options,
                     }
-                    if tools:
-                        ollama_kwargs["tools"] = tools
-                    ollama_kwargs.update(kwargs)
-                    response = client.chat(**ollama_kwargs)
+                    if effective_tools:
+                        ollama_kwargs["tools"] = effective_tools
+                    ollama_kwargs.update(ollama_safe_kwargs)
+                    if stream:
+                        response = client.chat(**ollama_kwargs)
+                    else:
+                        response = await asyncio.wait_for(
+                            asyncio.to_thread(client.chat, **ollama_kwargs),
+                            timeout=_LLM_CALL_DEADLINE,
+                        )
+
+                duration = time.monotonic() - _start
+
+                # Reasoning-starvation retry: thinking models can burn the
+                # whole token budget in reasoning_content, leaving an empty
+                # answer. Retry with a larger budget instead of returning
+                # a useless response.
+                if _is_reasoning_starved(response) and attempt < _max:
+                    effective_max_tokens = max(2048, (effective_max_tokens or 1024) * 2)
+                    logger.warning(
+                        "Respuesta vacía por agotamiento de tokens (reasoning) "
+                        "en intento %d/%d (rol: %s) — reintentando con max_tokens=%d",
+                        attempt,
+                        _max,
+                        role,
+                        effective_max_tokens,
+                    )
+                    continue
 
                 # Track usage + cache metrics
                 self._track_usage(response)
@@ -210,8 +327,27 @@ class ModelsController:
                 self._track_budget(response)
 
                 cb.record_success()
+                from core.metrics import metrics as _metrics
+
+                _metrics.record_llm_latency(provider_name, duration)
+                _tokens = _response_tokens(response)
+                logger.info(
+                    "LLM call OK (rol=%s, provider=%s, duración=%.1fs%s)",
+                    role,
+                    provider_name,
+                    duration,
+                    f", tokens={_tokens}" if _tokens is not None else "",
+                )
                 return self._normalize_response(response)
 
+            except TimeoutError:
+                logger.warning(
+                    "⏳ Deadline (%gs) superado en intento %d/%d (rol: %s)",
+                    _LLM_CALL_DEADLINE,
+                    attempt,
+                    _max,
+                    role,
+                )
             except (OpenAITimeoutError, httpx.TimeoutException):
                 logger.warning("⏳ Timeout en intento %d/%d (rol: %s)", attempt, _max, role)
             except APIError as e:
@@ -229,31 +365,34 @@ class ModelsController:
         ollama_cb = CircuitBreakerRegistry.get("ollama")
         client, model, temp = LLMProvider.get_client(role, temperature, force_ollama=True)
         try:
-            # NB3 — Convert tool_calls arguments from string to dict for Ollama
-            ollama_messages = []
-            for msg in messages:
-                msg_copy = dict(msg)
-                if msg_copy.get("tool_calls"):
-                    for tc in msg_copy["tool_calls"]:
-                        if isinstance(tc.get("function", {}).get("arguments"), str):
-                            try:
-                                tc["function"]["arguments"] = json.loads(
-                                    tc["function"]["arguments"]
-                                )
-                            except (json.JSONDecodeError, TypeError):
-                                tc["function"]["arguments"] = {}
-                ollama_messages.append(msg_copy)
+            # NB3 — Sanitize messages for Ollama SDK (string→dict args conversion)
+            ollama_messages = sanitize_messages_for_ollama(messages)
+            fallback_options: dict[str, Any] = {"temperature": temp}
+            if caller_max_tokens:
+                fallback_options["num_predict"] = caller_max_tokens
 
-            response = client.chat(
-                model=model,
-                messages=ollama_messages,
-                options={"temperature": temp},
-                **({"tools": tools} if tools else {}),
-                **kwargs,
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.chat,
+                    model=model,
+                    messages=ollama_messages,
+                    options=fallback_options,
+                    **({"tools": effective_tools} if effective_tools else {}),
+                    **ollama_safe_kwargs,
+                ),
+                timeout=_LLM_CALL_DEADLINE,
             )
             self._track_budget(response)
             ollama_cb.record_success()
             return self._normalize_response(response)
+        except TimeoutError:
+            logger.error(
+                f"Fallback Ollama superó el deadline ({_LLM_CALL_DEADLINE:.0f}s)", exc_info=True
+            )
+            ollama_cb.record_failure()
+            return self._create_error_response(
+                f"Ollama tardó más de {_LLM_CALL_DEADLINE:.0f}s en responder."
+            )
         except Exception as e:
             logger.error(f"Error crítico en fallback Ollama: {e}", exc_info=True)
             ollama_cb.record_failure()
@@ -305,16 +444,16 @@ class ModelsController:
             )
             messages = _CM.compress_history(messages, max_tokens=int(_budget * 0.7))
 
+        _role_config = _app_settings.model_roles.get(role, _app_settings.model_roles["default"])
+        _max_tokens = _role_config.get("max_tokens")
+        _global_enabled = _app_settings.tool_calling_global
+        _effective_tools = (
+            tools if _role_config.get("tool_calling", True) and _global_enabled else None
+        )
+
         for attempt in range(max_retries + 1):
             try:
                 client, model, temp = LLMProvider.get_async_client(role, temperature)
-
-                from core.config import settings as __app_settings
-
-                _role_config = __app_settings.model_roles.get(
-                    role, __app_settings.model_roles["default"]
-                )
-                _max_tokens = _role_config.get("max_tokens")
 
                 if isinstance(client, AsyncOpenAI):
                     stream_usage = None
@@ -323,7 +462,7 @@ class ModelsController:
                         model,
                         messages,
                         temp,
-                        tools,
+                        _effective_tools,
                         tool_choice,
                         max_tokens=_max_tokens,
                         **kwargs,
@@ -339,7 +478,7 @@ class ModelsController:
                         messages,
                         temp,
                         max_tokens=_max_tokens,
-                        tools=tools,
+                        tools=_effective_tools,
                         **kwargs,
                     ):
                         if chunk.usage:
@@ -377,7 +516,7 @@ class ModelsController:
                 messages=messages,
                 role=role,
                 temperature=temperature,
-                tools=tools,
+                tools=_effective_tools,
                 tool_choice=tool_choice,
                 max_retries=0,
                 **kwargs,
@@ -480,8 +619,10 @@ class ModelsController:
         con el event loop asíncrono. Cada chunk se entrega tan pronto
         como llega, sin esperar a que terminen todos.
         """
-        import asyncio as _asyncio
         import queue
+
+        # NB3 — sanitize messages for Ollama SDK (string→dict args conversion)
+        messages = sanitize_messages_for_ollama(messages)
 
         chunk_queue: queue.Queue = queue.Queue()
 
@@ -506,10 +647,10 @@ class ModelsController:
             finally:
                 chunk_queue.put(None)  # Sentinel: fin del stream
 
-        _asyncio.get_running_loop().run_in_executor(None, _produce_chunks)
+        asyncio.get_running_loop().run_in_executor(None, _produce_chunks)
 
         while True:
-            chunk = await _asyncio.to_thread(chunk_queue.get)
+            chunk = await asyncio.to_thread(chunk_queue.get)
             if isinstance(chunk, BaseException):
                 raise chunk
             if chunk is None:
@@ -534,14 +675,30 @@ class ModelsController:
             if msg.get("content"):
                 yield StreamChunk(text=msg["content"])
             if msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
+                for idx, tc in enumerate(msg["tool_calls"]):
                     func = tc.get("function", {})
+                    raw_args = func.get("arguments")
+                    log_raw_tool_args(f"stream_ollama:{func.get('name')}", raw_args)
+                    # Normalise args to dict before serialising (future-proof)
+                    if isinstance(raw_args, dict):
+                        # is not None: {} vacío debe serializarse como "{}"
+                        # para que el accumulador/repair loop lo procese
+                        # (bug 2026-08-15: `if raw_args` trataba {} como falsy).
+                        args_str = json.dumps(raw_args) if raw_args is not None else None
+                    elif isinstance(raw_args, str):
+                        args_str = json.dumps(normalize_arguments(raw_args))
+                    else:
+                        args_str = None
+                    logger.debug(
+                        "Ollama stream tool_call[%d]: name=%s args_type=%s",
+                        idx,
+                        func.get("name"),
+                        type(raw_args).__name__,
+                    )
                     yield StreamChunk(
                         tool_name=func.get("name"),
-                        tool_arguments=(
-                            json.dumps(func.get("arguments", {})) if func.get("arguments") else None
-                        ),
-                        tool_call_id=tc.get("id"),
+                        tool_arguments=args_str,
+                        tool_call_id=tc.get("id") or f"call_{idx}",
                     )
 
     def _normalize_response(self, raw_response: Any) -> Any:

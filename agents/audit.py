@@ -6,6 +6,7 @@ Almacenamiento en archivo JSON lines para simplicidad.
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 
 from core.path_resolver import paths
@@ -13,6 +14,28 @@ from core.path_resolver import paths
 logger = logging.getLogger(__name__)
 
 AUDIT_FILE = paths.memory_base() / "logs" / "audit.jsonl"
+
+# Redacción de credenciales antes de persistir en disco (los comandos pueden
+# contener tokens, Authorization headers, passwords en URLs, etc.)
+_CREDENTIAL_KEY_VALUE = re.compile(
+    r"(?i)(authorization|bearer|token|api[_-]?key|password|passwd|secret)"
+    r"\s*[=:]\s*[^\s\"']+(?:\s+[^\s\"']+)?"
+)
+_CREDENTIAL_URL_USERINFO = re.compile(r"(?i)(://)[^/@\s]+@")
+
+
+def _redact_key_value(match: re.Match) -> str:
+    s = match.group(0)
+    sep = "=" if "=" in s else ":"
+    key = s.split(sep)[0]
+    return f"{key}{sep}***"
+
+
+def redact_credentials(text: str) -> str:
+    """Reemplaza credenciales embebidas por ***."""
+    text = _CREDENTIAL_KEY_VALUE.sub(_redact_key_value, text)
+    text = _CREDENTIAL_URL_USERINFO.sub(r"\1***@", text)
+    return text
 
 
 def _ensure_audit_dir() -> None:
@@ -30,7 +53,7 @@ def log_operation(
     entry = {
         "timestamp": datetime.now(UTC).isoformat(),
         "operation": operation,
-        "details": details[:500],
+        "details": redact_credentials(details)[:500],
         "user": user,
         "success": success,
     }

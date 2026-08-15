@@ -7,6 +7,28 @@ import pytest
 from core.metrics import Metrics, ToolMetrics, tool_metrics
 
 
+class TestToolCallRepairMetrics:
+    def test_record_repairs_per_model(self):
+        m = Metrics()
+        m.record_tool_call_repair("qwen2.5-coder:7b")
+        m.record_tool_call_repair("qwen2.5-coder:7b")
+        m.record_tool_call_repair("gpt-oss:20b-cloud")
+        assert m.get_tool_call_repairs() == {
+            "qwen2.5-coder:7b": 2,
+            "gpt-oss:20b-cloud": 1,
+        }
+
+    def test_repairs_exposed_in_to_dict(self):
+        m = Metrics()
+        m.record_tool_call_repair("qwen2.5-coder:7b")
+        assert m.to_dict()["tool_call_repairs"] == {"qwen2.5-coder:7b": 1}
+
+    def test_empty_repairs_summary(self):
+        m = Metrics()
+        assert m.get_tool_call_repairs() == {}
+        assert m.to_dict()["tool_call_repairs"] == {}
+
+
 class TestToolMetrics:
     def test_record_single_call(self):
         tm = ToolMetrics()

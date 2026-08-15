@@ -20,8 +20,7 @@ from tools.specs import tool_matches_allowlist
 logger = logging.getLogger(__name__)
 
 
-from orchestration.context import WorkflowContext, WorkflowEvents
-from orchestration.events import emit_assistant, emit_system
+from orchestration.context import WorkflowContext, WorkflowEvents, emit_assistant, emit_system
 
 
 async def _direct_file_creation(
@@ -94,6 +93,21 @@ async def _direct_file_creation(
         file_path = data.get("file", "").strip()
         content = data.get("content", "").strip()
         if not file_path or not content:
+            return None, None
+
+        # Protección de sobrescritura: si el archivo ya existe con contenido,
+        # no lo destruimos (evidencia 2026-08-14: Safety Net sobrescribió un
+        # numeros.py correcto con print(1)..print(5)).
+        existing = await FileManager.execute(
+            action="read",
+            path=file_path,
+            workspace=workspace,
+            project_root=project_root,
+        )
+        if isinstance(existing, str) and existing.strip() and not existing.startswith("ℹ️"):
+            logger.warning(
+                f"🛟 Safety Net: '{file_path}' ya existe con contenido — no se sobrescribe."
+            )
             return None, None
 
         result = await FileManager.execute(
@@ -319,3 +333,47 @@ async def execute_subtask_safe(
         if events is not None:
             await emit_assistant(events, error_msg)
         return {"node": node, "task": task, "result": error_msg, "status": "failed"}
+
+
+async def run_subtask_safe(
+    node: int,
+    task: str,
+    G: nx.DiGraph,
+    conversation_history: list,
+    current_pdf_text: str,
+    ctx: WorkflowContext,
+    events: WorkflowEvents,
+    forced_agent: str | None = None,
+    task_analysis: dict | None = None,
+    timeout: float = 300.0,
+) -> dict:
+    """Ejecuta execute_subtask_safe con timeout; las excepciones no propagan.
+
+    Compartido por el flujo development y el resume de workflows — ambos
+    envuelven la subtarea en wait_for y convierten fallos en dict
+    {"status": "failed", ...}.
+    """
+    import asyncio
+
+    try:
+        return await asyncio.wait_for(
+            execute_subtask_safe(
+                node=node,
+                task=task,
+                G=G,
+                conversation_history=conversation_history,
+                current_pdf_text=current_pdf_text,
+                ctx=ctx,
+                events=events,
+                forced_agent=forced_agent,
+                task_analysis=task_analysis,
+            ),
+            timeout=timeout,
+        )
+    except Exception as e:
+        logger.error("Subtask %d failed with exception: %s", node, e)
+        return {
+            "status": "failed",
+            "result": f"Error in subtask {node}: {e}",
+            "files_written": [],
+        }

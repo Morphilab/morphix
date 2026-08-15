@@ -37,7 +37,6 @@ def _make_events():
         on_system_message=on_system,
         on_assistant_message=on_assistant,
         on_stats_update=on_stats,
-        on_diagram_update=AsyncMock(),
         on_ui_refresh=AsyncMock(),
     )
     return events, on_assistant, on_system, on_stats
@@ -293,7 +292,7 @@ async def test_development_workflow_e2e():
         ) as mock_supervisor,
         # Mock subtask execution
         patch(
-            "orchestration.workflows.development.execute_subtask_safe",
+            "orchestration.workflows.development.run_subtask_safe",
             new_callable=AsyncMock,
         ) as mock_subtask,
         # Mock result aggregation

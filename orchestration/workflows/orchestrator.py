@@ -17,6 +17,7 @@ import networkx as nx
 
 from agents.base import _execute_specialized_agent
 from core.config import settings
+from core.constants import SUBTASK_TIMEOUT_SECONDS
 from core.context_manager import ContextManager
 from core.database import get_async_session
 from core.git_operations import auto_commit
@@ -27,9 +28,10 @@ from core.workflow_state import get_active_workflow
 from core.workspaces import get_global_workspaces
 from llm import parse_plan_json
 from orchestration.analyzer import TaskAnalyzer
-from orchestration.events import Session, WorkflowContext, WorkflowEvents
+from orchestration.context import Session, WorkflowContext, WorkflowEvents
+from orchestration.emitter import WorkflowEmitter
 from orchestration.executor.plan import _execute_plan_actions
-from orchestration.executor.subtask import execute_subtask_safe
+from orchestration.executor.subtask import run_subtask_safe
 from orchestration.executor.verify import _extract_and_validate_actions
 from orchestration.finalizer import finalize_workflow
 from orchestration.loader import load_workflow_template
@@ -39,10 +41,10 @@ from tools.wrapper import safe_tool_call
 
 logger = logging.getLogger(__name__)
 
-SUBTASK_TIMEOUT = 300  # seconds — per-subtask timeout for development workflows
+SUBTASK_TIMEOUT = SUBTASK_TIMEOUT_SECONDS  # backward-compat alias
 
-# ── Safe emission helpers (canonical in events.py) ──
-from orchestration.events import emit_stats, emit_system
+# ── Safe emission helpers (canonical in context.py) ──
+from orchestration.context import emit_system
 
 
 def _collect_files_written(results: dict[int, dict] | dict[str, dict]) -> list[str]:
@@ -53,6 +55,19 @@ def _collect_files_written(results: dict[int, dict] | dict[str, dict]) -> list[s
             if isinstance(f, str) and f not in files:
                 files.append(f)
     return files
+
+
+def _resume_subtask_list(subtasks, results, current_node, current_status):
+    """Build a list of {name, status} dicts for the resume progress dashboard."""
+
+    def _status(i):
+        if i == current_node:
+            return current_status
+        if i in results:
+            return results[i].get("status", "completed")
+        return "completed" if i < current_node else "pending"
+
+    return [{"name": str(t)[:60], "status": _status(i)} for i, t in enumerate(subtasks)]
 
 
 # ─── ╔══════════════════════════════════════════════════════════════╗ ───
@@ -123,8 +138,10 @@ class WorkflowOrchestrator:
         conversation_history: list,
         events: WorkflowEvents,
         conversation_id: int | None = None,
+        emitter: "WorkflowEmitter | None" = None,
     ) -> str:
         workspaces = get_global_workspaces()
+        emitter = emitter or WorkflowEmitter(None)
         params = direct_tool["params"]
         params["workspace"] = workspaces.current
         params["action"] = direct_tool["action"]
@@ -152,16 +169,11 @@ class WorkflowOrchestrator:
         )
 
         elapsed = round(time.monotonic() - start_time, 1)
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": 0,
-                "subtasks_completed": 0,
-                "tokens_used": 0,
-                "elapsed_time": f"{elapsed}s",
-                "current_agent": "—",
-                "status": "Completado (tool directa)",
-            },
+        await emitter.emit(
+            subtasks_total=0,
+            subtasks_completed=0,
+            current_agent="—",
+            status="Completado (tool directa)",
         )
         await finalize_workflow(
             query=query,
@@ -186,12 +198,15 @@ class WorkflowOrchestrator:
         start_time: float,
         events: WorkflowEvents,
         conversation_id: int | None = None,
+        emitter: "WorkflowEmitter | None" = None,
     ) -> str:
         from orchestration.workflows.tdd import execute_tdd_loop
 
+        emitter = emitter or WorkflowEmitter(None)
+
         logger.info("🧪 Modo TDD activado — ejecutando ciclo TDD autónomo")
         await emit_system(events, "🧪 Modo TDD: ejecutando tests y corrigiendo...")
-        await emit_stats(events, {"status": "TDD Loop", "current_agent": "TDD Agent"})
+        await emitter.emit(status="TDD Loop", current_agent="TDD Agent", phase="Iteración")
 
         tdd_result = await execute_tdd_loop(
             task=query,
@@ -200,6 +215,7 @@ class WorkflowOrchestrator:
             allowed_tools=workflow_allowed_tools,
             agent_type=settings.default_agent,
             conversation_history=conversation_history,
+            events=events,
         )
 
         final_content = tdd_result["result"]
@@ -217,17 +233,13 @@ class WorkflowOrchestrator:
             "complejidad": "media",
         }
 
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": tdd_result["iterations"],
-                "subtasks_completed": 1,
-                "tokens_used": scorecard["tokens"],
-                "elapsed_time": scorecard["tiempo"],
-                "current_agent": "—",
-                "status": "Completado" if tdd_result["status"] == "completed" else "Fallido",
-                "files_written": tdd_result.get("files_modified", []),
-            },
+        await emitter.emit(
+            subtasks_total=tdd_result["iterations"],
+            subtasks_completed=1,
+            current_agent="—",
+            status="Completado" if tdd_result["status"] == "completed" else "Fallido",
+            files_written=list(tdd_result.get("files_modified", [])),
+            phase=None,
         )
 
         await finalize_workflow(
@@ -274,9 +286,21 @@ class WorkflowOrchestrator:
         from tools.orchestrator import ToolOrchestrator
 
         ToolOrchestrator.reset_token_budget()
-        ToolOrchestrator.on_approval_required = events.on_approval_required
+        if settings.daemon_mode:
+            # Autonomous/daemon mode: no interactive user to answer approval
+            # dialogs. Skip approval so dangerous tools (bash_manager, code_exec)
+            # do not hang the workflow on a dialog nobody sees.
+            ToolOrchestrator.on_approval_required = None
+            logger.debug("DAEMON_MODE: approval dialogs desactivados (flujo autónomo)")
+        else:
+            ToolOrchestrator.on_approval_required = events.on_approval_required
 
         try:
+            # ── Contrato normalizado: emitter adjunto al session ──
+            from orchestration.emitter import WorkflowEmitter
+
+            session.emitter = WorkflowEmitter(session)
+
             # ── Ruta directa: comando de herramienta (fast path) ──
             direct_tool = _parse_direct_tool_command(query)
             if direct_tool:
@@ -287,6 +311,7 @@ class WorkflowOrchestrator:
                     ctx.conversation_history,
                     events,
                     ctx.conversation_id,
+                    session.emitter or WorkflowEmitter(None),
                 )
 
             # ── Dispatch according to active template / workflow ──
@@ -319,6 +344,7 @@ class WorkflowOrchestrator:
         """
         conversation_history = ctx.conversation_history
         conversation_id = ctx.conversation_id
+        emitter = session.emitter or WorkflowEmitter(None)
 
         # ── Resolver workspace + plantilla ──
         workspaces = get_global_workspaces()
@@ -358,6 +384,7 @@ class WorkflowOrchestrator:
                 start_time,
                 events,
                 conversation_id,
+                session.emitter or WorkflowEmitter(None),
             )
 
         # ── Ruta 2: Colaborativa ──
@@ -373,6 +400,7 @@ class WorkflowOrchestrator:
                 workflow_allowed_tools=workflow_allowed_tools,
                 start_time=start_time,
                 cancelled=lambda: ctx.cancelled,
+                emitter=session.emitter or WorkflowEmitter(None),
             )
 
         # ── Ruta 3: Coordinada ──
@@ -395,7 +423,7 @@ class WorkflowOrchestrator:
         if template.get("type") == "development":
             task_analysis = await TaskAnalyzer.analyze_task(query, is_follow_up=ctx.is_follow_up)
             if not task_analysis.get("requires_full_orchestration", True):
-                await emit_stats(events, {"status": "Simple chat"})
+                await emitter.emit(status="Simple chat", current_agent="conversacional")
                 return await WorkflowOrchestrator._run_simple_conversation(
                     query,
                     conversation_history,
@@ -405,6 +433,7 @@ class WorkflowOrchestrator:
                     start_time,
                     events,
                     conversation_id,
+                    session.emitter or WorkflowEmitter(None),
                 )
             return await WorkflowOrchestrator._run_full_orchestration(
                 query,
@@ -412,27 +441,23 @@ class WorkflowOrchestrator:
                 task_analysis,
                 ctx,
                 events,
-                project_root,
+                ctx.project_root or project_root,
                 workspaces.current,
                 allowed_agents,
                 workflow_allowed_tools,
                 start_time,
+                session.emitter or WorkflowEmitter(None),
             )
 
         # ── Ruta 5: Default — analizar y decidir simple vs full ──
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": 0,
-                "subtasks_completed": 0,
-                "tokens_used": 0,
-                "elapsed_time": "0s",
-                "current_agent": "—",
-                "status": "Iniciando",
-            },
+        await emitter.emit(
+            subtasks_total=0,
+            subtasks_completed=0,
+            current_agent="—",
+            status="Iniciando",
         )
         await emit_system(events, "🔍 Analizando tu solicitud...")
-        await emit_stats(events, {"status": "Analizando", "current_agent": "TaskAnalyzer"})
+        await emitter.emit(status="Analizando", current_agent="TaskAnalyzer", phase="Análisis")
 
         task_analysis = await TaskAnalyzer.analyze_task(query)
 
@@ -446,6 +471,7 @@ class WorkflowOrchestrator:
                 start_time,
                 events,
                 conversation_id,
+                session.emitter or WorkflowEmitter(None),
             )
 
         return await WorkflowOrchestrator._run_full_orchestration(
@@ -454,11 +480,12 @@ class WorkflowOrchestrator:
             task_analysis,
             ctx,
             events,
-            project_root,
+            ctx.project_root or project_root,
             workspaces.current,
             allowed_agents,
             workflow_allowed_tools,
             start_time,
+            session.emitter or WorkflowEmitter(None),
         )
 
     @staticmethod
@@ -471,9 +498,12 @@ class WorkflowOrchestrator:
         start_time: float,
         events: WorkflowEvents,
         conversation_id: int | None = None,
+        emitter: "WorkflowEmitter | None" = None,
     ) -> str:
         logger.info("🚀 Modo conversación simple activado → ruta rápida")
         from agents.service import AgentsService
+
+        emitter = emitter or WorkflowEmitter(None)
 
         default_agent = template.get("agents", {}).get("default_simple", settings.fallback_agent)
         if allowed_agents and default_agent not in allowed_agents:
@@ -481,8 +511,10 @@ class WorkflowOrchestrator:
                 allowed_agents[0] if len(allowed_agents) > 0 else settings.fallback_agent
             )
 
-        await emit_stats(
-            events, {"status": "Respondiendo", "current_agent": default_agent.capitalize()}
+        await emitter.emit(
+            status="Respondiendo",
+            current_agent=default_agent.capitalize() if default_agent else "conversacional",
+            phase="Respondiendo",
         )
 
         try:
@@ -516,6 +548,7 @@ class WorkflowOrchestrator:
                     allowed_tools=expanded_tools,
                     workspace=get_global_workspaces().current,
                     on_stream_chunk=stream_callback,
+                    events=events,
                 )
                 final_content = clean_llm_response(
                     loop_result.get("result", str(loop_result))
@@ -553,16 +586,11 @@ class WorkflowOrchestrator:
             "complejidad": "simple",
         }
 
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": 1,
-                "subtasks_completed": 1,
-                "tokens_used": scorecard["tokens"],
-                "elapsed_time": scorecard["tiempo"],
-                "current_agent": "Conversacional",
-                "status": "Completado",
-            },
+        await emitter.emit(
+            subtasks_total=1,
+            subtasks_completed=1,
+            current_agent=default_agent.capitalize() if default_agent else "—",
+            status="Completado",
         )
 
         await finalize_workflow(
@@ -597,6 +625,7 @@ class WorkflowOrchestrator:
         from orchestration.workflows.coordinated import MultiAgentCoordinator
 
         coordinator = MultiAgentCoordinator()
+        emitter = getattr(session, "emitter", None) or WorkflowEmitter(None)
         all_files_written: list[str] = []
 
         # Try phase-aware decomposition first
@@ -612,7 +641,9 @@ class WorkflowOrchestrator:
         if phases and len(phases) > 1:
             # Multi-phase execution
             await emit_system(events, f"🧩 Decomposed into {len(phases)} phases...")
-            await emit_stats(events, {"status": "Executing phases", "current_agent": "Coordinator"})
+            await emitter.emit(
+                status="Executing phases", current_agent="Coordinator", phase="design"
+            )
 
             all_phase_results = {}
             subtasks_list = []
@@ -629,7 +660,9 @@ class WorkflowOrchestrator:
                     {"id": f"{phase_name}_{i}", "description": s}
                     for i, s in enumerate(phase_subtasks)
                 ]
-                assignments = await coordinator.assign_agents(st_objs, allowed_agents)
+                assignments = await coordinator.assign_agents(
+                    st_objs, allowed_agents, events=events, emitter=emitter
+                )
 
                 phase_results = await coordinator.execute_dag(
                     subtasks=st_objs,
@@ -663,32 +696,53 @@ class WorkflowOrchestrator:
 
             results = all_phase_results
             total_subtasks = sum(len(p["subtasks"]) for p in phases)
+            subtask_items = [
+                {
+                    "name": s[:60],
+                    "status": all_phase_results.get(f"{phase['phase']}_{i}", {}).get(
+                        "status", "unknown"
+                    ),
+                }
+                for phase in phases
+                for i, s in enumerate(phase["subtasks"])
+            ]
         else:
             # Fallback: single-phase DAG (original behavior)
             await emit_system(events, "🧩 Decomposing task into coordinated DAG...")
-            await emit_stats(events, {"status": "Decomposing DAG", "current_agent": "Coordinator"})
 
             dag = await coordinator.decompose_task_dag(query)
             subtasks = dag["subtasks"]
             logger.info(f"Coordinator DAG: {len(subtasks)} subtask(s)")
 
-            await emit_system(events, f"📋 {len(subtasks)} subtask(s) planned, assigning agents...")
-            await emit_stats(
-                events,
-                {
-                    "subtasks_total": len(subtasks),
-                    "subtasks_completed": 0,
-                    "status": "Assigning agents",
-                    "current_agent": "Coordinator",
-                },
+            await emitter.emit(
+                status="Decomposing DAG",
+                current_agent="Coordinator",
+                subtasks_total=len(subtasks),
+                subtasks_completed=0,
+                phase="design",
+                subtask_list=[
+                    {"name": str(s.get("description", s))[:60], "status": "pending"}
+                    for s in subtasks
+                ],
             )
 
-            assignments = await coordinator.assign_agents(subtasks, allowed_agents)
+            await emit_system(events, f"📋 {len(subtasks)} subtask(s) planned, assigning agents...")
+            await emitter.emit(
+                status="Assigning agents",
+                current_agent="Coordinator",
+                phase="design",
+            )
+
+            assignments = await coordinator.assign_agents(
+                subtasks, allowed_agents, events=events, emitter=emitter
+            )
 
             await emit_system(
                 events, f"🚀 Executing {len(subtasks)} subtask(s) with DAG parallelism..."
             )
-            await emit_stats(events, {"status": "Executing DAG", "current_agent": "Coordinator"})
+            await emitter.emit(
+                status="Executing DAG", current_agent="Coordinator", phase="implement"
+            )
 
             results = await coordinator.execute_dag(
                 subtasks=subtasks,
@@ -703,20 +757,27 @@ class WorkflowOrchestrator:
             all_files_written.extend(_collect_files_written(results))
             total_subtasks = len(subtasks)
             subtasks_list = [st.get("description", st.get("id", "")) for st in subtasks]
+            subtask_items = [
+                {
+                    "name": str(st.get("description", st.get("id", "")))[:60],
+                    "status": results.get(st.get("id", ""), {}).get("status", "unknown"),
+                }
+                for st in subtasks
+            ]
 
             if ctx.conversation_id:
                 await coordinator.blackboard.sync_to_db(f"coord_{ctx.conversation_id}")
 
         completed = sum(1 for r in results.values() if r.get("status") == "completed")
         failed = sum(1 for r in results.values() if r.get("status") == "failed")
-        await emit_stats(
-            events,
-            {
-                "subtasks_completed": completed,
-                "status": f"Aggregating ({completed} done, {failed} failed)",
-                "current_agent": "Coordinator",
-                "files_written": all_files_written,
-            },
+        await emitter.emit(
+            subtasks_total=total_subtasks,
+            subtasks_completed=completed,
+            current_agent="Coordinator",
+            status=f"Aggregating ({completed} done, {failed} failed)",
+            files_written=list(all_files_written),
+            phase="verify",
+            subtask_list=subtask_items,
         )
 
         await emit_system(events, "📊 Aggregating results with confidence evaluation...")
@@ -765,6 +826,7 @@ class WorkflowOrchestrator:
         allowed_agents: list | None,
         workflow_allowed_tools: list | None,
         start_time: float,
+        emitter: "WorkflowEmitter | None" = None,
     ) -> str:
         """Delegate to DevelopmentOrchestrator.run()."""
         from orchestration.workflows.development import DevelopmentOrchestrator
@@ -780,6 +842,7 @@ class WorkflowOrchestrator:
             allowed_agents=allowed_agents,
             workflow_allowed_tools=workflow_allowed_tools,
             start_time=start_time,
+            emitter=emitter or WorkflowEmitter(None),
         )
 
     @staticmethod
@@ -792,6 +855,7 @@ class WorkflowOrchestrator:
         ctx = session.context
         events = session.events
         conv_id = ctx.conversation_id
+        emitter = session.emitter or WorkflowEmitter(None)
 
         async with get_async_session() as db_session:
             from sqlalchemy import select
@@ -829,6 +893,11 @@ class WorkflowOrchestrator:
         # Reconstruir el estado del agent loop
         loop_state = paused_data.get("paused_loop_state", {})
         messages = loop_state.get("messages", [])
+
+        # Sanitize for Ollama SDK compat (string→dict args)
+        from llm.tool_calls import sanitize_messages_for_ollama
+
+        messages = sanitize_messages_for_ollama(messages)
         messages.append({"role": "user", "content": f"[Respuesta a: {question}] {answer}"})
 
         from orchestration.loop import execute_agent_loop
@@ -874,29 +943,27 @@ class WorkflowOrchestrator:
             forced_agent = corrected_agents[node] if node < len(corrected_agents) else None
             task_desc = G.nodes[node]["task"]
 
-            await emit_stats(
-                events,
-                {
-                    "current_agent": forced_agent or "developer",
-                    "status": f"Ejecutando subtarea {node + 1}",
-                },
+            await emitter.emit(
+                current_agent=(forced_agent or "developer").capitalize(),
+                status=f"Ejecutando subtarea {node + 1}",
+                phase="Ejecutando",
+                subtasks_total=len(subtasks),
+                subtask_list=_resume_subtask_list(subtasks, paused_results, node, "running"),
             )
 
+            subtask_result = await run_subtask_safe(
+                node=node,
+                task=task_desc,
+                G=G,
+                conversation_history=conversation_history,
+                current_pdf_text=ctx.current_pdf_text,
+                ctx=ctx,
+                events=events,
+                forced_agent=forced_agent,
+                task_analysis=paused_data.get("task_analysis"),
+                timeout=SUBTASK_TIMEOUT,
+            )
             try:
-                subtask_result = await asyncio.wait_for(
-                    execute_subtask_safe(
-                        node=node,
-                        task=task_desc,
-                        G=G,
-                        conversation_history=conversation_history,
-                        current_pdf_text=ctx.current_pdf_text,
-                        ctx=ctx,
-                        events=events,
-                        forced_agent=forced_agent,
-                        task_analysis=paused_data.get("task_analysis"),
-                    ),
-                    timeout=SUBTASK_TIMEOUT,
-                )
                 if subtask_result.get("status") == "clarification_needed":
                     # Pausa anidada — guardar y retornar
                     ctx.last_clarification = subtask_result["clarification_question"]
@@ -917,7 +984,7 @@ class WorkflowOrchestrator:
                         logger.warning("Failed to save paused session (DB error)", exc_info=True)
                     return "[PAUSED:clarification_needed]"
                 paused_results[node] = subtask_result
-            except (TimeoutError, Exception) as e:
+            except Exception as e:
                 logger.error(f"Subtask {node} failed during resume: {e}")
                 paused_results[node] = {"status": "failed", "result": str(e), "files_written": []}
 
@@ -952,15 +1019,14 @@ class WorkflowOrchestrator:
             files_written=all_files,
         )
 
-        await emit_stats(
-            events,
-            {
-                "subtasks_total": len(subtasks),
-                "subtasks_completed": len(paused_results),
-                "status": "Completado",
-                "current_agent": "—",
-                "files_written": all_files,
-            },
+        await emitter.emit(
+            subtasks_total=len(subtasks),
+            subtasks_completed=len(paused_results),
+            current_agent="—",
+            status="Completado",
+            files_written=list(all_files),
+            phase=None,
+            subtask_list=_resume_subtask_list(subtasks, paused_results, None, "completed"),
         )
 
         if final_content and final_content.strip():
@@ -979,8 +1045,6 @@ async def _save_paused_session(
     paused_state: dict,
 ) -> None:
     """Persist a paused workflow session to DB for later resume."""
-    import json
-
     async with get_async_session() as db_session:
         paused = PausedSession(
             conversation_id=conv_id,

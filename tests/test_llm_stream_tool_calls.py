@@ -102,3 +102,26 @@ async def test_streaming_two_parallel_tool_calls_keep_args_separate():
     by_name = {tc["function"]["name"]: json.loads(tc["function"]["arguments"]) for tc in tool_calls}
     assert by_name["file_manager"] == {"action": "read", "path": "a.py"}
     assert by_name["code_search"] == {"pattern": "def x"}
+
+
+@pytest.mark.asyncio
+async def test_args_before_name_are_buffered_not_dropped():
+    """Args streamed BEFORE the tool name arrives must be buffered and
+    re-attached when the name chunk lands (bug 2026-08-15: `continue`
+    descartaba los args huérfanos y el tool call quedaba incompleto)."""
+    from llm.controller import StreamChunk
+    from orchestration.loop import _accumulate_stream
+
+    async def _gen():
+        yield StreamChunk(tool_arguments='{"action": "write", ', tool_call_id="call_0")
+        yield StreamChunk(tool_name="file_manager", tool_call_id="call_0")
+        yield StreamChunk(tool_arguments='"path": "a.py"}', tool_call_id="call_0")
+        yield StreamChunk(is_done=True, finish_reason="tool_calls")
+
+    _, tool_calls, finish, _ = await _accumulate_stream(_gen(), None)
+
+    assert len(tool_calls) == 1
+    fn = tool_calls[0]["function"]
+    assert fn["name"] == "file_manager"
+    assert json.loads(fn["arguments"]) == {"action": "write", "path": "a.py"}
+    assert finish == "tool_calls"
