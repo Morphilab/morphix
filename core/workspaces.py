@@ -13,10 +13,15 @@ from core.workflow_state import switch_workspace as switch_workflow_state
 
 logger = logging.getLogger(__name__)
 
+# Workspace bootstrap: siempre existe (startup_db la crea al arrancar) y es
+# el destino de TODOS los fallbacks de seguridad (nombre vacío, reintentos
+# agotados, fallo de switch, delete del workspace activo).
+DEFAULT_WORKSPACE_NAME = "main"
+
 
 class Workspaces:
     def __init__(self):
-        self.current = "main"
+        self.current = DEFAULT_WORKSPACE_NAME
         self._switch_lock: asyncio.Lock | None = None
         self._switch_lock_loop: asyncio.AbstractEventLoop | None = None
 
@@ -41,8 +46,8 @@ class Workspaces:
 
     async def switch_workspace(self, name: str, retries: int = 1) -> bool:
         if not name or not name.strip():
-            logger.error("Empty workspace name, using 'main'")
-            name = "main"
+            logger.error("Empty workspace name, using '%s'", DEFAULT_WORKSPACE_NAME)
+            name = DEFAULT_WORKSPACE_NAME
         name = self._validate_workspace_name(name)
 
         async with self._get_switch_lock():
@@ -51,8 +56,8 @@ class Workspaces:
     async def _do_switch_workspace(self, name: str, retries: int) -> bool:
 
         while retries >= 0:
-            if retries == 0 and name != "main":
-                name = "main"
+            if retries == 0 and name != DEFAULT_WORKSPACE_NAME:
+                name = DEFAULT_WORKSPACE_NAME
             try:
                 await create_schema(name)
                 await create_tables_in_schema(name)
@@ -104,12 +109,14 @@ class Workspaces:
                 return True
             except Exception as e:
                 retries -= 1
-                if name != "main":
-                    logger.warning(f"Fallback a 'main' desde '{name}': {e}")
-                    name = "main"
+                if name != DEFAULT_WORKSPACE_NAME:
+                    logger.warning(f"Fallback a '{DEFAULT_WORKSPACE_NAME}' desde '{name}': {e}")
+                    name = DEFAULT_WORKSPACE_NAME
                     retries = max(retries, 0)
                 else:
-                    logger.critical(f"switch_workspace('main') falló: {e}", exc_info=True)
+                    logger.critical(
+                        f"switch_workspace('{DEFAULT_WORKSPACE_NAME}') falló: {e}", exc_info=True
+                    )
                     return False
 
         return False
@@ -121,7 +128,7 @@ class Workspaces:
     async def delete_workspace(self, name: str) -> bool:
         name = self._validate_workspace_name(name)
         if name == self.current:
-            await self.switch_workspace("main")
+            await self.switch_workspace(DEFAULT_WORKSPACE_NAME)
         try:
             await drop_schema(name)
             logger.info(f"Deleted {name}")
@@ -142,70 +149,45 @@ class Workspaces:
         return name
 
     @staticmethod
-    def _bootstrap_workspace_agents(agents_dir, templates_dir):
-        """Copia los templates de agentes a un workspace nuevo."""
+    def _bootstrap_pattern(dest_dir, templates_dir, glob_pattern: str, label: str):
+        """Copia los templates que coinciden con glob a un workspace nuevo.
+
+        Compartido por el bootstrap de agents/workflows/hooks (idéntico salvo
+        el patrón de archivos).
+        """
         import shutil
 
         if not templates_dir.exists():
-            logger.info("No hay templates de agentes disponibles")
+            logger.info("No hay templates de %s disponibles", label)
             return
 
-        agents_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir.mkdir(parents=True, exist_ok=True)
         copied = 0
-        for template_file in templates_dir.glob("*.yaml"):
-            dest = agents_dir / template_file.name
+        for template_file in templates_dir.glob(glob_pattern):
+            dest = dest_dir / template_file.name
             if not dest.exists():
                 shutil.copy2(template_file, dest)
                 copied += 1
 
         if copied:
-            logger.info(f"Bootstrap: {copied} agentes copiados a {agents_dir}")
+            logger.info("Bootstrap: %d %s copiados a %s", copied, label, dest_dir)
         else:
-            logger.info(f"Agentes ya existen en {agents_dir}, sin cambios")
+            logger.info("%s ya existen en %s, sin cambios", label.capitalize(), dest_dir)
+
+    @staticmethod
+    def _bootstrap_workspace_agents(agents_dir, templates_dir):
+        """Copia los templates de agentes a un workspace nuevo."""
+        Workspaces._bootstrap_pattern(agents_dir, templates_dir, "*.yaml", "agentes")
 
     @staticmethod
     def _bootstrap_workspace_workflows(workflows_dir, templates_dir):
         """Copia los templates de workflows a un workspace nuevo."""
-        import shutil
-
-        if not templates_dir.exists():
-            logger.info("No hay templates de workflows disponibles")
-            return
-
-        workflows_dir.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for template_file in templates_dir.glob("*.yaml"):
-            dest = workflows_dir / template_file.name
-            if not dest.exists():
-                shutil.copy2(template_file, dest)
-                copied += 1
-
-        if copied:
-            logger.info(f"Bootstrap: {copied} workflows copiados a {workflows_dir}")
-        else:
-            logger.info(f"Workflows ya existen en {workflows_dir}, sin cambios")
+        Workspaces._bootstrap_pattern(workflows_dir, templates_dir, "*.yaml", "workflows")
 
     @staticmethod
     def _bootstrap_workspace_hooks(hooks_dir, templates_dir):
         """Copia los templates de hooks a un workspace nuevo."""
-        import shutil
-
-        if not templates_dir.exists():
-            logger.info("No hay templates de hooks disponibles")
-            return
-
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for template_file in templates_dir.glob("*.py"):
-            dest = hooks_dir / template_file.name
-            if not dest.exists():
-                shutil.copy2(template_file, dest)
-                copied += 1
-
-        if copied:
-            logger.info(f"Bootstrap: {copied} hooks copiados a {hooks_dir}")
-        else:
-            logger.info(f"Hooks ya existen en {hooks_dir}, sin cambios")
+        Workspaces._bootstrap_pattern(hooks_dir, templates_dir, "*.py", "hooks")
 
 
 workspaces_instance = Workspaces()

@@ -4926,4 +4926,4 @@ watchmedo = ["PyYAML (>=3.10)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "0be99689467ac1488603601b1641b243992254719d1776130ed282548811fec1"
+content-hash = "88fc07f99373368dad510e8ff3b8c7341f3569ad14653f66a14b5da93c5d2634"

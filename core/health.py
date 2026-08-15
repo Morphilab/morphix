@@ -46,15 +46,21 @@ async def check_database(report: HealthReport) -> None:
         from sqlalchemy import text
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://")
+        from core.database import rewrite_postgres_url
+
+        url = rewrite_postgres_url(settings.database_url)
         engine = create_async_engine(url, echo=False)
-        async with engine.connect() as conn:
-            start = time.monotonic()
-            result = await conn.execute(text("SELECT 1"))
-            result.fetchone()
-            elapsed = time.monotonic() - start
-        await engine.dispose()
-        report.add("Database", True, f"OK ({elapsed * 1000:.0f}ms)")
+        try:
+            async with engine.connect() as conn:
+                start = time.monotonic()
+                result = await conn.execute(text("SELECT 1"))
+                result.fetchone()
+                elapsed = time.monotonic() - start
+            report.add("Database", True, f"OK ({elapsed * 1000:.0f}ms)")
+        except Exception as e:
+            report.add("Database", False, str(e)[:120])
+        finally:
+            await engine.dispose()
     except Exception as e:
         report.add("Database", False, str(e)[:120])
 
@@ -65,19 +71,22 @@ async def check_llm(report: HealthReport) -> None:
 
     from core.config import settings
 
-    provider = "deepseek"
     role_config = settings.model_roles.get("default", {})
     provider_name = role_config.get("provider", "deepseek")
+
+    if provider_name == "deepseek":
+        endpoint = f"{settings.deepseek_api_base.rstrip('/')}/v1/models"
+    elif provider_name == "grok":
+        endpoint = f"{settings.grok_api_base.rstrip('/')}/models"
+    elif provider_name == "openai":
+        endpoint = "https://api.openai.com/v1/models"
+    else:
+        endpoint = f"https://api.{provider_name}.com"
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             start = time.monotonic()
-            if provider_name == "deepseek":
-                resp = await client.get("https://api.deepseek.com/v1/models")
-            elif provider_name == "openai":
-                resp = await client.get("https://api.openai.com/v1/models")
-            else:
-                resp = await client.get(f"https://api.{provider_name}.com")
+            resp = await client.get(endpoint)
             elapsed = time.monotonic() - start
             if resp.status_code in (200, 401, 403):
                 report.add(
@@ -93,9 +102,10 @@ async def check_llm(report: HealthReport) -> None:
 
 async def check_redis(report: HealthReport) -> None:
     """Probe Redis connectivity if configured."""
-    from core.config import settings
+    from core.config import Settings, settings
 
-    if not settings.redis_url or settings.redis_url == "redis://localhost:6379/0":
+    default_redis_url = Settings.model_fields["redis_url"].default
+    if not settings.redis_url or settings.redis_url == default_redis_url:
         report.add("Redis", True, "not configured (default)")
         return
 
@@ -104,10 +114,14 @@ async def check_redis(report: HealthReport) -> None:
 
         r = redis.from_url(settings.redis_url)
         start = time.monotonic()
-        await r.ping()  # type: ignore[misc]
-        elapsed = time.monotonic() - start
-        await r.aclose()
-        report.add("Redis", True, f"OK ({elapsed * 1000:.0f}ms)")
+        try:
+            await r.ping()  # type: ignore[misc]
+            elapsed = time.monotonic() - start
+            report.add("Redis", True, f"OK ({elapsed * 1000:.0f}ms)")
+        except Exception as e:
+            report.add("Redis", False, str(e)[:120])
+        finally:
+            await r.aclose()
     except Exception as e:
         report.add("Redis", False, str(e)[:120])
 
@@ -156,3 +170,15 @@ async def run_health_check() -> HealthReport:
     await check_redis(report)
 
     return report
+
+
+def main() -> None:
+    """CLI entrypoint: poetry run python -m core.health"""
+    import asyncio
+
+    report = asyncio.run(run_health_check())
+    print(report.format())
+
+
+if __name__ == "__main__":
+    main()

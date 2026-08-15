@@ -12,6 +12,20 @@ logger = logging.getLogger(__name__)
 from typing import Any
 
 
+def is_trivial_profile(profile: dict | None) -> bool:
+    """Perfil trivial: sin datos útiles más allá del nombre (o vacío).
+
+    Los perfiles auto-inferidos con solo un nombre (ej. {"name": "ChatGPT"})
+    contaminan las tareas: el agente ancla su salida en ese dato stale
+    (evidencia 2026-08-14, prueba 2). Compartido por loop.py (inyección),
+    finalizer.py (inferencia) y memory/manager.py (persistencia).
+    """
+    if not profile:
+        return True
+    meaningful = {k: v for k, v in profile.items() if v}
+    return set(meaningful) <= {"name"}
+
+
 def clean_llm_response(response: Any) -> str:
     """Limpieza ULTRA-agresiva de respuestas del LLM.
     Versión canónica — fusiona la detección de coroutine (memory/manager.py)

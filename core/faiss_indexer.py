@@ -1,5 +1,6 @@
 """FAISS Indexer — indexación semántica reutilizable con FAISS + SentenceTransformer."""
 
+import hashlib
 import logging
 import pickle
 import threading
@@ -12,6 +13,25 @@ from core.embedding_provider import EmbeddingProvider
 logger = logging.getLogger(__name__)
 
 FAISS_DIMENSION = 1024
+
+_CHECKSUM_SUFFIX = ".sha256"
+
+
+def _write_checksum(path: Path) -> None:
+    """Escribe el sha256 del archivo en <path>.sha256."""
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    (Path(str(path) + _CHECKSUM_SUFFIX)).write_text(digest, encoding="ascii")
+
+
+def _verify_checksum(path: Path) -> None:
+    """Verifica el sha256 de path contra <path>.sha256; ValueError si no coincide."""
+    checksum_path = Path(str(path) + _CHECKSUM_SUFFIX)
+    if not checksum_path.exists():
+        raise ValueError(f"Checksum faltante para {path.name} — archivo no íntegro")
+    expected = checksum_path.read_text(encoding="ascii").strip()
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != expected:
+        raise ValueError(f"Checksum inválido para {path.name} — archivo corrupto/manipulado")
 
 
 class FAISSIndexer:
@@ -92,21 +112,24 @@ class FAISSIndexer:
             self.index = faiss.IndexFlatL2(self.index.d)
 
     def save(self, directory: Path) -> None:
-        """Persiste el índice FAISS y documentos a disco."""
+        """Persiste el índice FAISS y documentos a disco (con checksum de integridad)."""
         directory.mkdir(parents=True, exist_ok=True)
         with self._lock:
             faiss.write_index(self.index, str(directory / "faiss.index"))
-            with open(directory / "documents.pkl", "wb") as f:
+            docs_path = directory / "documents.pkl"
+            with open(docs_path, "wb") as f:
                 pickle.dump(self.documents, f)
+            _write_checksum(docs_path)
         logger.info(f"FAISS index saved to {directory} ({self.index.ntotal} vectors)")
 
     @classmethod
     def load(cls, directory: Path, dimension: int = FAISS_DIMENSION) -> "FAISSIndexer":
-        """Carga un índice FAISS desde disco."""
+        """Carga un índice FAISS desde disco, verificando integridad del pickle."""
         index_path = directory / "faiss.index"
         docs_path = directory / "documents.pkl"
         if not index_path.exists() or not docs_path.exists():
             raise FileNotFoundError(f"No cached FAISS index at {directory}")
+        _verify_checksum(docs_path)
         instance = cls(dimension=dimension)
         instance.index = faiss.read_index(str(index_path))
         with open(docs_path, "rb") as f:

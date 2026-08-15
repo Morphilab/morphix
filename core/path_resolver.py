@@ -136,8 +136,11 @@ class PathResolver:
     @staticmethod
     def normalize_project_root(project_root: str | None) -> str | None:
         """Asegura que project_root tenga el prefijo 'code_projects/'."""
-        if project_root and not str(project_root).startswith("code_projects/"):
-            return f"code_projects/{project_root}"
+        from core.constants import PROJECTS_DIR_NAME
+
+        prefix = f"{PROJECTS_DIR_NAME}/"
+        if project_root and not str(project_root).startswith(prefix):
+            return f"{prefix}{project_root}"
         return project_root
 
 

@@ -6,6 +6,7 @@ switch to calmer mode, slow responses, offer help.
 
 import logging
 import re
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +71,6 @@ class FrustrationDetector:
         for pattern, reason in FRUSTRATION_PATTERNS:
             if re.search(pattern, query):
                 self.frustration_count += 1
-                import time
-
                 self.last_frustrated_at = time.time()
                 logger.info(f"Frustration detected: {reason} " f"(count: {self.frustration_count})")
                 return True, reason

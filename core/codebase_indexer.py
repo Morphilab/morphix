@@ -71,6 +71,9 @@ class CodebaseIndexer:
             )
         except FileNotFoundError:
             self.indexer = FAISSIndexer()
+        except ValueError as e:
+            logger.warning("Caché FAISS inválida (%s) — reindexando desde cero", e)
+            self.indexer = FAISSIndexer()
 
     def _resolve_base(self) -> Path:
         base = paths.memory_dir(self.workspace)
@@ -171,7 +174,8 @@ class CodebaseIndexer:
 
                 try:
                     content = f.read_text(encoding="utf-8", errors="replace")
-                except Exception:
+                except Exception as e:
+                    logger.debug("Error leyendo %s: %s", rel_path, e)
                     files_processed += 1
                     continue
 

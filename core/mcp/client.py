@@ -2,6 +2,7 @@
 """MCP client — connect to external MCP servers, discover and proxy their tools."""
 
 import asyncio
+import contextlib
 import logging
 import os
 
@@ -226,8 +227,11 @@ class MCPClient:
     async def disconnect(self) -> None:
         """Terminate the MCP server subprocess."""
         if self._reader_task is not None:
-            self._reader_task.cancel()
+            task = self._reader_task
             self._reader_task = None
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
         # Reject all pending futures
         for _msg_id, future in self._pending.items():

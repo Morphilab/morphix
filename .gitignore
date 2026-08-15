@@ -45,3 +45,5 @@ opencode.json
 
 # ── Docs build ──
 site/
+
+# ── Internal dev rules → see .git/info/exclude (cp dev/.gitignore.exclude .git/info/exclude) ──

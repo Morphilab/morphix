@@ -16,11 +16,13 @@ load_dotenv(Path(__file__).parent / ".env")
 _LOG_LEVEL = logging.DEBUG if os.getenv("VERBOSE_LOGGING", "").lower() == "true" else logging.INFO
 
 # ── Logging ──
-LOG_DIR = "logs"
-os.makedirs(LOG_DIR, exist_ok=True)
+from core.path_resolver import paths
+
+_LOG_FILE = paths.log_file()
+_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=_LOG_LEVEL,
-    filename=os.path.join(LOG_DIR, "morphix.log"),
+    filename=str(_LOG_FILE),
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     force=True,
     encoding="utf-8",

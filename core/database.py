@@ -51,6 +51,13 @@ async def set_async_schema(schema: str) -> None:
     logger.info(f"Esquema asíncrono cambiado a: {schema}")
 
 
+def rewrite_postgres_url(url: str) -> str:
+    """Convierte URLs postgresql:// o postgres:// a postgresql+asyncpg://."""
+    return url.replace("postgresql://", "postgresql+asyncpg://").replace(
+        "postgres://", "postgresql+asyncpg://"
+    )
+
+
 def _get_async_engine():
     global _async_engine, _async_session_factory, _engine_loop
     loop = _current_running_loop()
@@ -67,9 +74,7 @@ def _get_async_engine():
         _async_engine = None
         _async_session_factory = None
     if _async_engine is None:
-        async_url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://").replace(
-            "postgres://", "postgresql+asyncpg://"
-        )
+        async_url = rewrite_postgres_url(settings.database_url)
         _async_engine = create_async_engine(
             async_url,
             echo=False,
@@ -134,6 +139,8 @@ async def create_schema(schema: str) -> None:
 
 async def create_tables_in_schema(schema: str) -> None:
     """Crea las tablas SQLModel en el esquema indicado usando el motor async."""
+    if not re.match(r"^[a-z][a-z0-9_]*$", schema):
+        raise ValueError(f"Nombre de schema inválido: '{schema}'")
     engine = _get_async_engine()
     async with engine.begin() as conn:
         await conn.execute(text(f"SET search_path TO {schema}"))
@@ -172,7 +179,3 @@ async def startup_db():
     await create_schema("main")
     await create_tables_in_schema("main")
     logger.info("✅ Base de datos inicializada (tablas creadas en esquema main)")
-
-
-async def init_db() -> None:
-    await startup_db()

@@ -352,7 +352,7 @@ VALUE: {safe_value}
             ):
                 continue
             try:
-                emb_a = self._embed(str(val_a))
+                emb_a = await self._embed_async(str(val_a))
                 if emb_a is None:
                     continue
                 distances, indices = self.index.search(
@@ -422,7 +422,7 @@ VALUE: {safe_value}
             ):
                 continue
             try:
-                emb_a = self._embed(str(val_a))
+                emb_a = await self._embed_async(str(val_a))
                 if emb_a is None:
                     continue
                 distances, indices = self.index.search(
@@ -539,7 +539,7 @@ VALUE: {safe_value}
         precomputed: list = []
         for _, val in doc_snapshot:
             try:
-                emb = self._embed(str(val))
+                emb = await self._embed_async(str(val))
                 if emb is not None:
                     precomputed.append(emb)
             except Exception as e:
@@ -607,7 +607,7 @@ VALUE: {safe_value}
         precomputed: list = []
         for _, val in doc_snapshot:
             try:
-                emb = self._embed(str(val))
+                emb = await self._embed_async(str(val))
                 if emb is not None:
                     precomputed.append(emb)
             except Exception as e:
@@ -626,6 +626,12 @@ VALUE: {safe_value}
         )
 
     # ==================== PUBLIC METHODS ====================
+    def _is_protected_key(self, key: str) -> bool:
+        """Claves protegidas: nunca se recuperan en búsquedas (contaminación de contexto)."""
+        return key in self._PROTECTED_EXACT or any(
+            key.startswith(p) for p in self._PROTECTED_PREFIXES
+        )
+
     def search(self, query: str, k: int = 5, min_similarity: float = 0.0) -> list[dict]:
         """Búsqueda semántica real usando FAISS. Retorna top-k documentos con scores."""
         query_emb = self._embed(query)
@@ -646,6 +652,8 @@ VALUE: {safe_value}
                     if similarity_score < min_similarity and min_similarity > 0:
                         continue
                     key, val = self.documents[idx]
+                    if self._is_protected_key(key):
+                        continue
                     self._access_log[key] = time.time()
                     results.append(
                         {
@@ -684,6 +692,8 @@ VALUE: {safe_value}
                         if similarity_score < min_similarity and min_similarity > 0:
                             continue
                         key, val = self.documents[idx]
+                        if self._is_protected_key(key):
+                            continue
                         self._access_log[key] = time.time()
                         results.append(
                             {
@@ -721,6 +731,13 @@ VALUE: {safe_value}
             return False
         current = self.get_user_profile()
         updated = {**current, **new_data}
+        # Defensa en profundidad contra el bucle de contaminación del perfil:
+        # nunca persistir un perfil trivial (solo name, p. ej. "ChatGPT" stale)
+        # aunque venga de un caller distinto al finalizer.
+        from core.utils import is_trivial_profile
+
+        if is_trivial_profile(updated):
+            return False
         return await self.write("user_profile", updated, validated=True)
 
 

@@ -21,15 +21,22 @@ async def auto_commit(
         auto_params["project_root"] = project_root
 
     await safe_tool_call(
-        tool_name="git_manager", parameters={"action": "init", **auto_params}, role="agent"
+        tool_name="git_manager",
+        parameters={"action": "init", **auto_params},
+        role="agent",
+        skip_budget=True,
     )
     await safe_tool_call(
-        tool_name="git_manager", parameters={"action": "add", **auto_params}, role="agent"
+        tool_name="git_manager",
+        parameters={"action": "add", **auto_params},
+        role="agent",
+        skip_budget=True,
     )
     commit_res = await safe_tool_call(
         tool_name="git_manager",
         parameters={"action": "commit", "message": message, **auto_params},
         role="agent",
+        skip_budget=True,
     )
 
     output = str(commit_res.get("output", "")) if isinstance(commit_res, dict) else str(commit_res)

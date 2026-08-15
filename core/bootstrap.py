@@ -47,9 +47,9 @@ def validate_config() -> tuple[bool, list[str]]:
             )
 
     # ENCRYPTION_KEY in production
-    from core.config import os as _os
+    import os
 
-    morphix_env = _os.getenv("MORPHIX_ENV", "development")
+    morphix_env = os.getenv("MORPHIX_ENV", "development")
     if morphix_env == "production" and not settings.encryption_key:
         errors.append("ENCRYPTION_KEY is required in production (MORPHIX_ENV=production).")
 

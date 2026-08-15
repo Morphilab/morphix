@@ -97,39 +97,77 @@ class Settings(BaseSettings):
                 "model": "deepseek-v4-flash",
                 "temperature": 0.7,
                 "max_tokens": 4096,
+                "tool_calling": True,
             },
             "fast": {
                 "provider": "deepseek",
                 "model": "deepseek-v4-flash",
                 "temperature": 0.3,
+                # Mínimo 1024: con 512 el reasoning agota el presupuesto y la
+                # respuesta llega vacía (starvation, evidencia 2026-08-14).
+                # El reasoning se contiene vía retry B3 y no reenviando
+                # reasoning_content.
                 "max_tokens": 1024,
+                "tool_calling": True,
             },
             "reasoning": {
                 "provider": "deepseek",
                 "model": "deepseek-v4-flash",
                 "temperature": 0.0,
                 "max_tokens": 4096,
+                "tool_calling": True,
             },
             "agent": {
                 "provider": "deepseek",
                 "model": "deepseek-v4-flash",
                 "temperature": 0.7,
                 "max_tokens": 4096,
+                "tool_calling": True,
             },
             "creative": {
                 "provider": "deepseek",
                 "model": "deepseek-v4-flash",
                 "temperature": 0.9,
                 "max_tokens": 4096,
+                "tool_calling": True,
             },
             "critique": {
                 "provider": "deepseek",
                 "model": "deepseek-v4-flash",
                 "temperature": 0.0,
                 "max_tokens": 1024,
+                "tool_calling": True,
             },
         },
-        description="Model configuration by role. Configure in code (core/config.py). Not settable via .env.",
+        description=(
+            "Model configuration by role. Configure in code (core/config.py). "
+            "Not settable via .env. tool_calling (default True): disable for models "
+            "that don't support native function calling. "
+            "ollama_model (optional): Ollama model name for this role when offline/fallback. "
+            "Falls back to OLLAMA_MODEL env var if not set."
+        ),
+    )
+
+    # Capacidades conocidas por modelo (tool calling). Los modelos no
+    # listados se asumen capaces (default optimista) — la degradación
+    # real se detecta dinámicamente vía telemetría de repairs.
+    #
+    # SOLO se documentan entradas verificadas con soporte nativo (tools:
+    # True). NO añadir entradas tools:False sin una verificación post-fix:
+    # la evidencia histórica de "modelos sin tools" (gpt-oss:20b-cloud,
+    # minimax-m3:cloud) era el bug json.loads(dict) del parser, y los docs
+    # oficiales de Ollama confirman tool calling nativo en gpt-oss:20b-cloud.
+    model_capabilities: dict[str, dict[str, bool]] = Field(
+        default_factory=lambda: {
+            "qwen2.5-coder:7b": {"tools": True},
+            "qwen3.5:9b": {"tools": True},
+            "deepseek-r1:8b": {"tools": True},
+        },
+        description=(
+            "Known per-model capabilities. In code (core/config.py), "
+            "not settable via .env. 'tools': False disables native "
+            "function calling for that model."
+        ),
     )
 
     @model_validator(mode="after")
@@ -191,7 +229,7 @@ class Settings(BaseSettings):
     tool_max_retries: int = Field(default=3, validation_alias="TOOL_MAX_RETRIES")
     tool_backoff_base: float = Field(default=1.5, validation_alias="TOOL_BACKOFF_BASE")
     tool_max_tokens_per_workflow: int = Field(
-        default=50000, validation_alias="TOOL_MAX_TOKENS_PER_WORKFLOW"
+        default=80000, validation_alias="TOOL_MAX_TOKENS_PER_WORKFLOW"
     )
     tool_enable_token_budget: bool = Field(
         default=True, validation_alias="TOOL_ENABLE_TOKEN_BUDGET"
@@ -200,13 +238,21 @@ class Settings(BaseSettings):
     default_workflow: str = Field(default="development", validation_alias="DEFAULT_WORKFLOW")
     hooks_enabled: bool = Field(default=True, validation_alias="HOOKS_ENABLED")
     active_workspace: str = Field(default="main", validation_alias="ACTIVE_WORKSPACE")
+    tool_calling_global: bool = Field(
+        default=True,
+        validation_alias="TOOL_CALLING",
+        description="Global kill-switch for function calling. False disables tools for ALL roles.",
+    )
 
     # ── LLM Configuration ──
     llm_max_retries: int = Field(default=3, validation_alias="LLM_MAX_RETRIES")
     llm_timeout_seconds: int = Field(
         default=60,
         validation_alias="LLM_TIMEOUT_SECONDS",
-        description="Timeout for LLM call operations (used by controller.py Kairos).",
+        description=(
+            "Deprecated: usar LLM_TIMEOUT (consolidado). Se mantiene solo "
+            "para compatibilidad con .env antiguos."
+        ),
     )
     llm_backoff_factor: float = Field(default=1.5, validation_alias="LLM_BACKOFF_FACTOR")
     llm_rate_per_minute: int = Field(default=20, validation_alias="LLM_RATE_PER_MINUTE")

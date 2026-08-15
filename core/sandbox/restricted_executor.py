@@ -10,10 +10,12 @@ RestrictedPython Sandbox — Hardened version
 import ast
 import asyncio
 import logging
+import operator
 import time
 import traceback
 import types
 from io import StringIO
+from typing import Any
 
 import matplotlib
 
@@ -21,11 +23,13 @@ matplotlib.use("Agg")  # Backend no interactivo
 
 import matplotlib.pyplot as plt
 import numpy as np
-from RestrictedPython import limited_builtins, safe_globals
-from RestrictedPython.Eval import default_guarded_getattr
+from RestrictedPython import compile_restricted, limited_builtins, safe_globals
+from RestrictedPython.Eval import default_guarded_getitem, default_guarded_getiter
 from RestrictedPython.Guards import (
+    full_write_guard,
     guarded_iter_unpack_sequence,
     guarded_unpack_sequence,
+    safe_builtins,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,6 +138,70 @@ def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     raise ImportError(f"Import not allowed: {name}")
 
 
+_INPLACE_OPS = {
+    "+=": operator.iadd,
+    "-=": operator.isub,
+    "*=": operator.imul,
+    "/=": operator.itruediv,
+    "//=": operator.ifloordiv,
+    "%=": operator.imod,
+    "**=": operator.ipow,
+    "<<=": operator.ilshift,
+    ">>=": operator.irshift,
+    "&=": operator.iand,
+    "|=": operator.ior,
+    "^=": operator.ixor,
+    "@=": operator.imatmul,
+}
+
+
+def _inplacevar_(op: str, x, y):
+    """Guarda las asignaciones aumentadas (`n += 1`) que genera RestrictedPython."""
+    return _INPLACE_OPS[op](x, y)
+
+
+def _apply_(func, *args, **kwargs):
+    """Guarda las llamadas con *args/**kwargs que genera RestrictedPython."""
+    return func(*args, **kwargs)
+
+
+def _make_print_collector(output_buffer):
+    """PrintCollector que escribe directo al buffer compartido del sandbox."""
+
+    class _PrintCollector:
+        def __init__(self, _getattr_=None):
+            self._getattr_: Any = _getattr_
+
+        def write(self, text):
+            output_buffer.write(text)
+
+        def _call_print(self, *objects, **kwargs):
+            if kwargs.get("file", None) is None:
+                kwargs["file"] = self
+            else:
+                self._getattr_(kwargs["file"], "write")
+            print(*objects, **kwargs)
+
+    return _PrintCollector
+
+
+def _rewrite_name_nodes(tree) -> None:
+    """Reemplaza las cargas de `__name__` por la constante '__main__'.
+
+    RestrictedPython prohíbe leer nombres que empiezan por '_', pero el
+    guard `if __name__ == '__main__':` es legítimo en el sandbox (donde
+    `__name__` siempre vale '__main__').
+    """
+
+    class _NameRewriter(ast.NodeTransformer):
+        def visit_Name(self, node):
+            if node.id == "__name__" and isinstance(node.ctx, ast.Load):
+                return ast.copy_location(ast.Constant("__main__"), node)
+            return node
+
+    _NameRewriter().visit(tree)
+
+
 class RestrictedExecutor:
     @staticmethod
     async def execute(code: str, timeout: int = 10) -> dict:
@@ -157,19 +225,30 @@ class RestrictedExecutor:
                 file=output_buffer,
             )
 
+        _print_collector_cls = _make_print_collector(output_buffer)
+        _print_guard = _print_collector_cls(safe_builtins["_getattr_"])
+
         try:
             restricted_globals = safe_globals.copy()
             restricted_globals.update(
                 {
+                    "__name__": "__main__",
                     "__builtins__": {
                         **limited_builtins,
                         **SAFE_BUILTINS,
                         "print": _sandbox_print,
                         "__import__": safe_import,
-                        "_getattr_": default_guarded_getattr,
-                        "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
-                        "_unpack_sequence_": guarded_unpack_sequence,
                     },
+                    "_getattr_": safe_builtins["_getattr_"],
+                    "_getitem_": default_guarded_getitem,
+                    "_getiter_": default_guarded_getiter,
+                    "_write_": full_write_guard,
+                    "_unpack_sequence_": guarded_unpack_sequence,
+                    "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
+                    "_inplacevar_": _inplacevar_,
+                    "_apply_": _apply_,
+                    "_print_": _print_collector_cls,
+                    "_print": _print_guard,
                     **SAFE_MODULES,
                 }
             )
@@ -184,9 +263,14 @@ class RestrictedExecutor:
                     assert isinstance(last_stmt, ast.Expr)  # narrow para mypy
                     last_expr = ast.Expression(last_stmt.value)
                     ast.fix_missing_locations(last_expr)
-                exec(compile(tree, "<inline>", "exec"), restricted_globals)
+                _rewrite_name_nodes(tree)
+                exec(compile_restricted(tree, "<inline>", "exec"), restricted_globals)
                 if last_expr is not None:
-                    value = eval(compile(last_expr, "<inline>", "eval"), restricted_globals)
+                    _rewrite_name_nodes(last_expr)
+                    value = eval(
+                        compile_restricted(ast.unparse(last_expr), "<inline>", "eval"),
+                        restricted_globals,
+                    )
                     if value is not None:
                         return repr(value)
                 return None
@@ -217,7 +301,13 @@ class RestrictedExecutor:
                 "success": False,
             }
         except SyntaxError as e:
-            msg = f"❌ Syntax error:\nLine {e.lineno}: {e.msg}"
+            if isinstance(e.msg, (list, tuple)) and e.msg:
+                detail = str(e.msg[0])
+            elif e.msg and e.lineno is not None:
+                detail = f"Line {e.lineno}: {e.msg}"
+            else:
+                detail = str(e.msg or e)
+            msg = f"❌ Syntax error:\n{detail}"
             logger.error(f"SyntaxError: {e}")
             return {"text": msg, "success": False}
         except Exception as e:

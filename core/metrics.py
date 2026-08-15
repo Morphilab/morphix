@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Metrics:
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     total_tokens: int = 0
     total_workflows: int = 0
     completed_workflows: int = 0
@@ -26,6 +26,10 @@ class Metrics:
     cache_miss_tokens: int = 0
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
+    # LLM latency per provider (sum, calls, max seconds)
+    _llm_latency: dict[str, dict] = field(default_factory=dict)
+    # Tool-call repair count per model (detects models without native tools)
+    _tool_call_repairs: dict[str, int] = field(default_factory=dict)
 
     def record_workflow_completed(self, tokens: int = 0, tool_calls: int = 0) -> None:
         with self._lock:
@@ -62,6 +66,38 @@ class Metrics:
         with self._lock:
             self.rate_limited += 1
 
+    def record_tool_call_repair(self, model: str) -> None:
+        """Registra un repair de tool call para un modelo (telemetría 3.4)."""
+        with self._lock:
+            self._tool_call_repairs[model] = self._tool_call_repairs.get(model, 0) + 1
+
+    def get_tool_call_repairs(self) -> dict:
+        """Número de repairs de tool call por modelo."""
+        with self._lock:
+            return dict(self._tool_call_repairs)
+
+    def record_llm_latency(self, provider: str, seconds: float) -> None:
+        """Registra la latencia de una llamada LLM por proveedor."""
+        with self._lock:
+            entry = self._llm_latency.setdefault(
+                provider, {"calls": 0, "total_seconds": 0.0, "max_seconds": 0.0}
+            )
+            entry["calls"] += 1
+            entry["total_seconds"] += seconds
+            entry["max_seconds"] = max(entry["max_seconds"], seconds)
+
+    def get_llm_latency(self) -> dict:
+        """Resumen de latencia LLM por proveedor."""
+        with self._lock:
+            return {
+                provider: {
+                    "calls": entry["calls"],
+                    "avg_seconds": round(entry["total_seconds"] / max(entry["calls"], 1), 2),
+                    "max_seconds": round(entry["max_seconds"], 2),
+                }
+                for provider, entry in self._llm_latency.items()
+            }
+
     def to_dict(self) -> dict:
         with self._lock:
             uptime = int(time.time() - self.start_time)
@@ -83,6 +119,8 @@ class Metrics:
                 "cache_miss_tokens": self.cache_miss_tokens,
                 "cache_hit_rate_pct": cache_hit_rate,
                 "tokens_saved": self.cache_hit_tokens,
+                "llm_latency": self.get_llm_latency(),
+                "tool_call_repairs": self.get_tool_call_repairs(),
             }
 
 
