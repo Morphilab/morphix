@@ -27,8 +27,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       DATABASE_URL: postgresql://morphix:morphix@localhost:5432/morphix
-      ENCRYPTION_KEY: "ROTATED-2026-08-15="
-      PASSWORD_HASH: "ROTATED-2026-08-15"
+      ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY }}
+      PASSWORD_HASH: ${{ secrets.CI_PASSWORD_HASH }}
       UNDERCOVER_MODE: "false"
       DAEMON_MODE: "false"
       OFFLINE_MODE: "true"
