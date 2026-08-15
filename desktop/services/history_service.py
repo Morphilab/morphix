@@ -86,7 +86,14 @@ class HistoryService:
 
     @staticmethod
     async def semantic_search(query: str, session: AsyncSession) -> list[Conversation]:
-        """Búsqueda semántica con FAISS + caché Redis (ejecuta encode en thread)."""
+        """Búsqueda semántica con FAISS + caché Redis (ejecuta encode en thread).
+
+        DEUDA TÉCNICA (auditoría 2026-08-15): reimplementa la búsqueda
+        FAISS+embeddings a mano (reconstruye el índice por query y cachea por
+        mensaje) en vez de reutilizar core/faiss_indexer.py /
+        core/memory/manager.py. Migrar a la infraestructura compartida
+        cuando se toque esta ruta — no es un bug, es duplicación.
+        """
         import asyncio
 
         embed_model = _get_embed_model()

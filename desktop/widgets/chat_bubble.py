@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from desktop.sanitize import sanitize_rich_text
 from desktop.theme import COLORS
 
 # Role display config
@@ -56,7 +57,7 @@ class ChatBlock(QWidget):
         content.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content.setWordWrapMode(QTextOption.WrapMode.WordWrap)
-        content.setMarkdown(text)
+        content.setMarkdown(sanitize_rich_text(text))
         content.document().setDocumentMargin(4)
         content.setStyleSheet(
             f"QTextBrowser {{ background: transparent; color: {COLORS['text_primary']}; "
@@ -120,7 +121,7 @@ class ChatBlock(QWidget):
     def _flush_stream(self):
         if self._pending_text is None or self._browser is None:
             return
-        self._browser.setMarkdown(self._pending_text)
+        self._browser.setMarkdown(sanitize_rich_text(self._pending_text))
         self._pending_text = None
         self._update_text_width()
 

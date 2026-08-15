@@ -1,7 +1,8 @@
-# features/dashboard/services/dashboard_service.py
+# desktop/services/dashboard_service.py
 import logging
 import os
 import platform
+import shlex
 import subprocess
 
 from core.path_resolver import paths
@@ -47,7 +48,7 @@ class DashboardService:
             if platform.system() == "Linux":
                 try:
                     subprocess.Popen(
-                        ["x-terminal-emulator", "-e", f"lnav {log_path}"],
+                        ["x-terminal-emulator", "-e", f"lnav {shlex.quote(log_path)}"],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )

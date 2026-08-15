@@ -378,7 +378,14 @@ class MainWindow(QMainWindow):
         get_signals().project_changed.connect(
             lambda root: self.editor.set_project(root or None, get_global_workspaces().current)
         )
+        get_signals().open_file_requested.connect(self._on_open_file_requested)
         editor.set_project(maestro._current_project_root, get_global_workspaces().current)
+
+    def _on_open_file_requested(self, rel_path: str):
+        """Doble clic en 'Archivos creados' → abre el archivo en el Editor."""
+        self.tabs.setCurrentIndex(3)  # Editor
+        self._sidebar.setCurrentRow(3)
+        self.editor.open_project_file(rel_path)
 
     def _on_resume_conversation(self, conv_id: int):
         """Load conversation into Maestro tab and switch to it."""

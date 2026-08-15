@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from desktop.sanitize import sanitize_rich_text
 from desktop.theme import ACCENT, StyleFactory
 
 logger = logging.getLogger(__name__)
@@ -146,7 +147,7 @@ class HistoryTab(QWidget):
                 role = m["role"].upper()
                 content = m["content"]
                 text += f"**{role}:** {content}\n\n---\n\n"
-            self.detail_view.setMarkdown(text)
+            self.detail_view.setMarkdown(sanitize_rich_text(text))
         except Exception as e:
             logger.exception("Error cargando detalle de conversación")
             self._show_status(f"Error: {e}")

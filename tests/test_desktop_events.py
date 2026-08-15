@@ -20,4 +20,3 @@ def test_build_workflow_events_returns_workflow_events():
     assert events.on_agent_message is not None
     assert events.on_stream_chunk is not None
     assert events.on_stats_update is not None
-    assert events.on_diagram_update is not None

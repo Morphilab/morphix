@@ -219,6 +219,17 @@ class EditorTab(QWidget):
         if path and path.is_file():
             self._open_file(path)
 
+    def open_project_file(self, rel_path: str):
+        """Abre un archivo (relativo al proyecto activo o absoluto) en el editor.
+
+        Usado por el doble clic en 'Archivos creados' del Maestro.
+        """
+        p = Path(rel_path)
+        if not p.is_absolute() and self._project_dir:
+            p = self._project_dir / p
+        if p.is_file():
+            self._open_file(p)
+
     def _open_file(self, path: Path):
         if not self._maybe_discard_changes():
             return

@@ -10,8 +10,6 @@ from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
-    QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -28,13 +26,18 @@ from PySide6.QtWidgets import (
 
 from agents.registry import agents_registry
 from core.config import settings
+from core.constants import PROJECTS_DIR_NAME
+from desktop.services.project_service import active_workspace
 from orchestration.context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
 from core.token_counter import get_encoding
 from desktop.async_helpers import run_async
-from desktop.theme import COLORS, StyleFactory
+from desktop.services.workflow_runner import WorkflowRunner
+from desktop.widgets.collapsible_section import CollapsibleSection
+from desktop.widgets.phase_cards import PhaseCards
+from desktop.widgets.stat_chips import StatChips
 
 
 class MaestroTab(QWidget):
@@ -55,11 +58,9 @@ class MaestroTab(QWidget):
         self._conversation_id: int | None = None
 
         # Perf: differential-update caches to avoid redundant widget writes
-        self._last_stats: dict[str, str] = {}
         self._last_progress: int = -1
         self._last_subtasks: list | None = None
         self._last_files: list | None = None
-        self._last_diagram_html: str | None = None
         self._status_log_started: bool = False
 
         # Widgets set by panel builders (declared for mypy)
@@ -78,7 +79,6 @@ class MaestroTab(QWidget):
         self._preload_status: QLabel
         self._preload_progress: QProgressBar
         self.offline_btn: QPushButton
-        self.clear_btn: QPushButton
         self.download_btn: QPushButton
         self.download_format: QComboBox
         self._new_conv_btn: QPushButton
@@ -89,24 +89,33 @@ class MaestroTab(QWidget):
         self.pdf_path_field: QLineEdit
         self.pdf_load_btn: QPushButton
         self.send_btn: QPushButton
+        self._status_banner: QLabel
+        self._workflow_label: QLabel
         self._detail_tabs: QTabWidget
-        self._diagram_view: QTextBrowser
+        self._diagram_view: PhaseCards
         self._status_log_view: QTextBrowser
         self.status_log: QTextBrowser  # backward-compat alias
         self._subtask_list: QListWidget
         self._files_written_list: QListWidget
+        self._subtask_section: CollapsibleSection
+        self._files_section: CollapsibleSection
+        self.stat_chips: StatChips
         self._progress_bar: QProgressBar
-        self.stat_labels: dict = {}
         self._current_pdf_text: str = ""
 
         self._build_ui()
         self._connect_maestro()
 
+        self._runner = WorkflowRunner()
+        self._runner.on_system = self._runner_on_system
+        self._runner.on_assistant = self._runner_on_assistant
+        self._runner.on_pause = lambda s, q: self._on_runner_pause(s, q)
+        self._runner.streaming_check = self._has_streaming
+
     def _build_ui(self):
         from desktop.panels import (
+            build_activity_panel,
             build_chat_panel,
-            build_detail_panel,
-            build_execution_panel,
             build_top_bar,
         )
         from desktop.widgets.bash_panel import BashPanel
@@ -120,26 +129,33 @@ class MaestroTab(QWidget):
         root.setSpacing(0)
         root.addWidget(build_top_bar(self))
 
+        # spec §4: 2 columnas — chat (flex 3) + panel de actividad unificado (1.2)
         columns = QSplitter(Qt.Orientation.Horizontal)
         columns.setContentsMargins(6, 6, 6, 6)
-
-        execution = build_execution_panel(self)
-        execution.setMinimumWidth(200)
-        columns.addWidget(execution)
+        columns.setChildrenCollapsible(True)
 
         chat = build_chat_panel(self)
         chat.setMinimumWidth(300)
         columns.addWidget(chat)
 
-        detail = build_detail_panel(self)
-        detail.setMinimumWidth(280)
-        columns.addWidget(detail)
+        activity = build_activity_panel(self)
+        activity.setMinimumWidth(280)
+        columns.addWidget(activity)
 
-        columns.setStretchFactor(0, 1)
-        columns.setStretchFactor(1, 3)
-        columns.setStretchFactor(2, 1)
+        columns.setStretchFactor(0, 30)
+        columns.setStretchFactor(1, 12)
 
         root.addWidget(columns, 1)
+
+        self._files_written_list.itemDoubleClicked.connect(self._open_file_in_editor)
+
+    def _open_file_in_editor(self, item):
+        """Doble clic en 'Archivos creados' → abre el archivo en editor_tab."""
+        from desktop.events import get_signals
+
+        name = item.text().strip()
+        if name:
+            get_signals().open_file_requested.emit(name)
 
     def eventFilter(self, obj, event):
         """Ctrl+Enter para enviar desde el QTextEdit multilínea."""
@@ -205,35 +221,6 @@ class MaestroTab(QWidget):
         else:
             self._agent_combo.setToolTip("Sin perfil definido")
 
-    def _build_stats_panel(self) -> QGroupBox:
-        group = QGroupBox("Estado en tiempo real")
-        group.setStyleSheet(StyleFactory.group_box())
-        layout = QVBoxLayout(group)
-        layout.setSpacing(6)
-
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setFormat("—")
-        self._progress_bar.setStyleSheet(StyleFactory.progress_bar())
-        layout.addWidget(self._progress_bar)
-
-        self.stat_labels = {}
-        for key in ["subtasks_total", "elapsed_time", "tokens_used", "current_agent", "status"]:
-            row = QHBoxLayout()
-            label = QLabel(key.replace("_", " ").capitalize())
-            label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-            value = QLabel("—")
-            value.setStyleSheet(
-                f"color: {COLORS['text_primary']}; font-size: 12px; font-weight: bold;"
-            )
-            row.addWidget(label)
-            row.addStretch()
-            row.addWidget(value)
-            layout.addLayout(row)
-            self.stat_labels[key] = value
-        return group
-
     def _connect_maestro(self):
         from desktop.events import get_signals
 
@@ -246,7 +233,6 @@ class MaestroTab(QWidget):
         signals.user_message.connect(self._on_user)
         signals.stream_chunk.connect(self._on_stream)
         signals.stats_update.connect(self._on_stats)
-        signals.diagram_update.connect(self._on_diagram)
         signals.workspace_changed.connect(self._on_workspace_switch)
         signals.offline_changed.connect(lambda offline: self._refresh_offline_indicator())
         signals.indexing_progress.connect(self._on_indexing_progress)
@@ -270,12 +256,46 @@ class MaestroTab(QWidget):
         desc = template.get("description", "") if template else ""
         self._on_system(f"Workflow activated: **{workflow_name}**\n{desc}")
 
+    def _update_workflow_label(self):
+        from core.workflow_state import get_active_workflow
+
+        self._workflow_label.setText(f"workflow: {get_active_workflow()}")
+
     def _on_workspace_switch(self, ws_name: str):
         """Refresh agent panel when workspace changes from dashboard."""
         self.ws_label.setText(ws_name)
         self._force_agent = None
         self._selected_agent = None
         self._set_mode(self._mode)  # Refresh agent panel for current mode
+        self._refresh_detail_tabs_for_workflow()
+
+    def _refresh_detail_tabs_for_workflow(self):
+        from core.workflow_state import get_active_workflow
+        from core.workspaces import get_global_workspaces
+        from desktop.panels.detail_panel import update_tabs_for_workflow
+        from orchestration.loader import load_workflow_template
+
+        # Chat con agente forzado: visibilidad de Bash dictada por el perfil del agente
+        agent_tools: list[str] | None = None
+        if self._force_agent:
+            profile = agents_registry.get_profile(self._force_agent)
+            if profile and profile.get("tools"):
+                from tools.specs import expand_allowed_tools
+
+                agent_tools = expand_allowed_tools(profile.get("tools", [])) or []
+            else:
+                agent_tools = None
+
+        try:
+            template = load_workflow_template(
+                workspace_name=get_global_workspaces().current,
+                workflow_name=get_active_workflow(),
+            )
+        except Exception:
+            template = None
+
+        allowed = template.get("tools", {}).get("allowed") if template else None
+        update_tabs_for_workflow(self, allowed, agent_tools=agent_tools)
 
     def launch_agent(self, agent_name: str):
         """Llamado desde el Dashboard al hacer clic en una card de agente."""
@@ -293,9 +313,51 @@ class MaestroTab(QWidget):
         if "[bash_manager]" in msg:
             self.bash_panel.set_output(msg[-3000:])
         self._append_status(msg, "#888888")
+        if msg.startswith("❌"):
+            self._show_status_banner(msg, "error")
+
+    def _show_status_banner(self, text: str, kind: str = "info"):
+        colors = {"info": "#3B82F6", "error": "#EF4444", "warning": "#F59E0B"}
+        self._status_banner.setText(text)
+        self._status_banner.setStyleSheet(
+            f"QLabel {{ background: {colors.get(kind, colors['info'])}; color: white;"
+            f" border-radius: 6px; padding: 6px 10px; font-size: 12px; }}"
+        )
+        self._status_banner.setVisible(True)
+
+    def _hide_status_banner(self):
+        self._status_banner.setVisible(False)
 
     def _on_assistant(self, msg: str):
         self._add_bubble(msg, "assistant")
+
+    async def _runner_on_system(self, msg: str):
+        self._append_status(msg, "#888888")
+        if msg.startswith("❌"):
+            self._show_status_banner(msg, "error")
+
+    def _has_streaming(self) -> bool:
+        return bool(self._streaming_text.strip()) or self._streaming_bubble is not None
+
+    async def _runner_on_assistant(self, msg: str):
+        streaming_text = self._streaming_text
+        had_streaming = self._streaming_bubble is not None
+        had_content = bool(streaming_text.strip())
+
+        if had_streaming and had_content:
+            self._history.append({"role": "assistant", "content": streaming_text.strip()})
+        elif msg and msg.strip():
+            self._on_assistant(msg)
+        self._streaming_bubble = None
+        self._streaming_text = ""
+
+    async def _on_runner_pause(self, session, question: str):
+        self._paused_session = session
+        self.input_field.setPlaceholderText(f"Responde: {question[:60]}...")
+        self._show_status_banner(f"⏸️ {question}", "warning")
+        with self._workflow_running_lock:
+            self._workflow_running = False
+        self._hide_typing()
 
     def _on_user(self, msg: str):
         self._add_bubble(msg, "user")
@@ -348,33 +410,24 @@ class MaestroTab(QWidget):
             QTimer.singleShot(100, self._throttled_scroll)
 
     def _on_stats(self, data: dict):
-        for key, label in self.stat_labels.items():
-            if key not in data:
-                continue
-            value = str(data[key])
-            if key == "subtasks_total":
-                completed = data.get("subtasks_completed", 0)
-                total = data[key]
-                value = f"{completed} / {total}"
-                if total > 0:
-                    pct = int(completed / total * 100)
-                    if pct != self._last_progress:
-                        self._progress_bar.setValue(pct)
-                        self._progress_bar.setFormat(f"{completed}/{total} subtareas")
-                        self._last_progress = pct
-            if self._last_stats.get(key) != value:
-                label.setText(value)
-                self._last_stats[key] = value
-                if key == "status":
-                    label.setStyleSheet(
-                        "color: #22C55E; font-size: 12px; font-weight: bold;"
-                        if "completado" in value.lower()
-                        else "color: #F59E0B; font-size: 12px; font-weight: bold;"
-                    )
+        self.stat_chips.update_from_stats(data)
 
+        # Barra de progreso
+        total = data.get("subtasks_total", 0)
+        completed = data.get("subtasks_completed", 0)
+        if total and total > 0:
+            pct = int(completed / total * 100)
+            if pct != self._last_progress:
+                self._progress_bar.setValue(pct)
+                self._progress_bar.setFormat(f"{completed}/{total} subtareas")
+                self._last_progress = pct
+
+        # Subtareas: expandir sección si hay pasos reales (>1 ítem)
         subtask_list = data.get("subtask_list")
         if subtask_list is not None and subtask_list != self._last_subtasks:
             self._last_subtasks = list(subtask_list)
+            if len(subtask_list) > 1:
+                self._subtask_section.set_collapsed(False)
             self._subtask_list.clear()
             for item in subtask_list:
                 name = item.get("name", "")
@@ -384,17 +437,17 @@ class MaestroTab(QWidget):
                 )
                 self._subtask_list.addItem(f"{icon}  {name}")
 
+        # Archivos: expandir sección si hay archivos
         files_written = data.get("files_written")
         if isinstance(files_written, list) and files_written and files_written != self._last_files:
             self._last_files = list(files_written)
+            self._files_section.set_collapsed(False)
             self._files_written_list.clear()
             for f in files_written:
                 self._files_written_list.addItem(f"  {f}")
 
-    def _on_diagram(self, html: str, graph=None):
-        if html != self._last_diagram_html:
-            self._diagram_view.setHtml(html)
-            self._last_diagram_html = html
+        # Diagrama derivado localmente (reemplaza _on_diagram)
+        self._diagram_view.update_from_stats(data)
 
     # ── Chat ──
 
@@ -452,6 +505,7 @@ class MaestroTab(QWidget):
 
     def clear_chat(self):
         self._hide_typing()
+        self._hide_status_banner()
         # Remove debate section from layout without deleting the widget
         debate_idx = None
         for i in range(self.chat_layout.count()):
@@ -474,12 +528,15 @@ class MaestroTab(QWidget):
         self.debate_section.clear()
         self._subtask_list.clear()
         self._files_written_list.clear()
-        self._last_stats.clear()
         self._last_progress = -1
         self._last_subtasks = None
         self._last_files = None
-        self._last_diagram_html = None
         self._status_log_started = False
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFormat("—")
+        self.stat_chips.reset()
+        self._subtask_section.set_collapsed(True)
+        self._files_section.set_collapsed(True)
         self.status_log.setHtml(
             "<p style='color:#888; text-align:center'>Listo. Envía una consulta</p>"
         )
@@ -488,6 +545,15 @@ class MaestroTab(QWidget):
     def _new_conversation(self):
         self.clear_chat()
         self._conversation_id = None
+        self._current_project_root = None
+        self._project_label.setText("Proyecto: —")
+        self._project_label.setStyleSheet("color: #A0A0A0; font-size: 10px; padding: 2px 4px;")
+        self._project_combo.blockSignals(True)
+        self._project_combo.setCurrentIndex(0)
+        self._project_combo.blockSignals(False)
+        from desktop.events import get_signals
+
+        get_signals().project_changed.emit("")
         self._on_system("✨ Nueva conversación iniciada")
 
     async def load_conversation(self, conv_id: int):
@@ -606,166 +672,21 @@ class MaestroTab(QWidget):
 
         # No conversation_id — write from in-memory history
         export_ts = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S")
-        internal = (
-            "Eres Morphix",
-            "Reglas anti-frustración",
-            "Mantén siempre esta identidad",
-            "Soy Morphix, un asistente experto",
-        )
 
         try:
             filename = str(exports_dir / f"morphix_conversacion_nueva_{export_ts}.{fmt}")
+            run_async(self._write_history_export(fmt, filename))
+        except Exception as e:
+            logger.error(f"Error guardando conversación: {e}", exc_info=True)
+            self._on_system(f"❌ Error al guardar: {e}")
 
-            if fmt == "json":
-                import json
+    async def _write_history_export(self, fmt: str, filename: str):
+        """Escribe el export desde el history en memoria vía conversation_export."""
+        from desktop.services.conversation_export import export_history_to_file
 
-                data = [
-                    {
-                        "role": m.get("role", "?"),
-                        "content": m.get("content", ""),
-                        "agent": m.get("agent"),
-                        "label": m.get("label"),
-                    }
-                    for m in self._history
-                    if not (
-                        m.get("role") == "system"
-                        and any(p in m.get("content", "") for p in internal)
-                    )
-                ]
-                with open(filename, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
-                self._on_system(f"✅ Exportado: **{filename}**")
-
-            elif fmt == "md":
-                with open(filename, "w", encoding="utf-8") as f:
-                    f.write("# Conversación Morphix\n")
-                    f.write(
-                        f"**Fecha:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n"
-                    )
-                    for msg in self._history:
-                        role = msg.get("role", "?")
-                        content = msg.get("content", "")
-                        if role == "system" and any(p in content for p in internal):
-                            continue
-                        if role == "assistant":
-                            f.write(f"**🤖 Maestro:**\n{content}\n\n---\n\n")
-                        elif role == "user":
-                            f.write(f"**👤 Usuario:**\n{content}\n\n---\n\n")
-                        elif role == "agent":
-                            agent = msg.get("agent", "agente")
-                            label = msg.get("label", "")
-                            f.write(f"**🧠 {agent.capitalize()} ({label}):**\n{content}\n\n---\n\n")
-                        elif role == "tool":
-                            f.write(f"**🔧 Herramienta:**\n{content}\n\n---\n\n")
-                        else:
-                            f.write(f"**⚙️ {role}:**\n{content}\n\n---\n\n")
-                self._on_system(f"✅ Guardado: **{filename}**")
-
-            elif fmt == "pdf":
-                from reportlab.lib.pagesizes import letter
-                from reportlab.lib.styles import getSampleStyleSheet
-                from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-
-                data = [
-                    m
-                    for m in self._history
-                    if not (
-                        m.get("role") == "system"
-                        and any(p in m.get("content", "") for p in internal)
-                    )
-                ]
-
-                doc = SimpleDocTemplate(filename, pagesize=letter)
-                styles = getSampleStyleSheet()
-                story = []
-                story.append(Paragraph("Conversación Morphix", styles["Title"]))
-                story.append(Spacer(1, 12))
-                for msg in data:
-                    role = msg.get("role", "?")
-                    content = msg.get("content", "")
-                    label = {
-                        "assistant": "🤖 Maestro",
-                        "user": "👤 Usuario",
-                        "agent": f"🧠 {msg.get('agent', 'agente').capitalize()}",
-                        "tool": "🔧 Herramienta",
-                    }.get(role, f"⚙️ {role}")
-                    story.append(Paragraph(f"<b>{label}:</b> {content}", styles["Normal"]))
-                    story.append(Spacer(1, 12))
-                doc.build(story)
-
-            elif fmt == "html":
-                from html import escape
-
-                try:
-                    from pygments import highlight
-                    from pygments.formatters import HtmlFormatter
-                    from pygments.lexers import get_lexer_by_name, guess_lexer
-                    from pygments.util import ClassNotFound
-
-                    formatter = HtmlFormatter(style="default", noclasses=True)
-
-                    def _hl_code(text: str) -> str:
-                        import re
-
-                        def _repl(m):
-                            lang = m.group(1) or "python"
-                            code = m.group(2)
-                            try:
-                                lexer = get_lexer_by_name(lang, stripall=True)
-                            except ClassNotFound:
-                                try:
-                                    lexer = guess_lexer(code)
-                                except ClassNotFound:
-                                    lexer = get_lexer_by_name("text")
-                            return highlight(code, lexer, formatter)
-
-                        return re.sub(r"```(\w*)\n(.*?)```", _repl, text, flags=re.DOTALL)
-
-                except ImportError:
-
-                    def _hl_code(text: str) -> str:
-                        return f"<pre><code>{escape(text)}</code></pre>"
-
-                with open(filename, "w", encoding="utf-8") as f:
-                    f.write('<!DOCTYPE html>\n<html lang="es">\n<head>\n')
-                    f.write('<meta charset="utf-8">\n')
-                    f.write("<title>Conversación Morphix</title>\n")
-                    f.write("<style>")
-                    f.write(
-                        "body{font-family:Arial,sans-serif;max-width:900px;margin:40px auto;"
-                        "padding:20px;background:#fafafa;color:#222}"
-                        "h1{color:#333;border-bottom:2px solid #ddd;padding-bottom:8px}"
-                        ".msg{margin:12px 0;padding:12px;border-radius:6px;background:#fff;"
-                        "box-shadow:0 1px 3px rgba(0,0,0,.1)}"
-                        ".role{font-weight:bold;font-size:.9em;color:#555}"
-                        ".content{margin-top:6px;line-height:1.5}"
-                        "hr{border:0;border-top:1px solid #eee;margin:20px 0}"
-                        ".highlight{background:#f4f4f4;border-radius:4px;padding:10px;"
-                        "overflow-x:auto;font-size:.9em}"
-                    )
-                    f.write("</style>\n</head>\n<body>\n")
-                    f.write("<h1>Conversación Morphix</h1>\n")
-                    f.write(
-                        f"<p><strong>Fecha:</strong> "
-                        f"{datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}</p>\n"
-                        "<hr>\n"
-                    )
-                    for msg in self._history:
-                        role = msg.get("role", "unknown")
-                        content = msg.get("content", "")
-                        role_label = {
-                            "assistant": "Maestro",
-                            "user": "Usuario",
-                            "agent": "Agente",
-                            "tool": "Herramienta",
-                        }.get(role, role.capitalize())
-                        f.write(f'<div class="msg">\n<p class="role">{role_label}:</p>\n')
-                        f.write(f'<div class="content">{_hl_code(content)}</div>\n')
-                        f.write("</div>\n<hr>\n")
-                    f.write("</body>\n</html>")
-
-            self._on_system(f"✅ Exportado: **{filename}**")
-
+        try:
+            saved = await export_history_to_file(self._history, filename, fmt)
+            self._on_system(f"✅ Exportado: **{saved}**")
         except Exception as e:
             logger.error(f"Error guardando conversación: {e}", exc_info=True)
             self._on_system(f"❌ Error al guardar: {e}")
@@ -777,7 +698,7 @@ class MaestroTab(QWidget):
 
         project_path = None
         if self._current_project_root:
-            proj_dir = paths.memory_dir("main") / self._current_project_root
+            proj_dir = paths.memory_dir(active_workspace()) / self._current_project_root
             if proj_dir.exists():
                 project_path = str(proj_dir)
         filename = await ConversationRepository.export(conv_id, fmt, project_path=project_path)
@@ -816,6 +737,8 @@ class MaestroTab(QWidget):
             self._populate_agents(None)
 
         self._update_agent_detail()
+        self._update_workflow_label()
+        self._refresh_detail_tabs_for_workflow()
 
         # Show message when entering chat mode
         if mode == "chat" and not silent:
@@ -839,19 +762,24 @@ class MaestroTab(QWidget):
     def _create_project(self):
         from PySide6.QtWidgets import QInputDialog
 
-        from core.path_resolver import paths
+        from desktop.services.project_service import (
+            create_project,
+            normalize_project_name,
+        )
 
         name, ok = QInputDialog.getText(self, "Nuevo proyecto", "Nombre del proyecto:", text="")
         if not ok or not name:
             return
-        name = name.strip().lower().replace(" ", "_")
-        if not name or not name.isidentifier():
+        name = normalize_project_name(name)
+        if not name:
             self._on_system("❌ Nombre inválido. Usa solo letras, números y _")
             return
-        root = f"code_projects/{name}"
-        proj_dir = paths.memory_dir("main") / root
-        proj_dir.mkdir(parents=True, exist_ok=True)
+        ok, root = create_project(name)
+        if not ok:
+            self._on_system(f"❌ Error creando proyecto: {root}")
+            return
         self._current_project_root = root
+        self._conversation_id = None
         self._update_project_display(name)
         self._refresh_project_list()
         self._on_system(f"✅ Proyecto '{name}' creado y activado.")
@@ -862,54 +790,51 @@ class MaestroTab(QWidget):
             self._on_system("⚙️ Modo cambiado a Orquestar automáticamente.")
 
     def _import_project(self):
-        import shutil
         from pathlib import Path
 
-        from core.path_resolver import paths
+        from desktop.services.project_service import normalize_project_name, project_dir
 
         src = QFileDialog.getExistingDirectory(self, "Seleccionar proyecto para importar")
         if not src:
             return
 
         src_path = Path(src)
-        name = src_path.name.lower().replace(" ", "_")
-        dst = paths.memory_dir("main") / "code_projects" / name
+        name = normalize_project_name(src_path.name)
+        if not name:
+            self._on_system("❌ Nombre de proyecto inválido. Usa solo letras, números y _")
+            return
+        dst = project_dir(name)
 
         if dst.exists():
             self._on_system(f"❌ Ya existe un proyecto llamado '{name}'")
             return
 
-        self._on_system(f"📂 Copiando '{src_path.name}' → code_projects/{name}...")
+        self._on_system(f"📂 Copiando '{src_path.name}' → {PROJECTS_DIR_NAME}/{name}...")
 
         from PySide6.QtCore import QThread
         from PySide6.QtCore import Signal as QSignal
 
+        from desktop.services.project_service import import_project
+
         class _CopyWorker(QThread):
             done = QSignal(bool, str)
 
-            def __init__(self, src, dst):
+            def __init__(self, src, name):
                 super().__init__()
                 self._src = src
-                self._dst = dst
+                self._name = name
 
             def run(self):
-                try:
-                    shutil.copytree(str(self._src), str(self._dst))
-                    self.done.emit(True, "")
-                except Exception as e:
-                    self.done.emit(False, str(e))
+                ok, message = import_project(self._src, self._name)
+                self.done.emit(ok, message)
 
-        self._copy_worker = _CopyWorker(src_path, dst)
+        self._copy_worker = _CopyWorker(str(src_path), name)
         self._copy_worker.done.connect(self._on_import_done)
         self._copy_worker.start()
 
     def _on_import_done(self, success, error):
-        from pathlib import Path
-
         if success:
-            name = Path(self._copy_worker._dst).name
-            file_count = sum(1 for _ in Path(self._copy_worker._dst).rglob("*") if _.is_file())
-            self._on_system(f"✅ Proyecto importado: {name} ({file_count} archivos)")
+            self._on_system(f"✅ Proyecto importado: {error}")
             self._refresh_project_list()
         else:
             logger.warning("Unhandled exception in MaestroTab", exc_info=True)
@@ -978,7 +903,7 @@ class MaestroTab(QWidget):
     def _switch_project(self, name: str):
         if not name:
             return
-        root = f"code_projects/{name}"
+        root = f"{PROJECTS_DIR_NAME}/{name}"
         self._current_project_root = root
         self._update_project_display(name)
         self._on_system(f"✅ Cambiado a proyecto '{name}'.")
@@ -999,9 +924,9 @@ class MaestroTab(QWidget):
 
     def _refresh_project_list(self):
         """Escanea code_projects/ y llena el dropdown de proyectos."""
-        from core.path_resolver import paths
+        from desktop.services.project_service import projects_base
 
-        base = paths.memory_dir("main") / "code_projects"
+        base = projects_base()
         self._project_combo.blockSignals(True)
         self._project_combo.clear()
         self._project_combo.addItem("— sin proyecto —", None)
@@ -1028,6 +953,7 @@ class MaestroTab(QWidget):
                 return
             self._add_bubble(answer, "user")
             self.input_field.clear()
+            self._hide_status_banner()
             self._show_typing()
             self._streaming_bubble = None
             self._streaming_text = ""
@@ -1042,6 +968,7 @@ class MaestroTab(QWidget):
         query = self.input_field.toPlainText().strip()
         if not query:
             return
+        self._hide_status_banner()
 
         # Guard: Orquestar requiere proyecto (excepto workflows que no lo necesitan)
         if self._mode == "orchestrate" and not self._current_project_root:
@@ -1111,118 +1038,55 @@ class MaestroTab(QWidget):
         run_async(self._run_workflow(session))
 
     async def _run_workflow(self, session):
-        from orchestration.workflows.orchestrator import WorkflowOrchestrator
-
         try:
-            final = await WorkflowOrchestrator.run_full_workflow(session=session)
-            ctx = session.context
-
-            if final == "[PAUSED:clarification_needed]":
-                question = ctx.last_clarification or "¿Podrías clarificar?"
-                self._on_system(f"⏸️ Pausa: {question}")
-                self._paused_session = session
-                with self._workflow_running_lock:
-                    self._workflow_running = False
-                self._hide_typing()
-                self.input_field.setPlaceholderText(f"Responde: {question[:60]}...")
-                return
-
-            if ctx.project_root:
-                self._current_project_root = ctx.project_root
-            streaming_text = self._streaming_text
-
-            had_streaming = self._streaming_bubble is not None
-            had_content = bool(streaming_text.strip())
-
-            self._streaming_bubble = None
-            self._streaming_text = ""
-
-            # Show final result: prefer streaming bubble (already visible),
-            # fall back to explicit return value
-            if had_streaming and had_content:
-                self._history.append({"role": "assistant", "content": streaming_text.strip()})
-            elif final:
-                self._on_assistant(final)
-            elif not had_content:
-                self._on_system("⚠️ El workflow no produjo respuesta.")
-
-            # Track conversation_id for follow-up messages in same session
-            if self._conversation_id is None:
-                try:
-                    from core.repositories.conversation_repository import ConversationRepository
-
-                    recent = await ConversationRepository.list_all(limit=1)
-                    if recent:
-                        self._conversation_id = recent[0]["id"]
-                except Exception:
-                    logger.warning("Unhandled exception in MaestroTab", exc_info=True)
-
-            # Persist agent/tool messages to DB (these arrive during workflow
-            # execution via emit_agent and are in self._history but NOT in
-            # the conversation_history snapshot passed to finalize_workflow).
-            if self._conversation_id is not None:
-                try:
-                    # Find agent/tool entries added to history during workflow
-                    snapshot_len = len(ctx.conversation_history)
-                    new_entries = self._history[snapshot_len:]
-                    agent_tool_entries = [
-                        m for m in new_entries if m.get("role") in ("agent", "tool")
-                    ]
-                    if agent_tool_entries:
-                        from core.repositories.conversation_repository import ConversationRepository
-
-                        await ConversationRepository.add_messages(
-                            self._conversation_id, agent_tool_entries
-                        )
-                except Exception:
-                    logger.warning("Unhandled exception in MaestroTab", exc_info=True)
-        except Exception as e:
-            logger.error(f"Error en workflow: {e}", exc_info=True)
-            self._on_system(f"❌ Error: {e}")
+            await self._runner.run(session)
+            await self._after_workflow(session)
         finally:
             self._hide_typing()
             with self._workflow_running_lock:
                 self._workflow_running = False
 
-    async def _resume_workflow(self, session, answer: str):
-        """Reanuda un workflow pausado tras recibir respuesta de clarificación."""
-        from orchestration.workflows.orchestrator import WorkflowOrchestrator
+    async def _after_workflow(self, session):
+        """Persistencia post-workflow: project_root, conversation_id y mensajes agent/tool."""
+        ctx = session.context
 
-        try:
-            final = await WorkflowOrchestrator.resume_workflow(session=session, answer=answer)
-            ctx = session.context
+        if ctx.project_root:
+            self._current_project_root = ctx.project_root
 
-            if final == "[PAUSED:clarification_needed]":
-                question = ctx.last_clarification or "¿Podrías clarificar?"
-                self._on_system(f"⏸️ Pausa adicional: {question}")
-                self._paused_session = session
-                self._hide_typing()
-                self.input_field.setPlaceholderText(f"Responde: {question[:60]}...")
-                return
+        # Track conversation_id for follow-up messages in same session
+        if self._conversation_id is None:
+            try:
+                from core.repositories.conversation_repository import ConversationRepository
 
-            streaming_text = self._streaming_text
-            had_streaming = self._streaming_bubble is not None
-            had_content = bool(streaming_text.strip())
-            self._streaming_bubble = None
-            self._streaming_text = ""
+                recent = await ConversationRepository.list_all(limit=1)
+                if recent:
+                    self._conversation_id = recent[0]["id"]
+            except Exception:
+                logger.warning("Unhandled exception in MaestroTab", exc_info=True)
 
-            if had_streaming and had_content:
-                self._history.append({"role": "assistant", "content": streaming_text.strip()})
-            elif final:
-                self._on_assistant(final)
-
-            if self._conversation_id is None:
-                try:
+        # Persist agent/tool messages to DB (these arrive during workflow
+        # execution via emit_agent and are in self._history but NOT in
+        # the conversation_history snapshot passed to finalize_workflow).
+        if self._conversation_id is not None:
+            try:
+                # Find agent/tool entries added to history during workflow
+                snapshot_len = len(ctx.conversation_history)
+                new_entries = self._history[snapshot_len:]
+                agent_tool_entries = [m for m in new_entries if m.get("role") in ("agent", "tool")]
+                if agent_tool_entries:
                     from core.repositories.conversation_repository import ConversationRepository
 
-                    recent = await ConversationRepository.list_all(limit=1)
-                    if recent:
-                        self._conversation_id = recent[0]["id"]
-                except Exception:
-                    logger.warning("Unhandled exception in MaestroTab", exc_info=True)
-        except Exception as e:
-            logger.error(f"Error resumiendo workflow: {e}", exc_info=True)
-            self._on_system(f"❌ Error: {e}")
+                    await ConversationRepository.add_messages(
+                        self._conversation_id, agent_tool_entries
+                    )
+            except Exception:
+                logger.warning("Unhandled exception in MaestroTab", exc_info=True)
+
+    async def _resume_workflow(self, session, answer: str):
+        """Reanuda un workflow pausado tras recibir respuesta de clarificación."""
+        try:
+            await self._runner.resume(session, answer)
+            await self._after_workflow(session)
         finally:
             self._hide_typing()
             with self._workflow_running_lock:
@@ -1232,112 +1096,29 @@ class MaestroTab(QWidget):
     async def _run_direct_agent(self, query: str, agent: str | None = None):
         """Ejecuta conversación directa 1:1 con un agente (con function-calling nativo)."""
         agent = agent or self._force_agent or "conversacional"
+        from core.workspaces import get_global_workspaces
         from desktop.events import build_workflow_events
+        from orchestration.context import Session, WorkflowContext
 
         # Events so bash/system/stats reach the GUI also in chat mode.
         events = build_workflow_events()
+        current_history = list(self._history)
+        session = Session(
+            context=WorkflowContext(
+                query=query,
+                mode="chat",
+                workspace=get_global_workspaces().current,
+                conversation_history=current_history,
+                project_root=self._current_project_root,
+            ),
+            events=events,
+        )
         try:
+            response = await self._runner.run_direct_agent(session, query, agent)
 
-            async def _stream(text: str):
-                self._on_stream(text)
-
-            current_history = list(self._history)
-
-            # Get agent profile + tools with workflow template filtering
-            from agents.registry import agents_registry as _reg
-            from core.workflow_state import get_active_workflow
-            from core.workspaces import get_global_workspaces
-            from orchestration.loader import load_workflow_template
-            from orchestration.loop import execute_agent_loop
-            from tools.specs import expand_allowed_tools
-
-            agent_profile = _reg.get_profile(agent)
-            agent_tools = agent_profile.get("tools", []) if agent_profile else []
-            workspace = get_global_workspaces().current
-
-            # Filter tools against active workflow template if available
-            effective_tools = None
-            loop_result: dict | None = None
-            if agent_tools:
-                expanded_tools = expand_allowed_tools(agent_tools) or []
-                try:
-                    template = load_workflow_template(
-                        workspace_name=workspace, workflow_name=get_active_workflow()
-                    )
-                    workflow_allowed = (
-                        template.get("tools", {}).get("allowed") if template else None
-                    )
-                    if workflow_allowed:
-                        from tools.specs import (
-                            tool_matches_allowlist,
-                        )
-
-                        allowed_list: list[str] = workflow_allowed  # type: ignore[assignment]
-                        effective_tools = [
-                            t for t in expanded_tools if tool_matches_allowlist(t, allowed_list)
-                        ]
-                except Exception:
-                    logger.warning("Unhandled exception in MaestroTab", exc_info=True)
-                if not effective_tools:
-                    effective_tools = expanded_tools
-
-                loop_result = await execute_agent_loop(
-                    task=query,
-                    agent_type=agent,
-                    history=current_history,
-                    allowed_tools=effective_tools,
-                    workspace=workspace,
-                    project_root=self._current_project_root,
-                    on_stream_chunk=_stream,
-                    events=events,
-                )
-                response = (
-                    loop_result.get("result", str(loop_result))
-                    if isinstance(loop_result, dict)
-                    else str(loop_result)
-                )
-            else:
-                # Agent has no tools — use text-only fallback
-                from agents.service import AgentsService
-
-                response = await AgentsService.execute_agent(
-                    agent, query, current_history, on_stream_chunk=_stream
-                )
-
-            if self._streaming_bubble is not None:
-                had_streaming = True
-                had_content = bool(self._streaming_text.strip())
-            else:
-                had_streaming = False
-                had_content = False
-
-            self._streaming_bubble = None
-            streaming_text = self._streaming_text
-            self._streaming_text = ""
-
-            if had_streaming and had_content:
-                self._history.append({"role": "assistant", "content": streaming_text.strip()})
-            elif response and response.strip():
-                self._on_assistant(response)
-            elif streaming_text.strip():
-                if not self._history or self._history[-1].get("content") != streaming_text:
-                    self._history.append({"role": "assistant", "content": streaming_text})
-                self._on_assistant(streaming_text)
-            elif not response or not response.strip():
-                status = (
-                    (
-                        loop_result.get("status", "?")
-                        if isinstance(loop_result, dict)
-                        else "desconocido"
-                    )
-                    if loop_result is not None
-                    else "N/A"
-                )
-                self._on_system(f"⚠️ El agente no produjo respuesta. Estado: {status}")
-
-            final_output = response or streaming_text
+            # Persist conversation + perfil (comportamiento original conservado)
+            final_output = (response or "").strip()
             if final_output:
-                # Save conversation to database
                 try:
                     from core.repositories.conversation_repository import ConversationRepository
 

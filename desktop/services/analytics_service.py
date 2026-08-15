@@ -1,4 +1,4 @@
-# features/analytics/services/analytics_service.py
+# desktop/services/analytics_service.py
 import logging
 import os
 import re

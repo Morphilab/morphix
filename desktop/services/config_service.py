@@ -1,4 +1,4 @@
-# features/config/services/config_service.py
+# desktop/services/config_service.py
 import logging
 import subprocess
 import sys

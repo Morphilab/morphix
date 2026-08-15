@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
@@ -70,6 +71,17 @@ def build_chat_panel(tab: MaestroTab) -> QWidget:
     input_row.addWidget(tab.send_btn)
 
     center_layout.addWidget(tab.chat_scroll, 1)
+
+    # Status banner (errores/pausa de clarificación) — oculto por defecto
+    tab._status_banner = QLabel("")
+    tab._status_banner.setWordWrap(True)
+    tab._status_banner.setVisible(False)
+    tab._status_banner.setStyleSheet(
+        "QLabel { background: #3B82F6; color: white; border-radius: 6px;"
+        " padding: 6px 10px; font-size: 12px; }"
+    )
+    center_layout.addWidget(tab._status_banner)
+
     center_layout.addLayout(pdf_row)
     center_layout.addLayout(input_row)
     return center
