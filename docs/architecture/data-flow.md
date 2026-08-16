@@ -311,7 +311,6 @@ class WorkflowEvents:
     on_assistant_message: Callable[[str], Awaitable[None]] | None = None
     on_user_message: Callable[[str], Awaitable[None]] | None = None
     on_stream_chunk: Callable[[str], Awaitable[None]] | None = None
-    on_diagram_update: Callable[[str, Any], Awaitable[None]] | None = None
     on_stats_update: Callable[[dict], Awaitable[None]] | None = None
     on_ui_refresh: Callable[[], Awaitable[None]] | None = None
     on_approval_required: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None

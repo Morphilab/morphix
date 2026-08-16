@@ -392,8 +392,8 @@
 
 | ID | Objective / Objetivo | Steps / Pasos | Expected / Esperado |
 |----|----------------------|---------------|---------------------|
-| G6.1 | Static layout / Layout estático | Open Maestro / Abre Maestro | 3 fixed columns: **Execution \| Conversation \| Detail(tabs)**; **no** draggable dividers or collapsible panels. / 3 columnas fijas: **Ejecución \| Conversación \| Detalle(tabs)**; **sin** divisores arrastrables ni paneles que colapsan. |
-| G6.2 | Detail tabs / Tabs Detalle | Click Agents / Diagram / Log / Bash / Click en Agentes / Diagrama / Log / Bash | Switch without rearranging the layout. / Cambian sin reorganizar el layout. |
+| G6.1 | Layout / Layout | Open Maestro / Abre Maestro | 2 columns: **Chat (izq) \| Actividad (der)** — Ejecución/Subtareas/Archivos (colapsables) + tabs Diagrama/Log/Bash; divisores arrastrables, doble clic colapsa columnas. / 2 columnas: **Chat (izq) \| Actividad (der)** — Ejecución/Subtareas/Archivos (colapsables) + tabs Diagrama/Log/Bash; divisores arrastrables, doble clic colapsa columnas. |
+| G6.2 | Detail tabs / Tabs Detalle | Click Diagrama / Log / Bash / Click en Diagrama / Log / Bash | Switch without rearranging the layout. / Cambian sin reorganizar el layout. |
 | G6.3 | Streaming responsiveness / Responsividad en streaming | Launch a long response (W3.1) / Lanza una respuesta larga (W3.1) | Chat flows without "freezing"; Log doesn't flicker or fully rebuild. / El chat fluye sin “congelarse”; el Log no parpadea ni se reconstruye entero. |
 | G6.4 | Chat/Orchestrate mode / Modo Chat/Orquestar | Toggle top bar buttons / Alterna los botones del top bar | Behavior changes; layout does **not** change. / Cambia el comportamiento; **no** cambia el layout. |
 | G6.5 | Agent combo / Combo Agente | Select agents in the combo / Selecciona agentes en el combo | Tooltip shows the profile; in Chat fixes the agent. / Tooltip muestra el perfil; en Chat fija el agente. |

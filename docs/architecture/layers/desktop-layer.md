@@ -22,21 +22,22 @@ class MainWindow(QMainWindow):
 
 ### Maestro Tab (`maestro_tab.py`)
 
-The primary interaction tab — a 3-column cockpit with resizable splitter (sprint 25 design):
+The primary interaction tab — a 2-column layout with a resizable splitter (2026-08 redesign):
 
 | Column | Width | Content |
 |--------|-------|---------|
-| **Left** (Ejecución) | ~280px (resizable) | Progress bar (`QProgressBar`), stats panel, subtask list with status icons (✅🔵❌⏳), modified files list |
-| **Center** (Conversación) | Flexible | Chat blocks with streaming markdown rendering, user input field, send button |
-| **Right** (Detalle) | ~350px (resizable) | `QTabWidget` with 4 sub-tabs: **Agentes**, **Diagrama**, **Log**, **Bash** |
+| **Left** (Chat) | Flexible (~3/5) | Chat blocks with streaming markdown rendering, agent debate blocks, user input field, send button |
+| **Right** (Actividad unificado) | ~1/5 (resizable) | Collapsible sections: **Ejecución** (progress bar + stat chips), **Subtareas**, **Archivos creados** — plus a `QTabWidget` below: **Diagrama** (phase cards derived from stats), **Log**, **Bash** (hidden when the active workflow's allowlist excludes `bash_manager`, e.g. collaborative) |
 
 **Features:**
 
 - **Agent picker**: `QComboBox` for manual agent selection; falls back to `AgentRouter` when "Auto" is selected
 - **Mode switching**: Chat mode (simple conversation) vs Orquestar mode (full orchestration) — toggled by button
-- **Top bar**: Status display (estado · modo · proyecto · agente) + action buttons (clear, export, stop)
+- **Top bar**: Compact single row (estado · modo · proyecto · agente) + action buttons (clear, export, stop) with tooltips + active-workflow label
 - **Streaming**: Real-time streaming into chat blocks via the `on_stream_chunk` event; debounced rendering (~70ms)
 - **Subtask list**: Driven by the `subtask_list` key in `emit_stats` payloads; updates after each subtask completes
+- **Stat chips**: All 5 workflows emit the same normalized stats contract (`WorkflowEmitter`) — elapsed/tokens/agent/status/phase chips never show stale placeholders
+- **Status banner**: Errors and clarification pauses render as a colored banner above the input (system messages stay in the Log)
 - **Clarification handling**: Renders the agent's question as a special message; user's answer injected back into the paused loop
 - **Conversation continuity**: Follow-up messages in existing conversations load full context including agent/tool messages
 - **Progress bar**: Shows `subtasks_completed / subtasks_total` during orchestration

@@ -198,19 +198,20 @@ class WorkflowContext:
 @dataclass
 class WorkflowEvents:
     on_system_message, on_assistant_message, on_user_message, on_stream_chunk,
-    on_diagram_update, on_stats_update, on_ui_refresh, on_approval_required,
-    on_agent_message: all Callable | None
+    on_stats_update, on_ui_refresh, on_approval_required,
+    on_agent_message, on_agent_stream, on_agent_status: all Callable | None
 
 @dataclass
 class Session:
     context: WorkflowContext
     events: WorkflowEvents
+    emitter: WorkflowEmitter | None
     def cancel(), is_cancelled: bool
 ```
 
-UI-free abstractions that decouple orchestration logic from any specific UI framework. `WorkflowEvents` is a set of async callbacks the orchestrator calls; the UI layer implements them (PySide6 signals or CLI print). `Session` bundles context and events for cleaner function signatures.
+UI-free abstractions that decouple orchestration logic from any specific UI framework. `WorkflowEvents` is a set of async callbacks the orchestrator calls; the UI layer implements them (PySide6 signals or CLI print). `Session` bundles context, events and the normalized `WorkflowEmitter` (spec: contrato de stats) for cleaner function signatures.
 
-**Emit helpers**: `emit_system()`, `emit_assistant()`, `emit_user()`, `emit_stream_chunk()`, `emit_diagram()`, `emit_stats()`, `emit_refresh()`, `emit_agent()` — all use `_emit()` which silently catches callback exceptions.
+**Emit helpers**: `emit_system()`, `emit_assistant()`, `emit_user()`, `emit_stream_chunk()`, `emit_stats()`, `emit_refresh()`, `emit_agent()`, `emit_agent_stream()`, `emit_agent_status()` — all use `_emit()` which silently catches callback exceptions. (The former `emit_diagram()`/`on_diagram_update` signal was removed in the 2026-08 Maestro redesign: the UI derives the phase diagram locally from each `stats_update`.)
 
 ### Events (`events.py`)
 

@@ -7,7 +7,7 @@ Welcome to the Morphix User Guide. This track teaches you how to use Morphix as 
 | Page | What you'll learn |
 |------|-------------------|
 | [GUI Overview](gui-overview.md) | The main window layout, all 6 tabs (Dashboard, Maestro, Editor, History, Config, Analytics), and basic navigation |
-| [Maestro Cockpit](maestro-cockpit.md) | The 3-column orchestration cockpit: execution panel, chat with streaming, detail tabs (Agents, Diagram, Log, Bash). Chat mode vs Orchestrate mode. Clarification requests. |
+| [Maestro Cockpit](maestro-cockpit.md) | The 2-column orchestration cockpit: chat with streaming, unified activity panel (Ejecución/Subtareas/Archivos sections + Diagrama/Log/Bash tabs). Chat mode vs Orchestrate mode. Clarification requests. |
 | [Dashboard](dashboard.md) | Agent cards, workflow cards, workspace management, system status, offline mode toggle, self-reflection setting |
 | [Editor Tab](editor-tab.md) | Built-in file editor: project tree with noise filtering, text editor, create/rename/delete files and folders, Ctrl+S save |
 | [History Tab](history-tab.md) | Conversation list, message detail, export to Markdown/JSON/PDF/HTML, resume conversations in Maestro |

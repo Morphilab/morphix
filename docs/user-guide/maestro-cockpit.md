@@ -2,29 +2,29 @@
 
 The Maestro tab is the orchestration cockpit — where you interact with Morphix, send tasks, and watch multi-agent workflows execute in real time.
 
-## Layout: 3-Column Cockpit with Resizable Splitter
+## Layout: 2-Column with Resizable Splitter
 
-The Maestro tab has a 3-column layout with a `QSplitter` for resizable columns:
+The Maestro tab has a 2-column layout with a `QSplitter` for resizable columns (double-click a handle to collapse a column):
 
 | Column | Width | Content |
 |--------|-------|---------|
-| Left (Ejecución) | ~300px (resizable) | Progress bar, stats, subtask list, modified files list |
-| Center (Conversación) | Flexible | Chat blocks with streaming text, input field, send button |
-| Right (Detalle) | ~360px (resizable) | QTabWidget with 4 tabs: Agentes, Diagrama, Log, Bash |
+| Left (Chat) | Flexible (~3/5) | Chat blocks with streaming text, agent debate blocks, input field, send button |
+| Right (Actividad) | ~1/5 (resizable) | Collapsible sections: Ejecución (progress + stat chips), Subtareas, Archivos creados — plus a QTabWidget below: Diagrama, Log, Bash |
 
 ## Top Bar
 
-The top bar spans all three columns and contains:
+The top bar is a single compact row that spans both columns and contains:
 
-### Row 1 — Status Indicators
+### Controls
 
 - **Estado**: Shows "Online" (green) or "Offline" (amber)
 - **Workspace**: Shows the active workspace name (e.g., `ws: main`)
 - **Modo**: Two toggle buttons — `💬 Chat` (active) and `⚙️ Orquestar` (inactive). These switch between conversation mode and workflow orchestration mode.
 - **Proyecto**: Dropdown to select or create projects. Projects are stored in `code_projects/<name>/`. Buttons: `➕ Nuevo` (create new project) and `📂 Importar` (import existing directory).
 - **Agente**: Dropdown to select which agent to use. Options include "🤖 Auto" (let the system choose) and each registered agent (Developer, Analista, Moderador, Conversacional). In Orchestrate mode, the list is filtered to agents allowed by the active workflow.
+- **Workflow label**: Shows the active workflow name (e.g., `workflow: development`)
 
-### Row 2 — Actions
+### Actions
 
 - **⚡ Pre-cargar proyecto**: Indexes the current project into FAISS for semantic code search. Shows a progress bar during indexing. Requires a selected project.
 - **Limpiar**: Clears the entire chat and resets the cockpit
@@ -32,25 +32,25 @@ The top bar spans all three columns and contains:
 - **✚ Nueva conversación**: Resets the conversation ID and clears chat
 - **Activar/Desactivar Offline**: Toggles offline mode
 
-## Left Column: Ejecución (Execution Panel)
+## Right Column: Actividad (Activity Panel)
 
-### Progress Bar & Stats
+### Ejecución Section
 
-The stats panel shows real-time execution metrics:
+The stats chips show real-time execution metrics from the normalized stats contract (all workflows emit the same fields):
 
 | Stat | Description |
 |------|-------------|
-| Subtasks total | Completed / Total (e.g., "2 / 4") |
-| Elapsed time | Time since workflow started |
-| Tokens used | Total tokens consumed (prompt + completion) |
-| Current agent | Agent currently executing |
-| Status | Workflow status — "completado" turns green |
+| ⏱ Elapsed time | Time since workflow started |
+| ⚡ Tokens used | Total tokens consumed (prompt + completion) |
+| 🧠 Current agent | Agent currently executing |
+| 🚦 Status | Workflow status — "completado" turns green |
+| 📂 Phase | Current phase (design/implement/verify, Descomponiendo/Ejecutando/Verificando/Sintetizando, Ronda N/M, Iteración N/M) |
 
-The progress bar fills as subtasks complete (`completed / total`).
+The progress bar fills as subtasks complete (`completed / total`). The Ejecución section is always visible.
 
-### Subtask List
+### Subtask List Section
 
-Lists each subtask with a status icon:
+Collapsible (auto-expands when the workflow emits real steps). Lists each subtask with a status icon:
 
 | Icon | Status | Meaning |
 |------|--------|---------|
@@ -59,11 +59,11 @@ Lists each subtask with a status icon:
 | ❌ | failed | Subtask encountered an error |
 | ⏳ | pending | Subtask not yet started |
 
-### Modified Files List
+### Archivos creados Section
 
-Shows files created or modified during the current workflow. Each file appears with a green check-styled path when written by an agent.
+Collapsible (auto-expands when files are written). Shows files created or modified during the current workflow. Double-click a file to open it in the Editor tab.
 
-## Center Column: Conversación (Chat)
+## Left Column: Chat
 
 ### Chat Blocks
 
@@ -86,19 +86,15 @@ Assistant responses stream in real time. The text updates progressively with ~70
 - Optional PDF path field with "Cargar" button — loads a PDF and includes its text in the next message
 - Blue "Enviar" button
 
-## Right Column: Detalle (Detail Panel)
+## Right Column: Detalle (Detail Tabs)
 
-A QTabWidget with 4 tabs:
+A QTabWidget below the collapsible sections, with 3 tabs:
 
-### 1. Agentes Tab
+### 1. Diagrama Tab
 
-Displays per-agent responses grouped by agent name. Each agent gets a colored QGroupBox (rotating palette of 10 colors). Responses within each group are appended as labeled paragraphs (e.g., "**Análisis:** ..."). This tab shows the internal agent debate during collaborative and coordinated workflows.
+Phase cards derived locally from each `stats_update` (`subtask_list` grouped by phase). Shows the current workflow structure with status cards (✅🔵❌⏳). Agent debate during collaborative and coordinated workflows streams live in the chat instead (universal `agent_stream` blocks).
 
-### 2. Diagrama Tab
-
-Shows a Mermaid workflow diagram (DAG visualization) of the current workflow structure. Updates when the workflow orchestrator emits a diagram event.
-
-### 3. Log Tab
+### 2. Log Tab
 
 Detailed execution log with timestamps. Each entry follows the format:
 
@@ -108,9 +104,9 @@ HH:MM:SS  message text
 
 Log entries include system messages, tool execution notifications, agent transitions, and error reports. The log is capped at 400 blocks to prevent memory issues. The `[bash_manager]` prefix in log messages also updates the Bash tab.
 
-### 4. Bash Tab
+### 3. Bash Tab
 
-Shows shell command output from the `bash_manager` tool. Uses a monospace font on a near-black background (`#0A0A0A`) with green text (`#22C55E`). Content is truncated to the last 5000 characters. Shows "(sin comandos ejecutados aún)" when empty.
+Shows shell command output from the `bash_manager` tool. Uses a monospace font on a near-black background (`#0A0A0A`) with green text (`#22C55E`). Content is truncated to the last 5000 characters. Shows "(sin comandos ejecutados aún)" when empty. The tab is hidden when the active workflow's allowlist does not include `bash_manager` (e.g., collaborative).
 
 ## Chat Mode vs Orchestrate Mode
 

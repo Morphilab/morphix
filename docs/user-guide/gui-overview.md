@@ -30,7 +30,7 @@ The landing page. Shows workspace selector, system status (Online/Offline), work
 [Read the Dashboard guide →](dashboard.md)
 
 ### 2. Maestro
-The orchestration cockpit. This is where you type tasks, send messages, watch the orchestration unfold, and inspect results. It has a 3-column layout: execution panel (left), chat (center), and detail panel (right).
+The orchestration cockpit. This is where you type tasks, send messages, watch the orchestration unfold, and inspect results. It has a 2-column layout: chat on the left, and a unified activity panel on the right (collapsible sections: Ejecución / Subtareas / Archivos, plus Diagrama / Log / Bash tabs).
 
 [Read the Maestro guide →](maestro-cockpit.md)
 
