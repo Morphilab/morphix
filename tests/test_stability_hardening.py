@@ -228,6 +228,64 @@ class TestApprovalMechanism:
             events_obj = True
         assert events_obj is True
 
+    def test_approval_response_from_foreign_thread_schedules_on_loop(self):
+        """Respuesta desde un hilo externo NO llama event.set() en ese hilo.
+
+        asyncio.Event no es thread-safe: el wakeup debe programarse en el
+        loop del evento (call_soon_threadsafe). Este test es determinista:
+        el loop queda bloqueado mientras el hilo externo responde, por lo
+        que si set() ocurriera en el hilo externo, is_set() sería True ahí.
+        """
+        import threading
+
+        from desktop.events import (
+            _approval_events,
+            _approval_loops,
+            _handle_approval_response,
+        )
+
+        loop = asyncio.new_event_loop()
+        started = threading.Event()
+        release = threading.Event()
+        shared: dict = {}
+        results: dict = {}
+
+        async def scenario():
+            event = asyncio.Event()
+            _approval_events["req_x"] = event
+            _approval_loops["req_x"] = asyncio.get_running_loop()
+            shared["event"] = event
+            started.set()
+            await asyncio.to_thread(release.wait)
+            results["resolved"] = await asyncio.wait_for(event.wait(), timeout=2.0)
+            results["set_after_loop_resumes"] = event.is_set()
+
+        def run_loop():
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(scenario())
+
+        loop_thread = threading.Thread(target=run_loop)
+        loop_thread.start()
+        assert started.wait(10.0), "loop no arrancó"
+
+        immediate: dict = {}
+
+        def respond():
+            _handle_approval_response("req_x", "bash_manager", approved=True, allow_all=False)
+            immediate["is_set"] = shared["event"].is_set()
+            release.set()
+
+        responder = threading.Thread(target=respond)
+        responder.start()
+        responder.join(10.0)
+        loop_thread.join(15.0)
+
+        assert results["resolved"] is True
+        assert results["set_after_loop_resumes"] is True
+        assert (
+            immediate["is_set"] is False
+        ), "event.set() se ejecutó en el hilo externo — debe programarse en el loop"
+
 
 # ── Fase 3.1: Coordinated timeout 300s ──────────────────────────────────
 
@@ -490,3 +548,21 @@ class TestNoProcessEvents:
         with open("desktop/widgets/debate_section.py") as f:
             content = f.read()
         assert "processEvents" not in content
+
+
+def test_workspace_change_resets_approval_state():
+    """Al cambiar de workspace, el estado de aprobaciones debe limpiarse.
+
+    reset_approval_state() existe pero nunca se conectaba a la señal
+    workspace_changed — el 'Always Allow' perduraba entre workspaces.
+    La conexión debe hacerse en desktop.events._get_signals().
+    """
+    from desktop.events import _always_allowed, _get_signals, reset_approval_state
+
+    reset_approval_state()
+    _always_allowed.add("bash_manager")
+
+    signals = _get_signals()
+    signals.workspace_changed.emit("otro_workspace")
+
+    assert "bash_manager" not in _always_allowed

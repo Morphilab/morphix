@@ -1,4 +1,6 @@
 # tests/test_tool_specs.py
+from unittest.mock import MagicMock
+
 from tools.specs import (
     TOOL_DEFINITIONS,
     ToolDefinition,
@@ -84,6 +86,23 @@ def test_build_tool_instructions_no_tools():
     assert "No hay herramientas" in text
 
 
+def test_build_tool_instructions_uses_active_workspace(monkeypatch):
+    """El prompt debe informar la ruta del workspace ACTIVO, no 'main'."""
+
+    ws_mock = MagicMock()
+    ws_mock.current = "prueba9"
+    monkeypatch.setattr("core.workspaces.workspaces_instance", ws_mock)
+
+    text = build_tool_instructions(
+        allowed_tools=["file_manager"],
+        project_root="miapp",
+        plan_mode=False,
+    )
+    assert "miapp" in text
+    assert "memory/prueba9" in text or "prueba9" in text
+    assert "memory/main" not in text.replace("memory/main_", "")
+
+
 def test_build_tool_instructions_none_allowed():
     """allowed_tools=None devuelve mensaje claro."""
     text = build_tool_instructions(allowed_tools=None)
@@ -105,7 +124,7 @@ def test_strict_mode_requires_all_properties():
     spec = td.to_openai_spec(strict=True)
     required = spec["function"]["parameters"]["required"]
     properties = spec["function"]["parameters"]["properties"]
-    # Strict mode: ALL properties must be in required
+    # Strict mode: ALL properties must be in required (DeepSeek strict mode rule)
     assert set(required) == set(
         properties.keys()
     ), f"strict mode: required={required} != properties={list(properties.keys())}"
@@ -182,3 +201,18 @@ class TestToolMatchesAllowlist:
 
     def test_no_match(self):
         assert tool_matches_allowlist("code_exec", ["file_manager", "git_manager"]) is False
+
+
+def test_active_projects_base_uses_active_workspace(monkeypatch, tmp_path):
+    """El helper de proyectos del maestro usa el workspace activo, no 'main'."""
+    from unittest.mock import MagicMock
+
+    from desktop.services.project_service import projects_base
+
+    ws_mock = MagicMock()
+    ws_mock.current = "prueba9"
+    monkeypatch.setattr("core.workspaces.workspaces_instance", ws_mock)
+    monkeypatch.setattr("core.path_resolver.paths.memory_dir", lambda ws: tmp_path / ws)
+
+    base = projects_base()
+    assert base == tmp_path / "prueba9" / "code_projects"

@@ -141,3 +141,28 @@ class TestKairosFlagsDaemon:
 
             mock_memory.write_system.assert_not_called()
             mock_memory.self_healing_check.assert_not_called()
+
+
+def test_self_reflection_toggle_wired_to_agent_behavior():
+    """El toggle del dashboard (kairos.set) debe afectar la auto-reflexión del agente."""
+    from unittest.mock import patch
+
+    from agents.base import _self_reflection_enabled
+
+    with patch("core.feature_flags.kairos") as kairos_mock:
+        kairos_mock.get.return_value = True
+        assert _self_reflection_enabled() is True
+        kairos_mock.get.return_value = False
+        assert _self_reflection_enabled() is False
+
+
+def test_self_reflection_toggle_reaches_agent_path(monkeypatch):
+    """kairos.set(...) del dashboard es visible para el helper del agente (sin mocks)."""
+    from agents.base import _self_reflection_enabled
+    from core.feature_flags import kairos
+
+    monkeypatch.setattr(kairos, "_dirty_flags", set())
+    kairos.set("AGENT_SELF_REFLECTION", True)
+    assert _self_reflection_enabled() is True
+    kairos.set("AGENT_SELF_REFLECTION", False)
+    assert _self_reflection_enabled() is False

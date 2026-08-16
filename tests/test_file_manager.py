@@ -57,11 +57,18 @@ async def test_syntax_validation_rejects_bad_code(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_file_not_found_raises(tmp_path):
-    """Leer un archivo inexistente lanza FileNotFoundError."""
+async def test_file_not_found_returns_friendly_hint(tmp_path):
+    """Leer un archivo inexistente devuelve una guía amigable (no excepción).
+
+    El patrón leer-antes-de-escribir hace que el modelo lea archivos
+    nuevos que aún no existen; la respuesta debe guiarlo a escribir,
+    no fallar como error (que disparaba stall del agente).
+    """
     fm.SAFE_BASE = tmp_path
-    with pytest.raises(FileNotFoundError):
-        await FileManager.execute("read", path="no_existe.txt")
+    result = await FileManager.execute("read", path="no_existe.txt")
+    assert "no existe todavía" in result
+    assert "action='write'" in result
+    assert not result.startswith("❌")
 
 
 @pytest.mark.asyncio
@@ -103,3 +110,17 @@ async def test_read_directory_returns_listing(tmp_path):
     result = await fm.file_manager_tool(action="read", path=".", workspace="main")
     assert "a.py" in result
     assert "sub/" in result
+
+
+@pytest.mark.asyncio
+async def test_file_manager_rejects_invalid_workspace_name(tmp_path):
+    """Un workspace con '../' no debe poder escapar de SAFE_BASE."""
+    fm.SAFE_BASE = tmp_path
+
+    result = await FileManager.execute(
+        action="read",
+        path="app.py",
+        workspace="../escape",
+        project_root=None,
+    )
+    assert "workspace" in result.lower() or "inválido" in result.lower()

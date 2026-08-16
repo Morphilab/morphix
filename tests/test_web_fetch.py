@@ -36,6 +36,29 @@ class TestIsPrivateUrl:
     def test_blocks_unspecified_ipv6(self):
         assert _is_private_url("http://[::]/") is True
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost:8080/",
+            "http://localhost.localdomain/",
+            "http://metadata.google.internal/latest/meta-data/",
+            "http://127.0.0.1.nip.io/x",
+            "http://1.2.3.4.sslip.io/x",
+        ],
+    )
+    def test_blocks_private_hostnames(self, url):
+        assert _is_private_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1.xip.io/x",
+            "http://0x7f000001.nip.io/x",
+        ],
+    )
+    def test_blocks_private_ip_encoded_in_hostname(self, url):
+        assert _is_private_url(url) is True
+
 
 @pytest.mark.asyncio
 async def test_web_fetch_invalid_url():

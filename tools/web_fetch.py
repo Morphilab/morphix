@@ -1,8 +1,10 @@
 """Web Fetch — obtiene y convierte páginas web a texto."""
 
+import asyncio
 import ipaddress
 import logging
 import re
+import socket
 from urllib.parse import urlparse
 
 import httpx
@@ -29,18 +31,68 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("::/128"),  # Unspecified
 ]
 
+# Hostnames que resuelven (o codifican) direcciones internas sin DNS externo:
+# localhost y sufijos de redes caseras/corporativas + servicios de rebinding
+# DNS (nip.io, sslip.io, xip.io) que codifican la IP en el nombre.
+_PRIVATE_HOSTNAME_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".localdomain",
+    ".internal",
+    ".lan",
+    ".home.arpa",
+    ".nip.io",
+    ".sslip.io",
+    ".xip.io",
+)
+
+
+def _is_private_hostname(hostname: str) -> bool:
+    """Bloquea hostnames de redes internas o rebinding sin consultar DNS."""
+    lowered = hostname.lower().rstrip(".")
+    if lowered == "localhost":
+        return True
+    return lowered.endswith(_PRIVATE_HOSTNAME_SUFFIXES)
+
+
+def _resolves_to_private_ip(hostname: str) -> bool:
+    """Resuelve el hostname y verifica si alguna IP resultante es privada.
+
+    Fail-closed: si la resolución falla, se considera privada (no se puede
+    demostrar que sea pública).
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except (socket.gaierror, OSError):
+        return True
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if any(addr in net for net in _PRIVATE_NETWORKS):
+            return True
+    return False
+
 
 def _is_private_url(url: str) -> bool:
-    """Verifica si la URL apunta a una IP privada/internal (SSRF protection)."""
+    """Verifica si la URL apunta a una IP privada/internal (SSRF protection).
+
+    Cubre: IPs literales privadas, hostnames internos (localhost, *.internal),
+    servicios de rebinding (nip.io, sslip.io, xip.io) y hostnames que resuelven
+    a IPs privadas (verificación post-DNS).
+    """
+    hostname = urlparse(url).hostname
+    if not hostname:
+        return True
     try:
-        hostname = urlparse(url).hostname
-        if not hostname:
-            return True
         addr = ipaddress.ip_address(hostname)
         return any(addr in net for net in _PRIVATE_NETWORKS)
     except ValueError:
-        # Not an IP (hostname) — trust public DNS
-        return False
+        pass
+    if _is_private_hostname(hostname):
+        return True
+    return _resolves_to_private_ip(hostname)
 
 
 async def _web_fetch_tool(url: str, **kwargs) -> str:
@@ -55,7 +107,7 @@ async def _web_fetch_tool(url: str, **kwargs) -> str:
     if not url.startswith(("http://", "https://")):
         return "❌ URL inválida: debe comenzar con http:// o https://"
 
-    if _is_private_url(url):
+    if await asyncio.to_thread(_is_private_url, url):
         return "❌ Acceso denegado: no se permiten URLs a redes internas/privadas."
 
     try:
@@ -70,7 +122,7 @@ async def _web_fetch_tool(url: str, **kwargs) -> str:
                     redirect_url = resp.headers.get("location", "")
                     if not redirect_url:
                         break
-                    if _is_private_url(redirect_url):
+                    if await asyncio.to_thread(_is_private_url, redirect_url):
                         return "❌ Acceso denegado: redirección a red interna/privada."
                     resp = await client.get(
                         redirect_url,

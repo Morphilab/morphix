@@ -1,4 +1,4 @@
-# core/tool_loader.py
+# tools/loader.py
 import importlib.util
 import logging
 from pathlib import Path

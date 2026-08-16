@@ -106,7 +106,9 @@ async def _diff_editor_tool(
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(base),
             )
-            stdout, _ = await proc.communicate()
+            from tools._subprocess import communicate_or_kill
+
+            stdout, _ = await communicate_or_kill(proc, timeout=120.0)
             output = stdout.decode()
             return {
                 "success": True,

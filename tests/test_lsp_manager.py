@@ -110,6 +110,56 @@ class TestLspManagerDiagnostics:
         assert isinstance(result, str)
 
 
+class TestLspManagerPathTraversal:
+    @pytest.mark.asyncio
+    async def test_diagnostics_rejects_traversal(self, tmp_path):
+        project = _make_project_dir(tmp_path, {"main.py": "x = 1\n"})
+        secret = tmp_path / "secret.txt"
+        secret.write_text("SECRETO-SUPER-PRIVADO")
+        from tools.lsp_manager import lsp_manager_tool
+
+        result = await lsp_manager_tool(
+            action="diagnostics",
+            file="../secret.txt",
+            project_root=str(project),
+            workspace="main",
+        )
+        assert "SECRETO-SUPER-PRIVADO" not in result
+
+    @pytest.mark.asyncio
+    async def test_ruff_check_rejects_traversal(self, tmp_path):
+        project = _make_project_dir(tmp_path, {"main.py": "x = 1\n"})
+        secret = tmp_path / "secret.txt"
+        secret.write_text("SECRETO-SUPER-PRIVADO")
+        from tools.lsp_manager import lsp_manager_tool
+
+        result = await lsp_manager_tool(
+            action="ruff_check",
+            file="../secret.txt",
+            project_root=str(project),
+            workspace="main",
+        )
+        assert "SECRETO-SUPER-PRIVADO" not in result
+        assert "fuera" in result.lower() or "Error" in result
+
+    @pytest.mark.asyncio
+    async def test_definition_rejects_traversal(self, tmp_path):
+        project = _make_project_dir(tmp_path, {"main.py": "x = 1\n"})
+        secret = tmp_path / "secret.txt"
+        secret.write_text("SECRETO-SUPER-PRIVADO")
+        from tools.lsp_manager import lsp_manager_tool
+
+        result = await lsp_manager_tool(
+            action="definition",
+            file="../secret.txt",
+            line=0,
+            character=0,
+            project_root=str(project),
+            workspace="main",
+        )
+        assert "SECRETO-SUPER-PRIVADO" not in result
+
+
 class TestLspManagerReferences:
     @pytest.mark.asyncio
     async def test_references_returns_data(self, simple_project):

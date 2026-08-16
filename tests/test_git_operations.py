@@ -156,3 +156,15 @@ class TestSmartAutoCommit:
             assert result["success"] is True
             call_kwargs = mock_ac.call_args.kwargs
             assert "feat:" in call_kwargs["message"]
+
+    @pytest.mark.asyncio
+    async def test_auto_commit_skips_token_budget(self):
+        """El auto-commit es el último paso del workflow: debe ignorar el gate de budget."""
+        with patch("core.git_operations.safe_tool_call", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = {"output": "Commit realizado correctamente"}
+
+            await auto_commit(workspace="main", project_root="miapp")
+
+            assert mock_call.call_count >= 3
+            for call in mock_call.call_args_list:
+                assert call.kwargs.get("skip_budget") is True

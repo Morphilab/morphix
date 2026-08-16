@@ -1,7 +1,7 @@
 """Tests for MemoryManager — pure functions, protected keys, read/write, search."""
 
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -211,6 +211,35 @@ class TestSaveUserCorrection:
         assert mock_write.call_count == 1
 
 
+class TestUpdateUserProfile:
+    @pytest.mark.asyncio
+    async def test_rejects_trivial_profile(self, monkeypatch):
+        """Un perfil trivial (solo name, p. ej. 'ChatGPT' stale) NO debe
+        persistirse — defiende el bucle de contaminación del finalizer."""
+        mm = MemoryManager()
+        monkeypatch.setattr(mm, "get_user_profile", lambda: {"name": "ChatGPT"})
+        mock_write = AsyncMock(return_value=True)
+        monkeypatch.setattr(mm, "write", mock_write)
+        result = await mm.update_user_profile({"name": "ChatGPT"})
+        assert result is False
+        mock_write.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_persists_meaningful_profile(self, monkeypatch):
+        """Un perfil con nombre + contexto SÍ se persiste."""
+        mm = MemoryManager()
+        monkeypatch.setattr(mm, "get_user_profile", lambda: {})
+        mock_write = AsyncMock(return_value=True)
+        monkeypatch.setattr(mm, "write", mock_write)
+        result = await mm.update_user_profile({"name": "Ana", "city": "Lima"})
+        assert result is True
+        mock_write.assert_awaited_once()
+        assert mock_write.await_args is not None
+        written = mock_write.await_args.args[1]
+        assert written["name"] == "Ana"
+        assert written["city"] == "Lima"
+
+
 class TestWrite:
     @pytest.mark.asyncio
     async def test_no_active_workspace(self, monkeypatch):
@@ -276,7 +305,115 @@ class TestRebuildIndex:
         mm.documents = [("a", "val_a"), ("b", "val_b")]
         mm.index.ntotal = 5
         mock_emb = np.zeros((FAISS_DIMENSION,), dtype=np.float32)
-        monkeypatch.setattr(mm, "_embed", lambda v: mock_emb)
+        # _rebuild_index usa el camino async (fix 2026-08: no bloquear el loop)
+        monkeypatch.setattr(mm, "_embed_async", AsyncMock(return_value=mock_emb))
 
         await mm._rebuild_index()
         assert mm.index.ntotal == 2
+
+
+class TestSearchProtectedKeys:
+    """Las claves protegidas no deben aparecer jamás en resultados de búsqueda."""
+
+    def _make_manager(self, monkeypatch):
+        import numpy as np
+
+        from core.memory.manager import MemoryManager
+
+        mm = MemoryManager()
+        docs = [
+            ("user_profile", "perfil del usuario"),
+            ("workflow_subtask_0", "resumen de subtarea previa"),
+            ("last_analysis", "último análisis"),
+            ("merged_creative", "contenido fusionado"),
+            ("regular_doc", "documento normal buscable"),
+        ]
+        mm.documents = docs
+        fake_index = MagicMock()
+        fake_index.ntotal = len(docs)
+        fake_index.search.return_value = (
+            np.zeros((1, len(docs)), dtype=np.float32),
+            np.arange(len(docs), dtype=np.int64).reshape(1, -1),
+        )
+        mm.index = fake_index
+        monkeypatch.setattr(mm, "_embed", lambda q: np.zeros((FAISS_DIMENSION,), dtype=np.float32))
+        monkeypatch.setattr(
+            mm,
+            "_embed_async",
+            AsyncMock(return_value=np.zeros((FAISS_DIMENSION,), dtype=np.float32)),
+        )
+        return mm
+
+    def test_search_excludes_protected_keys(self, monkeypatch):
+        mm = self._make_manager(monkeypatch)
+        results = mm.search("consulta cualquiera", k=10)
+        keys = [r["key"] for r in results]
+        assert "regular_doc" in keys
+        assert "user_profile" not in keys
+        assert "workflow_subtask_0" not in keys
+        assert "last_analysis" not in keys
+        assert "merged_creative" not in keys
+
+    @pytest.mark.asyncio
+    async def test_search_async_excludes_protected_keys(self, monkeypatch):
+        mm = self._make_manager(monkeypatch)
+        results = await mm.search_async("consulta cualquiera", k=10)
+        keys = [r["key"] for r in results]
+        assert "regular_doc" in keys
+        assert "user_profile" not in keys
+        assert "workflow_subtask_0" not in keys
+        assert "last_analysis" not in keys
+        assert "merged_creative" not in keys
+
+
+class TestAsyncEmbeddingPaths:
+    """Los caminos self-healing no deben llamar al embed síncrono en el loop.
+
+    `_embed` síncrono espera al modelo (60s) y codifica en CPU/GPU — si se
+    invoca dentro de un async def, congela el event loop. Los caminos async
+    deben usar `_embed_async` (to_thread).
+    """
+
+    @pytest.mark.asyncio
+    async def test_detect_duplicates_uses_async_embeddings(self, monkeypatch):
+        mm = MemoryManager()
+        monkeypatch.setattr(mm, "documents", [("k1", "v1"), ("k2", "v2")])
+        sync_embed = MagicMock(side_effect=AssertionError("embed síncrono en el loop"))
+        monkeypatch.setattr(mm, "_embed", sync_embed)
+        monkeypatch.setattr(mm, "_embed_async", AsyncMock(return_value=None))
+        monkeypatch.setattr(mm, "_llm_critique", AsyncMock(return_value={"quality_score": 80}))
+        await mm._detect_duplicates()
+        sync_embed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_resolve_contradictions_uses_async_embeddings(self, monkeypatch):
+        mm = MemoryManager()
+        monkeypatch.setattr(mm, "documents", [("k1", "v1"), ("k2", "v2")])
+        sync_embed = MagicMock(side_effect=AssertionError("embed síncrono en el loop"))
+        monkeypatch.setattr(mm, "_embed", sync_embed)
+        monkeypatch.setattr(mm, "_embed_async", AsyncMock(return_value=None))
+        await mm._resolve_contradictions()
+        sync_embed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rebuild_index_uses_async_embeddings(self, monkeypatch):
+        mm = MemoryManager()
+        monkeypatch.setattr(mm, "documents", [("k1", "v1")])
+        sync_embed = MagicMock(side_effect=AssertionError("embed síncrono en el loop"))
+        monkeypatch.setattr(mm, "_embed", sync_embed)
+        monkeypatch.setattr(mm, "_embed_async", AsyncMock(return_value=None))
+        await mm._rebuild_index()
+        sync_embed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_self_healing_uses_async_embeddings(self, monkeypatch):
+        mm = MemoryManager()
+        monkeypatch.setattr(mm, "active_workspace", "test_ws")
+        monkeypatch.setattr(mm, "documents", [("k1", "v1"), ("k2", "v2")])
+        sync_embed = MagicMock(side_effect=AssertionError("embed síncrono en el loop"))
+        monkeypatch.setattr(mm, "_embed", sync_embed)
+        monkeypatch.setattr(mm, "_embed_async", AsyncMock(return_value=None))
+        monkeypatch.setattr(mm, "_llm_critique", AsyncMock(return_value={"quality_score": 95}))
+        monkeypatch.setattr(mm, "_prune_stale", AsyncMock(return_value=0))
+        await mm.self_healing_check()
+        sync_embed.assert_not_called()

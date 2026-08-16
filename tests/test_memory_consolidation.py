@@ -108,7 +108,8 @@ class TestRebuildIndex:
         mgr.documents = [("doc1", "hello world")]
         mgr.active_workspace = "main"
 
-        mgr._embed = MagicMock(return_value=np.zeros(FAISS_DIMENSION, dtype=np.float32))
+        # _rebuild_index usa el camino async (fix 2026-08: no bloquear el loop)
+        mgr._embed_async = AsyncMock(return_value=np.zeros(FAISS_DIMENSION, dtype=np.float32))
 
         await mgr._rebuild_index()
         assert mgr.index.ntotal == 1

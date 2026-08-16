@@ -7,10 +7,11 @@ import asyncio
 import time
 
 from core.config import settings
+from core.constants import TOOL_CALL_TIMEOUT_SECONDS
 from core.metrics import metrics, tool_metrics
 from tools.orchestrator import tool_orchestrator
 
-TOOL_CALL_TIMEOUT = 120
+TOOL_CALL_TIMEOUT = TOOL_CALL_TIMEOUT_SECONDS  # backward-compat alias
 
 
 async def safe_tool_call(
@@ -20,6 +21,7 @@ async def safe_tool_call(
     workspace: str | None = None,
     session_id: str | None = None,
     timeout: float | None = None,
+    skip_budget: bool = False,
 ):
     """Wrapper simple y seguro para usar en workflow_orchestrator.
     Routes MCP-prefixed tools to the appropriate MCP client.
@@ -61,7 +63,12 @@ async def safe_tool_call(
                     return await client.call_tool(tool_name, parameters)
             else:
                 return await tool_orchestrator.execute_tool(
-                    tool_name, parameters, role=role, workspace=workspace, session_id=session_id
+                    tool_name,
+                    parameters,
+                    role=role,
+                    workspace=workspace,
+                    session_id=session_id,
+                    skip_budget=skip_budget,
                 )
 
         result = await asyncio.wait_for(_execute(), timeout=effective_timeout)

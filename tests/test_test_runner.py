@@ -120,6 +120,34 @@ async def test_some_fail_is_failure(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_timeout_kills_process(tmp_path):
+    """Al exceder el timeout, el subproceso pytest debe matarse (sin huérfanos)."""
+    from unittest.mock import MagicMock
+
+    test_file = tmp_path / "test_slow.py"
+    test_file.write_text("def test_slow(): assert True\n")
+
+    with patch("tools.test_runner.asyncio.create_subprocess_exec") as mock_exec:
+        proc_mock = AsyncMock()
+        proc_mock.returncode = 0
+        proc_mock.communicate = AsyncMock(side_effect=TimeoutError)
+        proc_mock.wait = AsyncMock()
+        proc_mock.kill = MagicMock()
+        mock_exec.return_value = proc_mock
+
+        with patch("tools.test_runner.paths.memory_dir", return_value=tmp_path.parent):
+            result = await _test_runner_tool(
+                file_path=str(test_file),
+                workspace="main",
+                timeout=5,
+            )
+
+        proc_mock.kill.assert_called_once()
+        assert result["success"] is False
+        assert "timeout" in result["output"].lower()
+
+
+@pytest.mark.asyncio
 async def test_no_tests_run_is_failure(tmp_path):
     """Sin tests ejecutados (colección vacía) debe ser fallo aunque returncode=0."""
     with patch("tools.test_runner.asyncio.create_subprocess_exec") as mock_exec:

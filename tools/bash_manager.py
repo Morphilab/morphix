@@ -9,9 +9,10 @@ import logging
 import os
 import re
 import shlex
+import signal
 from pathlib import Path
 
-from agents.audit import log_operation
+from agents.audit import log_operation, redact_credentials
 from core.config import settings
 from core.path_resolver import paths
 from tools.registry import tools_registry
@@ -26,6 +27,10 @@ FORBIDDEN_PATTERNS: list[str] = [
     r"rm\s+-rf\s+/\*",  # rm -rf /*
     r"rm\s+-rf\s+\*",  # rm -rf *
     r"rm\s+-rf\s+~",
+    r"\brm\s+(-[a-zA-Z]+\s+)*/",  # rm [flags combinados] /  (fr, fR, etc.)
+    r"\brm\s+(-[a-zA-Z]+\s+)*\*",  # rm [flags combinados] *
+    r"\brm\s+(-[a-zA-Z]+\s+)*~",  # rm [flags combinados] ~
+    r"\brm\s+(-[a-zA-Z]+\s+)*(--[a-z-]+\s+)*/",  # rm -rf --no-preserve-root /
     r"dd\s+if=",
     r"mkfs\.",
     r":\(\)\s*\{\s*:\|:&\s*\}\s*;:",  # fork bomb
@@ -49,6 +54,8 @@ FORBIDDEN_PATTERNS: list[str] = [
     r"\bexec\s+",
     r"\bsource\s+",
     r"curl\s+-d\s+@",  # curl data exfiltration
+    r"curl\b[^|;&\n]*\s+-f\s+\S*@",  # curl -F multipart exfiltration (match sobre lowercase)
+    r"curl\b[^|;&\n]*\s+--form\s+\S*@",  # curl --form exfiltration
     r"wget\s+https?",
     r"base64\s+-d.*\|.*(?:sh|bash|zsh|dash|ksh)",  # base64 decode pipe to shell
     # Extended patterns for stronger defense
@@ -159,7 +166,7 @@ async def _bash_tool(
     if cwd is None and kwargs.get("project_root"):
         cwd = kwargs["project_root"]
     work_dir = str(base / cwd) if cwd else str(base)
-    work_dir = os.path.abspath(work_dir)  # noqa: F823
+    work_dir = os.path.abspath(work_dir)
 
     # Security: ensure work_dir is within workspace
     try:
@@ -176,8 +183,8 @@ async def _bash_tool(
     for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONSTARTUP"):
         env.pop(key, None)
 
-    # Log command before execution for audit trail
-    logger.info(f"Executing bash command: {shlex.quote(command)[:200]}")
+    # Log command before execution for audit trail (credenciales redactadas)
+    logger.info("Executing bash command: %s", redact_credentials(shlex.quote(command))[:200])
 
     try:
         proc = await asyncio.create_subprocess_shell(
@@ -200,16 +207,13 @@ async def _bash_tool(
 
         output = "\n".join(output_parts).strip() or "(no output)"
 
-        logger.info(f"Bash command exit={exit_code}: {command[:80]}...")
+        logger.info("Bash command exit=%s: %s...", exit_code, redact_credentials(command)[:80])
         log_operation("bash_exec", command[:200], success=exit_code == 0)
         return {"success": exit_code == 0, "output": output, "exit_code": exit_code}
 
     except TimeoutError:
-        logger.warning(f"Bash timeout ({timeout}s): {command[:80]}...")
+        logger.warning("Bash timeout (%ss): %s...", timeout, redact_credentials(command)[:80])
         try:
-            import os
-            import signal
-
             pgid = os.getpgid(proc.pid)
             os.killpg(pgid, signal.SIGKILL)
         except Exception:
@@ -220,7 +224,7 @@ async def _bash_tool(
         try:
             await proc.wait()
         except Exception:
-            pass
+            logger.warning("Failed to wait for timed-out process termination")
         return {
             "success": False,
             "output": f"⏱️ Timeout: command exceeded {timeout}s.",

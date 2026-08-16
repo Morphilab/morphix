@@ -1,4 +1,4 @@
-# core/tools_registry.py
+# tools/registry.py
 import logging
 from collections.abc import Callable
 

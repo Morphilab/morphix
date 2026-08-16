@@ -3,6 +3,7 @@ import logging
 
 from agents.audit import log_operation
 from core.config import settings
+from core.constants import PROJECTS_DIR_NAME
 from core.path_resolver import paths
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,9 @@ class GitManager:
             repo_path = (base / project_root).resolve()  # type: ignore[operator]
         else:
             # Si no se especifica, no adivinamos; devolvemos error
-            return "❌ Error: git_manager necesita 'project_root' (ej. 'code_projects/miapp')"
+            return (
+                f"❌ Error: git_manager necesita 'project_root' (ej. '{PROJECTS_DIR_NAME}/miapp')"
+            )
 
         # Security: don't leave the workspace
         try:
@@ -72,7 +75,7 @@ class GitManager:
             return "\n".join([f"{c.hexsha[:7]} - {c.message} ({c.author})" for c in commits])  # type: ignore[str-bytes-safe]
         elif action == "diff":
             diff = (
-                await asyncio.to_thread(repo.git.diff, file)
+                await asyncio.to_thread(repo.git.diff, "--", file)
                 if file
                 else await asyncio.to_thread(repo.git.diff)
             )
@@ -104,7 +107,7 @@ async def git_manager_tool(
             f"git_manager llamada sin project_root. action='{action}', kwargs={list(kwargs.keys())}"
         )
         return (
-            "❌ git_manager necesita 'project_root' (ej: 'code_projects/miapp'). "
+            f"❌ git_manager necesita 'project_root' (ej: '{PROJECTS_DIR_NAME}/miapp'). "
             "Especifica el directorio del proyecto donde existe el repositorio Git."
         )
     return await GitManager.execute(action, workspace, file, message, project_root=project_root)

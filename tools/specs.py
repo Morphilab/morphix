@@ -1,4 +1,4 @@
-# core/tool_specs.py
+# tools/specs.py
 """
 Tool Specifications — JSON Schema definitions para function-calling nativo.
 Reemplaza el antiguo sistema text-based de build_tool_instructions().
@@ -7,6 +7,7 @@ Reemplaza el antiguo sistema text-based de build_tool_instructions().
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.constants import PROJECTS_DIR_NAME
 from core.path_resolver import paths
 
 
@@ -84,7 +85,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
             "project_root": {
                 "type": "string",
-                "description": "Directorio del proyecto donde ejecutar el comando Git (ej: 'code_projects/miapp').",
+                "description": f"Directorio del proyecto donde ejecutar el comando Git (ej: '{PROJECTS_DIR_NAME}/miapp').",
             },
         },
         required=["action"],
@@ -123,7 +124,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
             "project_root": {
                 "type": "string",
-                "description": "Directorio del proyecto (ej: 'code_projects/miapp').",
+                "description": f"Directorio del proyecto (ej: '{PROJECTS_DIR_NAME}/miapp').",
             },
         },
         required=["action"],
@@ -138,7 +139,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
             "project_root": {
                 "type": "string",
-                "description": "Directorio del proyecto (ej: 'code_projects/miapp').",
+                "description": f"Directorio del proyecto (ej: '{PROJECTS_DIR_NAME}/miapp').",
             },
         },
         required=["path"],
@@ -157,7 +158,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
             "project_root": {
                 "type": "string",
-                "description": "Directorio del proyecto (ej: 'code_projects/miapp'). Obligatorio.",
+                "description": f"Directorio del proyecto (ej: '{PROJECTS_DIR_NAME}/miapp'). Obligatorio.",
             },
             "workspace": {
                 "type": "string",
@@ -189,7 +190,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
             "project_root": {
                 "type": "string",
-                "description": "Directorio del proyecto (ej: 'code_projects/miapp'). Obligatorio.",
+                "description": f"Directorio del proyecto (ej: '{PROJECTS_DIR_NAME}/miapp'). Obligatorio.",
             },
         },
         required=["action", "file_path"],
@@ -199,7 +200,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         description="Ejecuta comandos shell de forma segura en el workspace del proyecto. "
         "IMPORTANTE: El parámetro 'command' es OBLIGATORIO. "
         "⚠️ The shell's working directory is ALREADY set to the project root "
-        "(e.g. memory/main/code_projects/<name>). Run scripts directly by name — "
+        "(e.g. memory/main/{PROJECTS_DIR_NAME}/<name>). Run scripts directly by name — "
         "do NOT use 'cd code_projects/...' or any 'cd' command. "
         "NUNCA uses 'cd' — el shell ya está en el directorio correcto. "
         "Útil para: python3 script.py, pytest, npm install, git status, grep, find, etc.",
@@ -297,12 +298,18 @@ def expand_allowed_tools(allowed_tools: list[str] | None) -> list[str] | None:
     return expanded
 
 
-def build_tool_definitions(allowed_tools: list[str] | None = None) -> list[dict]:
+def build_tool_definitions(
+    allowed_tools: list[str] | None = None, provider_kind: str = "openai"
+) -> list[dict]:
     """Devuelve las definiciones de herramientas en formato OpenAI function-calling.
-    Si allowed_tools es None, devuelve todas. Si es una lista, filtra por nombres."""
+    Si allowed_tools es None, devuelve todas. Si es una lista, filtra por nombres.
+
+    provider_kind: "ollama" | "openai" — strict mode and all-required params
+    only applied for OpenAI-compatible providers.
+    """
     from core.config import settings
 
-    strict = settings.deepseek_strict_mode
+    strict = settings.deepseek_strict_mode and provider_kind != "ollama"
     expanded = expand_allowed_tools(allowed_tools)
     specs = []
     for name, tool_def in TOOL_DEFINITIONS.items():
@@ -318,11 +325,17 @@ def build_tool_instructions(
     allowed_tools: list[str] | None = None,
     project_root: str | None = None,
     plan_mode: bool = True,
+    workspace: str | None = None,
 ) -> str:
     """Instrucciones textuales para el LLM (fallback cuando no hay function-calling nativo).
     Mantenido por compatibilidad con el modo Ollama y el sistema legacy."""
     if not allowed_tools:
         return "No hay herramientas disponibles para esta tarea."
+
+    if workspace is None:
+        from core.workspaces import get_global_workspaces
+
+        workspace = get_global_workspaces().current
 
     lines = [
         "## 🛠️ Herramientas disponibles",
@@ -346,7 +359,7 @@ def build_tool_instructions(
             lines.append("")
 
     if project_root:
-        project_path = paths.code_projects_dir("main", project_root)
+        project_path = paths.code_projects_dir(workspace, project_root)
         lines.append(f"El directorio del proyecto es: {project_path}")
         lines.append("")
 

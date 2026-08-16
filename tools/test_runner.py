@@ -92,7 +92,9 @@ async def _test_runner_tool(
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(base),
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        from tools._subprocess import communicate_or_kill
+
+        stdout, _ = await communicate_or_kill(proc, timeout=timeout)
         output = stdout.decode()
         counts = _parse_pytest_counts(output)
         tests_were_run = counts["total_count"] > 0

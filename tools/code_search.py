@@ -69,7 +69,8 @@ async def _code_search_tool(
                 content = await asyncio.to_thread(
                     file_path.read_text, encoding="utf-8", errors="replace"
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug("Error leyendo %s: %s", file_path, e)
                 continue
 
             found = list(compiled.finditer(content))

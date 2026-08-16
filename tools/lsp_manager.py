@@ -21,12 +21,17 @@ class LspManager:
         self.root_path = Path(root_path).resolve()
         self.project = jedi.Project(str(self.root_path))
 
-    async def _get_script(self, file: str, line: int, character: int):
-        file_path = (self.root_path / file).resolve()
+    def _safe_join(self, file: str) -> Path:
+        """Resuelve file dentro del workspace; rechaza rutas fuera de él."""
+        resolved = (self.root_path / file).resolve()
         try:
-            file_path.relative_to(self.root_path)
+            resolved.relative_to(self.root_path)
         except ValueError:
-            raise ValueError(f"Archivo fuera del workspace: {file}")
+            raise ValueError(f"Ruta fuera del proyecto: {file}")
+        return resolved
+
+    async def _get_script(self, file: str, line: int, character: int):
+        file_path = self._safe_join(file)
         if not file_path.exists():
             raise FileNotFoundError(f"Archivo no encontrado: {file_path}")
         code = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
@@ -38,16 +43,13 @@ class LspManager:
             defs = script.goto(line + 1, character)
             if not defs:
                 # Fallback: search the project for functions with that name near the requested line
-                code = await asyncio.to_thread(
-                    Path(self.root_path / file).read_text, encoding="utf-8"
-                )
+                safe_file = self._safe_join(file)
+                code = await asyncio.to_thread(safe_file.read_text, encoding="utf-8")
                 lines = code.splitlines()
                 if line < len(lines) and lines[line].strip():
                     possible_name = lines[line].strip().split("def ")[-1].split("(")[0].strip(":")
-                    full_code = await asyncio.to_thread(Path(self.root_path / file).read_text)
-                    script_all = jedi.Script(
-                        full_code, path=str(self.root_path / file), project=self.project
-                    )
+                    full_code = await asyncio.to_thread(safe_file.read_text)
+                    script_all = jedi.Script(full_code, path=str(safe_file), project=self.project)
                     names = script_all.get_names(all_scopes=True)
                     for name in names:
                         if name.name == possible_name and name.type == "function":
@@ -98,7 +100,7 @@ class LspManager:
                     logger.debug(f"Error analizando {relpath}: {e}")
 
             if file:
-                full = root / file
+                full = self._safe_join(file)
                 if full.is_file():
                     _check_file(full, file)
                 else:
@@ -131,7 +133,13 @@ class LspManager:
         cmd = ["ruff", "check", "--output-format=json"]
         if fix:
             cmd.append("--fix")
-        target = str(self.root_path / file) if file else str(self.root_path)
+        if file:
+            try:
+                target = str(self._safe_join(file))
+            except ValueError as e:
+                return f"❌ Error ejecutando ruff: {e}"
+        else:
+            target = str(self.root_path)
         cmd.append(target)
 
         try:

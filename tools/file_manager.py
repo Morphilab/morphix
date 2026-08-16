@@ -10,6 +10,7 @@ File Manager - Versión Profesional y Robusta
 
 import asyncio
 import logging
+import re
 
 from core.config import settings
 from core.path_resolver import paths
@@ -32,6 +33,11 @@ class FileManager:
     ) -> str:
         if workspace is None:
             workspace = settings.active_workspace
+        if not re.match(r"^[a-z][a-z0-9_]*$", workspace):
+            return (
+                f"❌ Nombre de workspace inválido: '{workspace}'. "
+                "Solo se permiten minúsculas, números y guiones bajos."
+            )
         # Normalize: accept file_path as alias for path
         if file_path and not path:
             path = file_path
@@ -72,7 +78,14 @@ class FileManager:
                 listing = "\n".join(entries) if entries else "(directorio vacío)"
                 return f"📁 Contenido de '{path}':\n{listing}"
             if not full_path.is_file():
-                raise FileNotFoundError(f"Archivo no encontrado: {path}")
+                # Friendly response: reading a not-yet-existing file is an
+                # expected step of the read-before-write pattern. Guide the
+                # model to create the file instead of reporting a failure.
+                return (
+                    f"ℹ️ El archivo '{path}' no existe todavía (es un archivo nuevo). "
+                    "Si la tarea es crearlo, usa action='write' con el contenido. "
+                    "Si esperabas que existiera, verifica el nombre exacto."
+                )
             return await asyncio.to_thread(full_path.read_text, encoding="utf-8")
 
         elif action == "write":
@@ -114,7 +127,7 @@ class FileManager:
                 log_operation("file_delete", str(full_path), success=True)
                 logger.info(f"🗑️ Archivo eliminado: {full_path}")
                 return f"Archivo '{path}' eliminado."
-            raise FileNotFoundError(f"Archivo no encontrado: {path}")
+            return f"ℹ️ El archivo '{path}' no existe — no hay nada que eliminar."
 
         else:
             raise ValueError(f"Acción '{action}' no soportada.")

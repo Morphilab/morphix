@@ -115,3 +115,69 @@ class TestHealthChecks:
         monkeypatch.setattr("core.workflow_state.get_active_workflow", lambda: "tdd")
         check_workspace(r)
         assert "tdd" in r.checks["Workspace"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_check_database_disposes_engine_on_connect_failure():
+    """Si la conexión falla, el engine asyncpg debe disponerse (sin leak)."""
+    from unittest.mock import MagicMock
+
+    from core.health import check_database
+
+    engine = MagicMock()
+    engine.connect = MagicMock(side_effect=RuntimeError("connection refused"))
+    engine.dispose = AsyncMock()
+    with (
+        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=engine),
+        patch("core.config.settings") as mock_settings,
+    ):
+        mock_settings.database_url = "postgresql://x/y"
+        report = MagicMock()
+        await check_database(report)
+
+    engine.dispose.assert_awaited_once()
+    report.add.assert_called_once()
+    assert report.add.call_args.args[1] is False
+
+
+@pytest.mark.asyncio
+async def test_check_redis_closes_client_on_ping_failure():
+    """Si ping falla, el cliente Redis debe cerrarse (sin leak)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from core.health import check_redis
+
+    client = AsyncMock()
+    client.ping = AsyncMock(side_effect=RuntimeError("ping failed"))
+    with (
+        patch("redis.asyncio.from_url", return_value=client),
+        patch("core.config.settings") as mock_settings,
+    ):
+        mock_settings.redis_url = "redis://localhost:6379/1"
+        report = MagicMock()
+        await check_redis(report)
+
+    client.aclose.assert_awaited_once()
+    report.add.assert_called_once()
+    assert report.add.call_args.args[1] is False
+
+
+def test_health_cli_main_runs_and_formats(monkeypatch, capsys):
+    """python -m core.health debe funcionar: main() corre el check e imprime."""
+
+    from core import health
+
+    report = health.HealthReport()
+    report.add("Database", True, "OK (5ms)")
+
+    async def fake_run():
+        return report
+
+    monkeypatch.setattr(health, "run_health_check", fake_run)
+
+    health.main()
+
+    out = capsys.readouterr().out
+    assert "Morphix Health Check" in out
+    assert "Database" in out
+    assert "ALL OK" in out

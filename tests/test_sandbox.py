@@ -135,3 +135,43 @@ async def test_safe_io_bytesio_blocked():
     """io.BytesIO no está disponible en sandbox."""
     result = await CodeExecutor.execute("import io\nbuf = io.BytesIO()\nprint('should not reach')")
     assert result.get("success") is False
+
+
+@pytest.mark.asyncio
+async def test_execute_main_guard_runs():
+    """`if __name__ == '__main__':` funciona dentro del sandbox."""
+    result = await CodeExecutor.execute('if __name__ == "__main__":\n    print("executed main")')
+    assert result.get("success") is True
+    assert "executed main" in result.get("text", "")
+
+
+# ==================== Sandbox escape tests ====================
+
+
+@pytest.mark.asyncio
+async def test_subclass_chain_escape_blocked():
+    """La cadena de subclases (().__class__.__base__.__subclasses__) no escapa del sandbox."""
+    payload = (
+        "w = [c for c in ().__class__.__base__.__subclasses__() "
+        "if c.__name__=='catch_warnings'][0]\n"
+        'os = w()._module.__builtins__["__import__"]("os")\n'
+        'print("ESCAPED uid:", os.getuid())'
+    )
+    result = await CodeExecutor.execute(payload)
+    out = result.get("text", "")
+    assert "ESCAPED" not in out, f"El sandbox fue escapado: {out}"
+
+
+@pytest.mark.asyncio
+async def test_getattr_dunder_blocked():
+    """Acceso a atributos dunder no autorizados está bloqueado."""
+    result = await CodeExecutor.execute("print((1).__class__)")
+    assert result.get("success") is False
+
+
+@pytest.mark.asyncio
+async def test_import_from_sandbox_safe_module_chain():
+    """El import normal de módulos seguros sigue funcionando."""
+    result = await CodeExecutor.execute("import math\nprint(math.sqrt(9))")
+    assert result.get("success") is True
+    assert "3.0" in result.get("text", "")

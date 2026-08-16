@@ -1,6 +1,8 @@
 # tests/test_diff_editor.py
 """Tests de seguridad y funcionalidad para diff_editor."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from tools.diff_editor import _apply_patch_lines, _diff_editor_tool
@@ -136,3 +138,27 @@ async def test_both_content_empty_requires_diff():
     )
     assert result["success"] is False
     assert "diff_content" in result["output"].lower() or "requerido" in result["output"].lower()
+
+
+@pytest.mark.asyncio
+async def test_create_action_timeout_kills_git_diff(tmp_path):
+    """git diff sin respuesta no debe colgar: timeout + kill del subproceso."""
+    target = tmp_path / "app.py"
+    target.write_text("x = 1\n")
+
+    with patch("tools.diff_editor.paths.memory_dir", return_value=tmp_path):
+        with patch("tools.diff_editor.asyncio.create_subprocess_exec") as mock_exec:
+            proc_mock = AsyncMock()
+            proc_mock.communicate = AsyncMock(side_effect=TimeoutError)
+            proc_mock.wait = AsyncMock()
+            proc_mock.kill = MagicMock()
+            mock_exec.return_value = proc_mock
+
+            result = await _diff_editor_tool(
+                file_path="app.py",
+                action="create",
+                workspace="test_ws",
+            )
+
+            proc_mock.kill.assert_called_once()
+            assert result["success"] is False
