@@ -233,10 +233,15 @@ class TestApprovalMechanism:
 
         asyncio.Event no es thread-safe: el wakeup debe programarse en el
         loop del evento (call_soon_threadsafe). Este test es determinista:
-        el loop queda bloqueado mientras el hilo externo responde, por lo
-        que si set() ocurriera en el hilo externo, is_set() sería True ahí.
+        el loop thread queda bloqueado en un busy-wait síncrono mientras el
+        hilo externo responde (si se usara await to_thread, el loop seguiría
+        libre y podría ejecutar el callback programado antes de la lectura
+        de is_set(), haciendo el test no-determinista bajo carga). Con el
+        loop ocupado, si set() ocurriera en el hilo externo, is_set() sería
+        True ahí.
         """
         import threading
+        import time
 
         from desktop.events import (
             _approval_events,
@@ -256,7 +261,8 @@ class TestApprovalMechanism:
             _approval_loops["req_x"] = asyncio.get_running_loop()
             shared["event"] = event
             started.set()
-            await asyncio.to_thread(release.wait)
+            while not release.is_set():
+                time.sleep(0.01)
             results["resolved"] = await asyncio.wait_for(event.wait(), timeout=2.0)
             results["set_after_loop_resumes"] = event.is_set()
 
