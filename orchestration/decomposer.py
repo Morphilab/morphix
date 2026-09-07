@@ -1,6 +1,6 @@
 # orchestration/decomposer.py
 """
-Task Decomposer - Versión FINAL robusta y refinada (Fase 6)
+Task Decomposer: divide una tarea en subtareas para el orquestador.
 """
 
 import logging
@@ -46,30 +46,15 @@ async def _append_rate_limit_hint(prompt: str, threshold: int, hint: str, log_ms
     return prompt
 
 
-def _build_project_context(project_root: str | None, workspace: str | None = None) -> str:
-    """Scan the project to provide real context to the decomposer LLM."""
+async def _build_project_context(project_root: str | None, workspace: str | None = None) -> str:
+    """Scan the project to provide real context to the decomposer LLM.
+
+    A-VII: offload SIEMPRE a thread — future.result() síncrono congelaba el
+    event loop (UI incluida) hasta 10s en proyectos grandes.
+    """
     import asyncio
 
-    async def _scan() -> str:
-        return _scan_project_sync(project_root, workspace)
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        # Already inside an event loop — offload blocking I/O to thread
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(
-                _scan_project_sync,
-                project_root,
-                workspace,
-            )
-            return future.result(timeout=10)
-    return _scan_project_sync(project_root, workspace)
+    return await asyncio.to_thread(_scan_project_sync, project_root, workspace)
 
 
 def _scan_project_sync(project_root: str | None, workspace: str | None = None) -> str:
@@ -79,7 +64,7 @@ def _scan_project_sync(project_root: str | None, workspace: str | None = None) -
     if not project_root:
         return "PROYECTO NUEVO — sin archivos. La primera subtarea debe CREAR la estructura."
 
-    base = paths.memory_dir(workspace) / project_root
+    base = paths.project_dir(workspace, project_root)  # M27
     if not base.exists():
         return "PROYECTO NUEVO — sin archivos. La primera subtarea debe CREAR la estructura."
 
@@ -122,6 +107,19 @@ def _scan_project_sync(project_root: str | None, workspace: str | None = None) -
     return "\n\n".join(parts)
 
 
+def _project_has_files(project_root: str | None, workspace: str | None) -> bool:
+    """True si el proyecto ya tiene archivos (no es nuevo)."""
+    if not project_root:
+        return False
+    if workspace is None:
+        workspace = settings.active_workspace
+    base = paths.project_dir(workspace, project_root)  # M27
+    try:
+        return base.exists() and any(base.iterdir())
+    except OSError:
+        return False
+
+
 async def decompose_task(
     query: str,
     is_follow_up: bool = False,
@@ -135,7 +133,7 @@ async def decompose_task(
         workspace = settings.active_workspace
     from llm.prompts import DECOMPOSE_TASK_PROMPT
 
-    project_context = _build_project_context(project_root, workspace)
+    project_context = await _build_project_context(project_root, workspace)
     prompt = DECOMPOSE_TASK_PROMPT.format(query=query, project_context=project_context)
 
     if is_follow_up:
@@ -193,14 +191,25 @@ async def decompose_task(
                 final_subtasks.append(clean)
 
         # Safety: always return at least 2 subtasks for developer tasks
+        # EXCEPCIÓN — tarea trivial (query corta, proyecto nuevo, 1
+        # subtarea del LLM) se respeta sin fantasma "Verificar...".
         if len(final_subtasks) < 2:
-            logger.warning("Decompose_task generó <2 subtareas → forzando división")
-            if len(final_subtasks) == 1:
-                final_subtasks.append(
-                    f"Verificar y validar que {final_subtasks[0][:80]} funciona correctamente"
-                )
-            else:
-                final_subtasks = [query[:100], f"Verificar el resultado de: {query[:80]}"]
+            trivial = (
+                len(final_subtasks) == 1
+                and len(query.strip()) < 120
+                and not _project_has_files(project_root, workspace)
+            )
+            if not trivial:
+                logger.warning("Decompose_task generó <2 subtareas → forzando división")
+                if len(final_subtasks) == 1:
+                    final_subtasks.append(
+                        f"Verificar y validar que {final_subtasks[0][:80]} funciona correctamente"
+                    )
+                else:
+                    final_subtasks = [
+                        query[:100],
+                        f"Verificar el resultado de: {query[:80]}",
+                    ]
 
         # Max limit from feature flags
 
@@ -234,7 +243,7 @@ async def decompose_task_with_phases(
         workspace = settings.active_workspace
     from llm.prompts import DECOMPOSE_TASK_WITH_PHASES_PROMPT
 
-    project_context = _build_project_context(project_root, workspace)
+    project_context = await _build_project_context(project_root, workspace)
     prompt = DECOMPOSE_TASK_WITH_PHASES_PROMPT.format(query=query, project_context=project_context)
 
     if is_follow_up:

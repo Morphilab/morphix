@@ -2,6 +2,7 @@
 Workflow Finalizer — conversation persistence, export, and structured profile extraction.
 """
 
+import contextvars
 import json
 import logging
 
@@ -11,11 +12,21 @@ from core.memory.manager import memory as memory_manager
 from core.models import Conversation, Workflow
 from core.repositories.conversation_repository import ConversationRepository
 from core.utils import clean_llm_response
-from orchestration.diagram import update_live_diagram
 
 logger = logging.getLogger(__name__)
 
 _MAX_SUMMARY_CHARS = 4000
+
+# el conv_id finalizado se registra en un ContextVar por-run,
+# de modo que la GUI lee SU conversación sin la race de `list_all(limit=1)`.
+_finalized_conv_id_ctx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "finalized_conversation_id", default=None
+)
+
+
+def get_finalized_conversation_id() -> int | None:
+    """conv_id de la conversación persistida por el workflow del task actual."""
+    return _finalized_conv_id_ctx.get()
 
 
 def _truncate_safe_summary(final_output: str) -> str:
@@ -73,13 +84,9 @@ Responde solo el JSON:"""
             return {}
         # Filter out null/empty values
         facts = {k: v for k, v in facts.items() if v is not None and v != ""}
-        # Rompe el bucle de contaminación: un perfil trivial (solo name,
-        # p. ej. "ChatGPT" proveniente de una conversación ya contaminada)
-        # no debe re-escribir user_profile (evidencia 2026-08-14, prueba 2).
-        from core.utils import is_trivial_profile
-
-        if is_trivial_profile(facts):
-            return {}
+        # El gate trivial es CONTEXTUAL y vive en update_user_profile: con
+        # perfil vacío, un hecho solo-nombre es el dato legítimo del usuario;
+        # con perfil poblado, se descarta (anti-stale).
         return facts
     except Exception as e:
         logger.warning(f"⚠️ No se pudo extraer perfil estructurado: {e}")
@@ -102,6 +109,7 @@ async def finalize_workflow(
     workspace: str | None = None,
     files_written: list[str] | None = None,
     conversation_id: int | None = None,
+    status: str = "completed",
 ):
     if workspace is None:
         workspace = settings.active_workspace
@@ -134,6 +142,8 @@ async def finalize_workflow(
             conversation_history=messages_to_save,
             conversation_id=conversation_id,
         )
+        if conv_id is not None:
+            _finalized_conv_id_ctx.set(conv_id)
         logger.info(
             f"Conversation {conv_id} saved"
             + (f" (resumed from {conversation_id})" if conversation_id else " (new)")
@@ -145,10 +155,11 @@ async def finalize_workflow(
     try:
         async with get_async_session() as session:
             wf = Workflow(
+                # persistir el status REAL (cancelled/partial/failed/completed)
                 query=query,
                 subtasks=json.dumps(subtasks_list),
                 scorecard=json.dumps(scorecard),
-                status="completed",
+                status=status,
             )
             session.add(wf)
             await session.flush()
@@ -177,24 +188,15 @@ async def finalize_workflow(
     try:
         safe_summary = _truncate_safe_summary(final_output)
 
-        await memory_manager.write("user_profile_last_update", safe_summary, validated=True)
-        logger.info(f"📝 user_profile_last_update guardado ({len(safe_summary)} caracteres)")
+        await memory_manager.write("last_task_summary", safe_summary, validated=True)
+        logger.info(f"📝 last_task_summary guardado ({len(safe_summary)} caracteres)")
     except Exception as e:
-        logger.warning(f"⚠️ No se pudo guardar user_profile_last_update: {e}")
+        logger.warning(f"⚠️ No se pudo guardar last_task_summary: {e}")
 
-    # 5. Smart git commit
-    if project_root and files_written:
-        try:
-            from core.git_operations import smart_auto_commit
-
-            await smart_auto_commit(
-                workspace=workspace,
-                project_root=project_root,
-                task_description=query,
-                files_written=files_written,
-            )
-        except Exception as e:
-            logger.warning("⚠️ No se pudo hacer commit automático: %s", e)
+    # 5. Smart git commit — ELIMINADO: el auto-commit implícito
+    # committeaba estados intermedios sin valor semántico y chocaba con el
+    # gate de aprobación (approval_unavailable). La decisión de committear es
+    # del agente (tool git_manager a petición) o del workflow (commit_after).
 
     # 6. Record metrics
     try:
@@ -206,5 +208,4 @@ async def finalize_workflow(
     except Exception:
         logger.warning("Error registrando métricas de workflow", exc_info=True)
 
-    await update_live_diagram(G, events)
     return conv_id

@@ -30,29 +30,44 @@ STATUS_COLORS = {
     "pending": "#6B7280",
     "recovered": "#F59E0B",
 }
+DEFAULT_CARD_COLORS = {
+    "card_bg": "#1A1A1A",
+    "body_bg": "#0F0F0F",
+    "text": "#E5E5E5",
+    "dim": "#888",
+    "accent": "#F59E0B",
+}
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
-<body style="background:#0F0F0F; font-family:-apple-system,sans-serif; margin:0; padding:8px">
+<body style="background:{body_bg}; font-family:-apple-system,sans-serif; margin:0; padding:8px">
 {cards}
 </body></html>"""
 
 CARD_TEMPLATE = """
-<div style="background:#1A1A1A; border-left:3px solid {color};
+<div style="background:{card_bg}; border-left:3px solid {color};
             margin:4px 0; padding:8px 12px; border-radius:4px">
   <div style="color:{color}; font-size:13px; margin-bottom:4px">
     {icon} <b>{status_label}</b>
   </div>
-  <div style="color:#E5E5E5; font-size:12px; line-height:1.4">{task}</div>
-  <div style="color:#888; font-size:10px; margin-top:2px">Agente: {agent}</div>
+  <div style="color:{text}; font-size:12px; line-height:1.4">{task}</div>
+  <div style="color:{dim}; font-size:10px; margin-top:2px">Agente: {agent}</div>
 </div>"""
 
 
-def render(G: Any) -> str:
+def _merged_colors(colors: dict | None) -> dict:
+    merged = {**STATUS_COLORS, **DEFAULT_CARD_COLORS}
+    if colors:
+        merged.update(colors)
+    return merged
+
+
+def render(G: Any, colors: dict | None = None) -> str:
     """Genera HTML con tarjetas de estado para cada subtarea del workflow.
 
     Args:
         G: Grafo NetworkX con nodos que tienen 'task', 'agent', 'status'.
+        colors: overrides opcionales de color ({status_key|card_key: color}).
 
     Returns:
         String HTML listo para QTextBrowser.setHtml() o consola.
@@ -60,6 +75,7 @@ def render(G: Any) -> str:
     if G is None or G.number_of_nodes() == 0:
         return "<p style='color:#888; text-align:center'>Workflow vacío</p>"
 
+    palette = _merged_colors(colors)
     cards: list[str] = []
     for node in G.nodes():
         data = G.nodes[node]
@@ -68,16 +84,23 @@ def render(G: Any) -> str:
         status = str(data.get("status", "pending"))
 
         icon = STATUS_ICONS.get(status, "⚫")
-        color = STATUS_COLORS.get(status, "#888")
+        color = palette.get(status, "#888")
         status_label = status.upper()
 
         cards.append(
             CARD_TEMPLATE.format(
-                color=color, icon=icon, status_label=status_label, task=task, agent=agent
+                card_bg=palette["card_bg"],
+                color=color,
+                icon=icon,
+                status_label=status_label,
+                task=task,
+                agent=agent,
+                text=palette["text"],
+                dim=palette["dim"],
             )
         )
 
-    return HTML_TEMPLATE.format(cards="".join(cards))
+    return HTML_TEMPLATE.format(body_bg=palette["body_bg"], cards="".join(cards))
 
 
 def _clean_text(text: str, max_len: int = 100) -> str:
@@ -93,33 +116,59 @@ def _clean_text(text: str, max_len: int = 100) -> str:
     return text.strip() or "Sin descripción"
 
 
+_SNAPSHOT_RETENTION = 20
+
+
+def _prune_old_snapshots(keep: int = _SNAPSHOT_RETENTION) -> int:
+    """Retención — deja solo los `keep` snapshots más recientes."""
+    try:
+        snapshots = sorted(
+            paths.charts_dir().glob("workflow_*.html"), key=lambda p: p.stat().st_mtime
+        )
+        removed = 0
+        for old in snapshots[:-keep]:
+            old.unlink(missing_ok=True)
+            removed += 1
+        return removed
+    except Exception:
+        logger.debug("Pruning de snapshots falló", exc_info=True)
+        return 0
+
+
 def save_status_snapshot(html: str, filename: str | None = None) -> Path:
-    """Guarda el HTML del workflow en charts/ como respaldo."""
+    """Guarda el HTML del workflow en charts/ como respaldo (con retención)."""
     if filename is None:
         filename = f"workflow_{os.getpid()}_{int(time.time())}.html"
     path = paths.charts_dir() / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")
+    _prune_old_snapshots()
     logger.debug("Workflow status guardado: %s", path)
     return path
 
 
 def render_from_subtasks(
-    subtask_list: list[dict], phase: str | None = None, active_phase: str | None = None
+    subtask_list: list[dict],
+    phase: str | None = None,
+    active_phase: str | None = None,
+    colors: dict | None = None,
 ) -> str:
     """Genera HTML de tarjetas de estado agrupadas por fase (spec §3.4).
 
     Deriva exclusivamente de subtask_list (el mismo dato que la lista de
     Subtareas de la UI) — cero drift entre ambas vistas. La agrupación por
     fase se muestra como encabezado; si no hay fase, lista plana.
+    colors: overrides opcionales de color ({status_key|card_key: color}).
     """
     if not subtask_list:
         return "<p style='color:#888; text-align:center'>Workflow vacío</p>"
 
+    palette = _merged_colors(colors)
+
     phase_header = ""
     if phase:
         phase_header = (
-            f"<div style='color:#F59E0B; font-size:12px; font-weight:bold; "
+            f"<div style='color:{palette['accent']}; font-size:12px; font-weight:bold; "
             f"margin:10px 0 4px 0'>📂 {_clean_text(phase, 60)}</div>"
         )
 
@@ -129,15 +178,18 @@ def render_from_subtasks(
         status = item.get("status", "pending")
         agent = item.get("agent") or "—"
         icon = STATUS_ICONS.get(status, "⚫")
-        color = STATUS_COLORS.get(status, "#888")
+        color = palette.get(status, "#888")
         cards.append(
             CARD_TEMPLATE.format(
+                card_bg=palette["card_bg"],
                 color=color,
                 icon=icon,
                 status_label=status.upper(),
                 task=_clean_text(str(name), 120),
                 agent=_clean_text(str(agent), 40),
+                text=palette["text"],
+                dim=palette["dim"],
             )
         )
 
-    return HTML_TEMPLATE.format(cards=phase_header + "".join(cards))
+    return HTML_TEMPLATE.format(body_bg=palette["body_bg"], cards=phase_header + "".join(cards))

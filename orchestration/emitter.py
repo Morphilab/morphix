@@ -70,7 +70,9 @@ class WorkflowEmitter:
         """Aplica actualizaciones parciales y emite el estado completo."""
         for key, value in updates.items():
             if key not in _FIELDS:
-                raise TypeError(f"Campo desconocido en emit: {key}")
+                # un typo no debe matar el workflow en marcha
+                logger.warning("WorkflowEmitter: campo desconocido en emit: %s", key)
+                continue
             # phase admite None como reset explícito (emits finales);
             # el resto de campos usa None-skip para updates parciales.
             if value is not None or key == "phase":

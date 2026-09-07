@@ -14,6 +14,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Marker canónico de pausa-por-clarificación. Única fuente: todos los
+# workflows retornan ESTA constante; el GUI la detecta por valor.
+PAUSED_MARKER = "[PAUSED:clarification_needed]"
+
+# Con la deny-list activa (rutinas programadas), ask_clarification NO pausa
+# el workflow — se deniega con un tool_result accionable porque no hay humano
+# en el ciclo que reanude la pausa. La activa bots_clock.execute_prompt.
+from contextvars import ContextVar
+
+clarification_denied: ContextVar[bool] = ContextVar("clarification_denied", default=False)
+
+# marcadores de datos no confiables — definidos en core.constants
+# (módulo neutro, evita ciclo llm→orchestration) y re-exportados aquí
+# como superficie pública para consumidores de orchestration.
+from core.constants import (  # noqa: F401
+    UNTRUSTED_CLOSE,
+    UNTRUSTED_OPEN,
+    UNTRUSTED_RULE,
+)
+
 
 @dataclass
 class WorkflowContext:
@@ -28,6 +48,7 @@ class WorkflowContext:
     active_workflow: str = "default"
     force_agent: str | None = None
     allowed_tools: list[str] | None = None
+    policy: Any = None
     settings: Any = None
     agents_registry: Any = None
     enc: Any = None
@@ -36,6 +57,7 @@ class WorkflowContext:
     cancelled: bool = False
     last_clarification: str = ""
     blackboard: Any = None
+    skills_enabled: bool = False  # skills procedimentales (doc 1 Tarea 4)
 
 
 @dataclass

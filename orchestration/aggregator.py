@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Requisitos explícitos detectables en la tarea → tokens que deben existir
 # en el código generado. Validación determinista mínima de conformidad
-# (evidencia 2026-08-14: numeros.py degradado sin bucle reportado como éxito).
+# (evidencia: numeros.py degradado sin bucle reportado como éxito).
 _CONFORMANCE_RULES: dict[str, tuple[str, ...]] = {
     "bucle": ("for ", "while "),
     "ciclo": ("for ", "while "),
@@ -56,7 +56,7 @@ class ResultAggregator:
         for kw, tokens in required:
             found = False
             for fname in relevant[:5]:
-                resolved = _paths.memory_dir(workspace) / project_root / fname
+                resolved = _paths.project_dir(workspace, project_root) / fname  # M27
                 if not resolved.exists():
                     continue
                 try:
@@ -93,7 +93,7 @@ class ResultAggregator:
             import networkx as nx
 
             G = nx.DiGraph()
-            for node in sorted(results):
+            for node in sorted(results, key=str):
                 task = ""
                 if isinstance(results[node], dict):
                     task = str(results[node].get("task", ""))[:60]
@@ -103,13 +103,23 @@ class ResultAggregator:
 
         # User correction detection (high-specificity words,
         # avoiding common terms like "no" that cause false positives)
-        if any(
-            kw in query.lower()
-            for kw in ["corrige", "equivocado", "error en", "arregla", "fix", "mal hecho"]
+        from core.utils import keyword_hits
+
+        # contenido REAL para la corrección (primer resultado con texto)
+        results_text_final = next(
+            (
+                str(r.get("result", ""))
+                for r in results.values()
+                if isinstance(r, dict) and r.get("result")
+            ),
+            "",
+        )
+        if keyword_hits(
+            query, ("corrige", "equivocado", "error en", "arregla", "fix", "mal hecho")
         ):
             from core.memory.manager import memory as memory_manager
 
-            await memory_manager.save_user_correction(query, "corrección guardada")
+            await memory_manager.save_user_correction(query, results_text_final or query[:300])
 
         files_block = ""
         if files_written:
@@ -129,7 +139,7 @@ class ResultAggregator:
         if files_written and project_root and workspace:
             try:
                 for fname in files_written[:10]:
-                    resolved = _paths.memory_dir(workspace) / project_root / fname
+                    resolved = _paths.project_dir(workspace, project_root) / fname  # M27
                     if resolved.exists():
                         content = await asyncio.to_thread(resolved.read_text, encoding="utf-8")
                         if len(content) > 6000:
@@ -186,7 +196,7 @@ class ResultAggregator:
 
         # Conformidad mínima: si la tarea exigía un constructo y el código no
         # lo contiene, el trabajo NO está completo — degradar a partial
-        # (evidencia 2026-08-14: numeros.py sin bucle reportado como éxito).
+        # (evidencia: numeros.py sin bucle reportado como éxito).
         conformance_violations: list[str] = []
         if files_written:
             try:
@@ -233,7 +243,7 @@ class ResultAggregator:
 
         # Build results_text from (possibly filtered) results
         results_text = ""
-        for node, data in sorted(results_for_llm.items()):
+        for node, data in sorted(results_for_llm.items(), key=lambda kv: str(kv[0])):
             task_desc = G.nodes[node].get("task", f"Subtarea {node}")
             content = str(data.get("result", data)).strip()
             if content:
@@ -356,7 +366,7 @@ def _build_programmatic_response(
             lines.append(f"\n🧪 Se generaron {len(test_files)} archivo(s) de test.")
 
     lines.append("\n**Resumen de subtareas:**")
-    for node, data in sorted(results.items()):
+    for node, data in sorted(results.items(), key=lambda kv: str(kv[0])):
         task_desc = G.nodes[node].get("task", f"Subtarea {node}")
         status = data.get("status", "?")
         icon = {

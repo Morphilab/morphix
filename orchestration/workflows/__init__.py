@@ -1,1 +1,1 @@
-"""Orchestration workflows — orchestration strategies (development, coordinated, collaborative, tdd)."""
+"""Orchestration workflows — solo el orquestador DSL+bots."""
