@@ -31,3 +31,10 @@ class TestGetPrompt:
         assert len(ANTI_FRUSTRATION_PROMPT) > 0
         assert len(PLAN_VERIFY_PROMPT) > 0
         assert len(VERIFY_GLOBAL_PROMPT) > 0
+
+
+def test_system_prompt_carries_untrusted_rule():
+    """La regla de dato-no-confiable vive en el system prompt global."""
+    from orchestration.context import UNTRUSTED_RULE
+
+    assert UNTRUSTED_RULE in ANTI_FRUSTRATION_PROMPT

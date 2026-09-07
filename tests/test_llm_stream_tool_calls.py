@@ -107,8 +107,7 @@ async def test_streaming_two_parallel_tool_calls_keep_args_separate():
 @pytest.mark.asyncio
 async def test_args_before_name_are_buffered_not_dropped():
     """Args streamed BEFORE the tool name arrives must be buffered and
-    re-attached when the name chunk lands (bug 2026-08-15: `continue`
-    descartaba los args huérfanos y el tool call quedaba incompleto)."""
+    re-attached when the name chunk lands."""
     from llm.controller import StreamChunk
     from orchestration.loop import _accumulate_stream
 

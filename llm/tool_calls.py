@@ -12,18 +12,54 @@ import json
 import logging
 from typing import Any
 
+from core.constants import wrap_untrusted
+
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Constants
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 _INJECTED_KEYS = {"project_root", "workspace"}
 
+# resultados de fuentes externas se envuelven en marcadores de
+# dato-no-confiable (mitigación de prompt injection indirecta). Cubre
+# los nombres registrados (web_fetch, web_search) y MCP en ambos
+# formatos ("mcp_" saneado y "mcp:"). bash/file_manager también —
+# su salida puede albergar datos hostiles (vector descarga+lectura
+# en 2 pasos: curl + cat).
+_UNTRUSTED_PREFIXES = (
+    "web_fetch",
+    "web_search",
+    "mcp_",
+    "mcp:",
+    "bash_manager",
+    "file_manager",
+    # leen contenido externo embebido — PDFs
+    # descargados/importados, repos clonados (commits/READMEs hostiles),
+    # código y tests del repo, texto dentro de imágenes.
+    "pdf_reader",
+    "git_manager",
+    "test_runner",
+    "code_search",
+    "vision_analyze",
+)
 
-# ---------------------------------------------------------------------------
+
+def _maybe_wrap_untrusted(name: str, content: str) -> str:
+    """Wrap *content* in untrusted-data markers when *name* is external.
+
+    La neutralización anti-frame-escape vive en
+    core/constants.wrap_untrusted (punto único; también lo usa Bot Mode).
+    """
+    if name.startswith(_UNTRUSTED_PREFIXES):
+        return wrap_untrusted(content)
+    return content
+
+
+# --------------------------------------------------------------------------
 # Provider detection
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def detect_provider_from_raw_tool_call(tc: Any) -> str:
@@ -60,9 +96,9 @@ def detect_provider_from_raw_tool_call(tc: Any) -> str:
     return "ollama" if isinstance(raw, dict) else "openai"
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Model capability registry (synthesis 3.2)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def model_supports_tool_calling(model_name: str) -> bool:
@@ -99,9 +135,9 @@ def log_raw_tool_args(context: str, raw: Any) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Argument normalisation — the core fix (never destroys data)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def normalize_arguments(raw: Any, *, default: dict | None = None) -> dict:
@@ -151,9 +187,9 @@ def normalize_arguments(raw: Any, *, default: dict | None = None) -> dict:
     return default
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Tool-call object normalisation — standard internal dict
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def normalize_tool_call(tc: Any, index: int = 0) -> dict:
@@ -175,7 +211,7 @@ def normalize_tool_call(tc: Any, index: int = 0) -> dict:
     if func is None and isinstance(tc, dict):
         func = tc.get("function", {})
 
-    # -- name --
+    # - name --
     if isinstance(func, dict):
         name = str(func.get("name", ""))
     elif func is not None:
@@ -188,7 +224,7 @@ def normalize_tool_call(tc: Any, index: int = 0) -> dict:
     else:
         name = ""
 
-    # -- id (synthesised when missing) --
+    # - id (synthesised when missing) --
     call_id = ""
     if isinstance(tc, dict):
         call_id = tc.get("id", "")
@@ -201,7 +237,7 @@ def normalize_tool_call(tc: Any, index: int = 0) -> dict:
                 pass
     call_id = call_id or f"call_{index}"
 
-    # -- arguments (via the normalised, never-throw path) --
+    # - arguments (via the normalised, never-throw path) --
     if isinstance(func, dict):
         raw_args = func.get("arguments", {})
     elif func is not None:
@@ -221,9 +257,9 @@ def normalize_tool_call(tc: Any, index: int = 0) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Tool-result message — provider-native format
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def tool_result_message(provider_kind: str, name: str, call_id: str, content: str) -> dict:
@@ -234,15 +270,20 @@ def tool_result_message(provider_kind: str, name: str, call_id: str, content: st
     +---------------+--------------------------------------------------+
     | OpenAI / etc. | ``{"role":"tool", "tool_call_id":id, "content":…}``|
     +---------------+--------------------------------------------------+
+
+    External-source results (web/MCP) are wrapped in untrusted-data
+    markers before serialization — single choke point covering
+    all call-sites.
     """
+    content = _maybe_wrap_untrusted(name, content)
     if provider_kind == "ollama":
         return {"role": "tool", "tool_name": name, "content": content}
     return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # History sanitisation — prevents ValidationError in Ollama SDK
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def sanitize_messages_for_ollama(messages: list) -> list[dict]:
@@ -275,13 +316,36 @@ def sanitize_messages_for_ollama(messages: list) -> list[dict]:
                         func["arguments"] = json.loads(raw)
                     except (json.JSONDecodeError, TypeError):
                         func["arguments"] = {}
+        # visión: bloques OpenAI-style → nativo Ollama
+        # (content:str + images:[b64]). Sin bloques, el mensaje pasa intacto.
+        content = copy_msg.get("content")
+        if isinstance(content, list):
+            texts: list[str] = []
+            images: list[str] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    texts.append(str(block.get("text", "")))
+                elif block.get("type") == "image_url":
+                    url = ""
+                    iu = block.get("image_url")
+                    if isinstance(iu, dict):
+                        url = str(iu.get("url", ""))
+                    if url.startswith("data:") and ";base64," in url:
+                        url = url.split(";base64,", 1)[1]
+                    if url:
+                        images.append(url)
+            copy_msg["content"] = "\n".join(texts)
+            if images:
+                copy_msg["images"] = images
         sanitized.append(copy_msg)
     return sanitized
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Tool-call validation (non-empty, non-injected)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def is_valid_tool_call(tc: dict) -> bool:
@@ -299,9 +363,9 @@ def is_valid_tool_call(tc: dict) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Filter helpers — keep tool messages for both providers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def has_tool_association(msg: dict) -> bool:
@@ -309,3 +373,32 @@ def has_tool_association(msg: dict) -> bool:
     association field — ``tool_call_id`` (OpenAI) *or* ``tool_name``
     (Ollama)."""
     return bool(msg.get("tool_call_id") or msg.get("tool_name"))
+
+
+def sanitize_tool_message_pairs(messages: list) -> list:
+    """Elimina assistants con tool_calls sin resultados y resultados
+    sin assistant — evita HTTP 400 del provider tras cualquier compresión o
+    poda de historial (usada por orchestration/loop.py y agents/base.py)."""
+    call_ids = {
+        tc.get("id")
+        for m in messages
+        if isinstance(m, dict) and m.get("role") == "assistant"
+        for tc in (m.get("tool_calls") or [])
+        if tc.get("id")
+    }
+    result_ids = {
+        m.get("tool_call_id") for m in messages if isinstance(m, dict) and m.get("role") == "tool"
+    }
+    valid = call_ids & result_ids
+    out = []
+    for m in messages:
+        role = m.get("role")
+        if role == "assistant" and m.get("tool_calls"):
+            kept = [tc for tc in m["tool_calls"] if tc.get("id") in valid]
+            if not kept:
+                continue
+            m = {**m, "tool_calls": kept}
+        elif role == "tool" and m.get("tool_call_id") not in valid:
+            continue
+        out.append(m)
+    return out

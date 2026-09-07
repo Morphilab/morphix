@@ -13,9 +13,9 @@ import pytest
 
 from llm.controller import ModelsController
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def _make_ollama_response(tool_calls=None):
@@ -71,9 +71,9 @@ TOOLS_FIXTURE = [
 ]
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Non-streaming: controller.call() must pass tools to Ollama client.chat()
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -139,9 +139,9 @@ async def test_call_ollama_no_tools_when_none():
     ), "Ollama client.chat() received tools= when none were provided"
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Streaming: call_stream() must forward tools to _stream_ollama → client.chat()
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -181,9 +181,9 @@ async def test_call_stream_ollama_forwards_tools():
     assert call_kwargs.kwargs["tools"] == TOOLS_FIXTURE
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Fallback: forced Ollama fallback must also pass tools
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -229,9 +229,9 @@ async def test_call_fallback_ollama_receives_tools():
     assert call_kwargs.kwargs["tools"] == TOOLS_FIXTURE
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Flag gating: tool_calling=False blocks tools
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 _STANDARD_MOCK_ROLES = {
     "agent": {"provider": "ollama", "model": "llama3.1", "temperature": 0.7},
     "default": {"provider": "ollama", "model": "llama3.1", "temperature": 0.7},
@@ -345,13 +345,14 @@ async def test_call_stream_ollama_skips_tools_when_disabled():
     ), "client.chat() received tools= when tool_calling=False in streaming"
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Ollama model precedence
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 async def test_ollama_model_per_role():
     """Role's ollama_model is used when set."""
+    pytest.importorskip("ollama")
     import core.config
     from llm.provider import LLMProvider
 
@@ -375,6 +376,7 @@ async def test_ollama_model_per_role():
 
 async def test_ollama_model_fallback_to_global():
     """Global OLLAMA_MODEL used when role has no ollama_model key."""
+    pytest.importorskip("ollama")
     import core.config
     from llm.provider import LLMProvider
 
@@ -394,9 +396,9 @@ async def test_ollama_model_fallback_to_global():
         core.config.settings.model_roles = saved_roles
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Regression: caller-provided max_tokens must not leak into Ollama client.chat
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -482,9 +484,9 @@ async def test_call_ollama_fallback_translates_max_tokens():
     ), f"expected num_predict=4000 in fallback options, got {options}"
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Real SDK structures — pydantic validation (síntesis 4.6)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def _sdk_client_module():
@@ -496,11 +498,9 @@ def _sdk_client_module():
 def test_sanitize_prevents_sdk_validation_error():
     """Historial mixto (args string OpenAI) → sanitize → la validación
     pydantic real del SDK (``_copy_messages``) NO lanza ValidationError."""
-    try:
-        _copy_messages = _sdk_client_module()._copy_messages
-        from pydantic import ValidationError
-    except ImportError:
-        pytest.skip("ollama SDK not available")
+    pytest.importorskip("ollama")
+    _copy_messages = _sdk_client_module()._copy_messages
+    from pydantic import ValidationError
 
     from llm.tool_calls import sanitize_messages_for_ollama
 
@@ -524,25 +524,23 @@ def test_sanitize_prevents_sdk_validation_error():
 
 def test_sdk_preserves_tool_name_in_result_message():
     """El repair nativo (``tool_name``) sobrevive la serialización real del SDK."""
-    try:
-        _copy_messages = _sdk_client_module()._copy_messages
-    except ImportError:
-        pytest.skip("ollama SDK not available")
+    pytest.importorskip("ollama")
+    _copy_messages = _sdk_client_module()._copy_messages
 
     from llm.tool_calls import tool_result_message
 
-    msg = tool_result_message("ollama", "file_manager", "call_1", "ok")
+    # file_manager ahora se envuelve como no-confiable; para probar la
+    # serialización pura del SDK usamos una tool 100% local sin wrap.
+    msg = tool_result_message("ollama", "memory_saver", "call_1", "ok")
     copied = list(_copy_messages([msg]))
-    assert copied[0].tool_name == "file_manager"
+    assert copied[0].tool_name == "memory_saver"
     assert copied[0].content == "ok"
 
 
 def test_sdk_accepts_our_tool_specs():
     """Nuestro spec de tool pasa por ``_copy_tools`` real del SDK."""
-    try:
-        _copy_tools = _sdk_client_module()._copy_tools
-    except ImportError:
-        pytest.skip("ollama SDK not available")
+    pytest.importorskip("ollama")
+    _copy_tools = _sdk_client_module()._copy_tools
 
     copied = list(_copy_tools(TOOLS_FIXTURE))
     assert len(copied) == 1

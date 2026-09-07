@@ -56,6 +56,7 @@ class StreamChunk:
     reasoning_content: str | None = None
     usage: dict[str, int] | None = None
     is_done: bool = False
+    reset: bool = False  # reiniciar acumulador (retry tras fallo parcial)
 
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,87 @@ def _response_tokens(response: Any) -> int | None:
     except (AttributeError, TypeError, ValueError):
         pass
     return None
+
+
+def _cache_hit_tokens(usage: Any) -> int:
+    """Tokens de prompt servidos desde caché del proveedor (0 si no reporta).
+
+    DeepSeek: ``prompt_cache_hit_tokens``; OpenAI-compat:
+    ``prompt_tokens_details.cached_tokens``. El presupuesto del workflow
+    los trata como coste cero: un prefijo cacheado no debe quemarlo.
+    """
+    if usage is None:
+        return 0
+
+    def _get(key: str) -> int:
+        try:
+            v = usage.get(key) if hasattr(usage, "get") else getattr(usage, key, None)
+        except (AttributeError, TypeError):
+            v = None
+        return int(v) if v else 0
+
+    hit = _get("prompt_cache_hit_tokens")
+    if hit == 0:
+        details = (
+            usage.get("prompt_tokens_details")
+            if hasattr(usage, "get")
+            else getattr(usage, "prompt_tokens_details", None)
+        )
+        if details is not None:
+            hit = int(getattr(details, "cached_tokens", 0) or 0)
+    return hit
+
+
+def _disjoint_usage(usage: Any) -> dict[str, int]:
+    """Translate wire token usage into disjoint buckets (token-meter rule).
+
+    DeepSeek reports ``prompt_tokens`` INCLUDING cache hits
+    (``prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens``).
+    This maps the wire shape (attr- or dict-based, OpenAI-compatible or Ollama)
+    into disjoint buckets:
+
+    - ``input_tokens``       — uncached input only (``prompt_tokens − hits``)
+    - ``output_tokens``      — completion tokens
+    - ``cache_read_tokens``  — cache hits (what the provider charged at hit rate)
+    - ``cache_write_tokens`` — cache writes (misses that populated the cache)
+
+    Billed input = input + cache_read + cache_write. Counts are clamped to >= 0.
+    """
+    if usage is None:
+        return {}
+
+    def _get(key: str) -> int:
+        try:
+            v = usage.get(key) if hasattr(usage, "get") else getattr(usage, key, None)
+        except (AttributeError, TypeError):
+            v = None
+        return int(v) if v else 0
+
+    hit = _get("prompt_cache_hit_tokens")
+    miss = _get("prompt_cache_miss_tokens")
+    if hit == 0 and miss == 0:
+        # OpenAI-compat alternate spelling: prompt_tokens_details.cached_tokens
+        details = (
+            usage.get("prompt_tokens_details")
+            if hasattr(usage, "get")
+            else getattr(usage, "prompt_tokens_details", None)
+        )
+        if details is not None:
+            hit = int(getattr(details, "cached_tokens", 0) or 0)
+
+    wire_prompt = _get("prompt_tokens")
+    completion = _get("completion_tokens")
+
+    uncached = max(0, wire_prompt - hit)
+    billed_input = uncached + hit + miss
+    return {
+        "input_tokens": uncached,
+        "output_tokens": completion,
+        "cache_read_tokens": hit,
+        "cache_write_tokens": miss,
+        "billed_input_tokens": billed_input,
+        "billed_total_tokens": billed_input + completion,
+    }
 
 
 def _is_reasoning_starved(response: Any) -> bool:
@@ -146,9 +228,21 @@ class ModelsController:
         self._config_lock = threading.Lock()
 
     def _load_kairos_config(self):
-        if not self._config_loaded:
+        # la carga debe dispararse si CUALQUIER campo pendiente es None,
+        # no solo si nunca se cargó — un caller con max_retries explícito y
+        # backoff None crasheaba con None**attempt en el primer retry.
+        if (
+            not self._config_loaded
+            or self._max_retries is None
+            or self._timeout is None
+            or self._backoff_factor is None
+        ):
             with self._config_lock:
-                if not self._config_loaded:
+                if (
+                    self._max_retries is None
+                    or self._timeout is None
+                    or self._backoff_factor is None
+                ):
                     from core.config import settings as app_settings
 
                     self._max_retries = (
@@ -190,6 +284,7 @@ class ModelsController:
         tools: list[dict] | None = None,
         tool_choice: str = "auto",
         max_retries: int | None = None,
+        workspace: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """ÚNICO punto de entrada para todas las llamadas LLM.
@@ -217,8 +312,11 @@ class ModelsController:
         # ── Circuit breaker: get provider name for tracking ──
         from core.circuit_breaker import CircuitBreakerRegistry
 
-        provider_name = LLMProvider.get_provider_name(role)
-        cb = CircuitBreakerRegistry.get(provider_name)
+        client, model, temp, provider_effective = LLMProvider.get_client_with_provider(
+            role, temperature
+        )
+        # el breaker se atribuye al servicio que REALMENTE atenderá la llamada
+        cb = CircuitBreakerRegistry.get(provider_effective)
 
         # ── Token budget check: compress if history exceeds 90% of max context ──
         from core.config import settings as app_settings
@@ -232,17 +330,18 @@ class ModelsController:
                 est,
                 budget,
             )
-            messages = ContextManager.compress_history(messages, max_tokens=int(budget * 0.7))
+            # Cache-first: preserva el prefijo cacheable del transcript
+            from core.cache_manager import cache_manager
 
-        client, model, temp = LLMProvider.get_client(role, temperature)
+            messages = cache_manager.cache_friendly_compress(messages, max_tokens=int(budget * 0.7))
 
         from core.config import settings as _settings
 
         role_config = _settings.model_roles.get(role, _settings.model_roles["default"])
         max_tokens = role_config.get("max_tokens")
         # Caller-provided max_tokens override (OpenAI style) — absorbed into
-        # effective_max_tokens so the starvation retry (B3) doubles THIS value,
-        # not the role default (bug 2026-08-15: kwargs.update re-aplicaba el
+        # effective_max_tokens so the starvation retry doubles THIS value,
+        # not the role default (kwargs.update re-aplicaba el
         # override del caller y el reintento nunca crecía el presupuesto).
         caller_max_tokens = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens")
         effective_max_tokens: int | None = caller_max_tokens or max_tokens
@@ -254,7 +353,51 @@ class ModelsController:
             k: v for k, v in kwargs.items() if k not in _OLLAMA_UNSUPPORTED_KWARGS
         }
 
-        for attempt in range(1, (max_retries if max_retries is not None else self.max_retries) + 1):
+        if stream:
+            # la rama stream de call() usaba cliente SYNC bloqueante y
+            # _normalize_response no soporta Stream — contrato público es
+            # call_stream(). Se fuerza non-stream en vez de colgar el loop.
+            logger.warning(
+                "models.call(stream=True) no está soportado (usar call_stream) — "
+                "forzando llamada non-streaming."
+            )
+            stream = False
+
+        # ── Retry durable: presupuesto reducido por intentos ya gastados ──
+        from core.config import settings as _rl_settings
+
+        retry_ledger = None
+        retry_key = ""
+        if getattr(_rl_settings, "llm_retry_durable", True):
+            from core.retry_ledger import RetryLedger
+
+            # Use workspace-specific ledger if workspace provided, else global.
+            # la instancia DEBE quedar en retry_ledger — antes se
+            # guardaba solo en esta local (para el read inicial) y toda la
+            # mitad escritora (bump/clear) era código muerto tras
+            # `if retry_ledger is not None`.
+            retry_ledger = rl = (
+                RetryLedger.for_workspace(workspace) if workspace else RetryLedger.default()
+            )
+            retry_key = RetryLedger.key_for(role, messages)
+            rl_used = rl.used(retry_key)
+            if max_retries is not None:
+                effective_attempt_cap = max(0, max_retries - rl_used)
+            else:
+                self._load_kairos_config()
+                effective_attempt_cap = max(0, self.max_retries - rl_used)
+            if rl_used and effective_attempt_cap == 0:
+                logger.warning(
+                    "Retry durable: %d/%d intentos ya gastados (persistidos) para %s "
+                    "— saltando directo al fallback",
+                    rl_used,
+                    rl_used,
+                    retry_key[:24],
+                )
+        else:
+            effective_attempt_cap = max_retries if max_retries is not None else self.max_retries
+
+        for attempt in range(1, effective_attempt_cap + 1):
             _max = max_retries if max_retries is not None else self.max_retries
             try:
                 _start = time.monotonic()
@@ -321,20 +464,29 @@ class ModelsController:
                     )
                     continue
 
-                # Track usage + cache metrics
-                self._track_usage(response)
+                # Track usage + cache metrics (+ epoch del call-config)
+                self._track_usage(
+                    response,
+                    workspace=workspace,
+                    provider=provider_effective,
+                    model=str(model) if model else None,
+                    max_tokens=effective_max_tokens,
+                )
                 # Track tokens in workflow budget
                 self._track_budget(response)
 
                 cb.record_success()
+                # Retry durable: éxito limpia el presupuesto persistido
+                if retry_ledger is not None and retry_key:
+                    retry_ledger.clear(retry_key)
                 from core.metrics import metrics as _metrics
 
-                _metrics.record_llm_latency(provider_name, duration)
+                _metrics.record_llm_latency(provider_effective, duration)
                 _tokens = _response_tokens(response)
                 logger.info(
                     "LLM call OK (rol=%s, provider=%s, duración=%.1fs%s)",
                     role,
-                    provider_name,
+                    provider_effective,
                     duration,
                     f", tokens={_tokens}" if _tokens is not None else "",
                 )
@@ -348,12 +500,20 @@ class ModelsController:
                     _max,
                     role,
                 )
+                if retry_ledger is not None and retry_key:
+                    retry_ledger.bump(retry_key)
             except (OpenAITimeoutError, httpx.TimeoutException):
                 logger.warning("⏳ Timeout en intento %d/%d (rol: %s)", attempt, _max, role)
+                if retry_ledger is not None and retry_key:
+                    retry_ledger.bump(retry_key)
             except APIError as e:
                 logger.warning(f"⚠️ APIError en intento {attempt}/{_max}: {e}")
+                if retry_ledger is not None and retry_key:
+                    retry_ledger.bump(retry_key)
             except Exception as e:
                 logger.error(f"Error inesperado en llamada LLM (rol: {role})", exc_info=True)
+                if retry_ledger is not None and retry_key:
+                    retry_ledger.bump(retry_key)
 
             if attempt < _max:
                 delay = self.backoff_factor**attempt + 0.5
@@ -365,7 +525,7 @@ class ModelsController:
         ollama_cb = CircuitBreakerRegistry.get("ollama")
         client, model, temp = LLMProvider.get_client(role, temperature, force_ollama=True)
         try:
-            # NB3 — Sanitize messages for Ollama SDK (string→dict args conversion)
+            # Sanitize messages for Ollama SDK (string→dict args conversion)
             ollama_messages = sanitize_messages_for_ollama(messages)
             fallback_options: dict[str, Any] = {"temperature": temp}
             if caller_max_tokens:
@@ -383,6 +543,13 @@ class ModelsController:
                 timeout=_LLM_CALL_DEADLINE,
             )
             self._track_budget(response)
+            self._track_usage(
+                response,
+                workspace=workspace,
+                provider="ollama",
+                model=str(model) if model else None,
+                max_tokens=caller_max_tokens,
+            )
             ollama_cb.record_success()
             return self._normalize_response(response)
         except TimeoutError:
@@ -405,6 +572,7 @@ class ModelsController:
         temperature: float | None = None,
         tools: list[dict] | None = None,
         tool_choice: str = "auto",
+        workspace: str | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream unified chunks from the LLM with retry support.
@@ -414,21 +582,20 @@ class ModelsController:
         On streaming failure, retries up to llm_max_retries times.
         """
         self._load_kairos_config()
-        max_retries = self._max_retries or 1
+        # `or 1` convertía un 0 explícito en 1 — respetar la config
+        max_retries = self._max_retries if self._max_retries is not None else 1
         last_error: Exception | None = None
 
         # ── Circuit breaker check ──
         from core.circuit_breaker import CircuitBreakerRegistry
 
-        provider_name = LLMProvider.get_provider_name(role)
-        cb = CircuitBreakerRegistry.get(provider_name)
-        if not cb.allow_request():
-            logger.warning("Circuit breaker OPEN for %s, blocking stream", provider_name)
-            yield StreamChunk(
-                text=f"\n⚠️ Provider {provider_name} unavailable (circuit breaker open)",
-                is_done=True,
-            )
-            return
+        # igual que call() — el breaker se atribuye al proveedor EFECTIVO
+        # y NO se bloquea el stream: get_async_client ya cae a Ollama si el
+        # primario está OPEN (política unificada call/call_stream).
+        s_client, s_model, s_temp, stream_provider_effective = (
+            LLMProvider.get_async_client_with_provider(role, temperature)
+        )
+        cb = CircuitBreakerRegistry.get(stream_provider_effective)
 
         # ── Token budget check before streaming ──
         from core.config import settings as _app_settings
@@ -442,7 +609,10 @@ class ModelsController:
                 _est,
                 _budget,
             )
-            messages = _CM.compress_history(messages, max_tokens=int(_budget * 0.7))
+            # Cache-first: preserva el prefijo cacheable del transcript
+            from core.cache_manager import cache_manager as _cache_mgr
+
+            messages = _cache_mgr.cache_friendly_compress(messages, max_tokens=int(_budget * 0.7))
 
         _role_config = _app_settings.model_roles.get(role, _app_settings.model_roles["default"])
         _max_tokens = _role_config.get("max_tokens")
@@ -453,7 +623,11 @@ class ModelsController:
 
         for attempt in range(max_retries + 1):
             try:
-                client, model, temp = LLMProvider.get_async_client(role, temperature)
+                if attempt > 0:
+                    # el reintento re-emite desde byte 0 — avisar al
+                    # consumidor para truncar la salida parcial ya emitida.
+                    yield StreamChunk(reset=True)
+                client, model, temp = s_client, s_model, s_temp
 
                 if isinstance(client, AsyncOpenAI):
                     stream_usage = None
@@ -484,22 +658,21 @@ class ModelsController:
                         if chunk.usage:
                             stream_usage = chunk.usage
                         yield chunk
-                # Track streaming tokens in workflow budget
+                # Track streaming tokens (budget + wire totals + disjoint buckets)
                 if stream_usage:
-                    total = stream_usage.get("prompt_tokens", 0) + stream_usage.get(
-                        "completion_tokens", 0
+                    self._track_stream_usage(
+                        stream_usage,
+                        workspace=workspace,
+                        provider=stream_provider_effective,
+                        model=str(s_model) if s_model else None,
+                        max_tokens=_max_tokens,
                     )
-                    if total > 0:
-                        from tools.orchestrator import add_llm_token_usage
-
-                        add_llm_token_usage(total)
                 cb.record_success()
                 return  # Success — exit retry loop
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    f"Streaming error (attempt {attempt + 1}/{max_retries + 1}, "
-                    f"role: {role}): {e}"
+                    f"Streaming error (attempt {attempt + 1}/{max_retries + 1}, role: {role}): {e}"
                 )
                 if attempt < max_retries:
                     delay = 1.5**attempt + 0.5
@@ -519,6 +692,7 @@ class ModelsController:
                 tools=_effective_tools,
                 tool_choice=tool_choice,
                 max_retries=0,
+                workspace=workspace,
                 **kwargs,
             )
             text = response.choices[0].message.content if response.choices else ""
@@ -551,27 +725,37 @@ class ModelsController:
         # accumulator concatenates the arguments under a single id.
         tool_acc: dict = {}
 
+        def _usage_to_dict(u) -> dict:
+            return {
+                "prompt_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(u, "completion_tokens", 0) or 0,
+                "prompt_cache_hit_tokens": getattr(u, "prompt_cache_hit_tokens", 0) or 0,
+                "prompt_cache_miss_tokens": getattr(u, "prompt_cache_miss_tokens", 0) or 0,
+            }
+
         async for chunk in response:
             delta = chunk.choices[0].delta if chunk.choices else None
             finish = chunk.choices[0].finish_reason if chunk.choices else None
 
             if finish:
-                usage_dict = None
                 chunk_usage = getattr(chunk, "usage", None)
                 if chunk_usage is not None:
-                    usage_dict = {
-                        "prompt_tokens": getattr(chunk_usage, "prompt_tokens", 0) or 0,
-                        "completion_tokens": getattr(chunk_usage, "completion_tokens", 0) or 0,
-                        "prompt_cache_hit_tokens": getattr(
-                            chunk_usage, "prompt_cache_hit_tokens", 0
-                        )
-                        or 0,
-                        "prompt_cache_miss_tokens": getattr(
-                            chunk_usage, "prompt_cache_miss_tokens", 0
-                        )
-                        or 0,
-                    }
-                yield StreamChunk(finish_reason=finish, usage=usage_dict, is_done=True)
+                    # Provider incluyó usage en el propio chunk de finish
+                    yield StreamChunk(
+                        finish_reason=finish,
+                        usage=_usage_to_dict(chunk_usage),
+                        is_done=True,
+                    )
+                    break
+                # con include_usage el chunk de usage llega DESPUÉS (choices=[])
+                # NO hacer break; seguir consumiendo hasta recibirlo.
+                yield StreamChunk(finish_reason=finish, is_done=True)
+                continue
+
+            # chunk final de usage (choices vacío) — contabilizar y terminar.
+            chunk_usage = getattr(chunk, "usage", None)
+            if chunk_usage is not None:
+                yield StreamChunk(usage=_usage_to_dict(chunk_usage), is_done=True)
                 break
 
             if delta is None:
@@ -621,7 +805,7 @@ class ModelsController:
         """
         import queue
 
-        # NB3 — sanitize messages for Ollama SDK (string→dict args conversion)
+        # Sanitize messages for Ollama SDK (string→dict args conversion)
         messages = sanitize_messages_for_ollama(messages)
 
         chunk_queue: queue.Queue = queue.Queue()
@@ -683,7 +867,7 @@ class ModelsController:
                     if isinstance(raw_args, dict):
                         # is not None: {} vacío debe serializarse como "{}"
                         # para que el accumulador/repair loop lo procese
-                        # (bug 2026-08-15: `if raw_args` trataba {} como falsy).
+                        # (bug: `if raw_args` trataba {} como falsy).
                         args_str = json.dumps(raw_args) if raw_args is not None else None
                     elif isinstance(raw_args, str):
                         args_str = json.dumps(normalize_arguments(raw_args))
@@ -723,7 +907,13 @@ class ModelsController:
         return _NormalizedResponse(choices=[_Choice(message=_Message(content=f"❌ {message}"))])
 
     @staticmethod
-    def _track_usage(response: Any) -> None:
+    def _track_usage(
+        response: Any,
+        workspace: str | None = None,
+        provider: str = "",
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
         """Extract token usage and cache metrics from LLM response."""
         usage = getattr(response, "usage", None)
         if usage is None:
@@ -731,6 +921,10 @@ class ModelsController:
 
         from core.cache_manager import cache_manager
         from core.metrics import metrics as m
+
+        # Epoch del call-config (conservador: provider|model|max_tokens)
+        if provider or model:
+            cache_manager.note_epoch(workspace or "main", provider, model, max_tokens)
 
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
@@ -744,25 +938,104 @@ class ModelsController:
             cache_miss_tokens=cache_miss,
         )
 
+        # Disjoint token-meter buckets (DeepSeek rule: prompt_tokens includes hits)
+        # UNA sola llamada a track_usage por respuesta — antes se
+        # invocaba dos veces (sin buckets + con buckets) y llm_calls/tokens
+        # quedaban duplicados en CacheManager.
+        d = _disjoint_usage(usage)
+        if d:
+            m.record_disjoint_usage(
+                input_tokens=d["input_tokens"],
+                output_tokens=d["output_tokens"],
+                cache_read_tokens=d["cache_read_tokens"],
+                cache_write_tokens=d["cache_write_tokens"],
+            )
         cache_manager.track_usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             prompt_cache_hit_tokens=cache_hit,
             prompt_cache_miss_tokens=cache_miss,
+            workspace=workspace or "main",
+            uncached_input_tokens=d["input_tokens"] if d else None,
+            cache_write_tokens=d["cache_write_tokens"] if d else None,
+        )
+
+    @staticmethod
+    def _track_stream_usage(
+        usage: dict | None,
+        workspace: str | None = None,
+        provider: str = "",
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Track streaming usage: workflow budget + wire totals + disjoint buckets."""
+        if not usage:
+            return
+        from core.cache_manager import cache_manager
+        from core.metrics import metrics as m
+
+        # Epoch del call-config (conservador: provider|model|max_tokens)
+        if provider or model:
+            cache_manager.note_epoch(workspace or "main", provider, model, max_tokens)
+
+        prompt_tokens = usage.get("prompt_tokens", 0) or 0
+        completion_tokens = usage.get("completion_tokens", 0) or 0
+        cache_hit = usage.get("prompt_cache_hit_tokens", 0) or 0
+        cache_miss = usage.get("prompt_cache_miss_tokens", 0) or 0
+
+        # al budget solo llega el coste real: los cache hits no lo queman
+        # (misma regla que _track_budget)
+        total = max(0, prompt_tokens - cache_hit) + completion_tokens
+        if total > 0:
+            from tools.orchestrator import add_llm_token_usage
+
+            add_llm_token_usage(total)
+
+        m.record_llm_usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cache_hit_tokens=cache_hit,
+            cache_miss_tokens=cache_miss,
+        )
+        d = _disjoint_usage(usage)
+        if d:
+            m.record_disjoint_usage(
+                input_tokens=d["input_tokens"],
+                output_tokens=d["output_tokens"],
+                cache_read_tokens=d["cache_read_tokens"],
+                cache_write_tokens=d["cache_write_tokens"],
+            )
+        # una sola llamada (ver _track_usage)
+        cache_manager.track_usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            prompt_cache_hit_tokens=cache_hit,
+            prompt_cache_miss_tokens=cache_miss,
+            workspace=workspace or "main",
+            uncached_input_tokens=d["input_tokens"] if d else None,
+            cache_write_tokens=d["cache_write_tokens"] if d else None,
         )
 
     @staticmethod
     def _track_budget(response: Any) -> None:
-        """Track actual LLM API tokens in the workflow token budget."""
+        """Track actual LLM API tokens in the workflow token budget.
+
+        Los cache hits no queman presupuesto: el prefijo estable del system
+        prompt se sirve cacheado (barato/gratis) y contar lo cobraría dos
+        veces el mismo contexto re-enviado por llamada.
+        """
         usage = getattr(response, "usage", None)
         if usage is None:
             return
         total_tokens = getattr(usage, "total_tokens", 0) or 0
         if total_tokens <= 0:
             return
+        billed = max(0, total_tokens - _cache_hit_tokens(usage))
+        if billed <= 0:
+            return
         from tools.orchestrator import add_llm_token_usage
 
-        add_llm_token_usage(total_tokens)
+        add_llm_token_usage(billed)
 
 
 # Single global instance

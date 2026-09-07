@@ -1,5 +1,6 @@
 # llm/provider.py
 import logging
+import time
 
 import httpx
 
@@ -38,6 +39,52 @@ class LLMProvider:
             return "ollama"
         role_config = settings.model_roles.get(role, settings.model_roles["default"])
         return role_config.get("provider", DEFAULT_PROVIDER_NAME)
+
+    @classmethod
+    def _effective_provider(cls, provider: str) -> str:
+        """Resuelve el proveedor EFECTIVO sin consumir sonda del breaker."""
+        key_map = {
+            "deepseek": settings.deepseek_api_key,
+            "openai": settings.openai_api_key,
+            "grok": settings.grok_api_key,
+        }
+        has_key = bool(key_map.get(provider))
+        breaker = CircuitBreakerRegistry.get(provider)
+        breaker_open_now = breaker.state == "open" and (
+            time.time() - breaker._last_failure_time < breaker.recovery_timeout
+        )
+        return provider if (has_key and not breaker_open_now) else "ollama"
+
+    @classmethod
+    def get_client_with_provider(
+        cls, role: str, temperature: float | None = None, force_ollama: bool = False
+    ):
+        """Como get_client pero retorna el PROVEEDOR EFECTIVO usado.
+
+        Returns: (client, model, temp, effective_provider)
+        """
+        offline = force_ollama or settings.offline_mode or cls._offline_manager.is_offline()
+        if offline:
+            return (*cls._create_ollama_client(role, temperature), "ollama")
+
+        role_config = settings.model_roles.get(role, settings.model_roles["default"])
+        provider = role_config.get("provider", DEFAULT_PROVIDER_NAME)
+        client_model_temp = cls.get_client(role, temperature)
+        return (*client_model_temp, cls._effective_provider(provider))
+
+    @classmethod
+    def get_async_client_with_provider(
+        cls, role: str, temperature: float | None = None, force_ollama: bool = False
+    ):
+        """Variante async de get_client_with_provider."""
+        offline = force_ollama or settings.offline_mode or cls._offline_manager.is_offline()
+        if offline:
+            return (*cls._create_ollama_client(role, temperature), "ollama")
+
+        role_config = settings.model_roles.get(role, settings.model_roles["default"])
+        provider = role_config.get("provider", DEFAULT_PROVIDER_NAME)
+        client_model_temp = cls.get_async_client(role, temperature)
+        return (*client_model_temp, cls._effective_provider(provider))
 
     @classmethod
     def get_client(cls, role: str, temperature: float | None = None, force_ollama: bool = False):

@@ -4,14 +4,17 @@ Aislamiento por workspace: subdirectorios memory/{workspace}/
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import faiss
+import numpy as np
 
 from core.embedding_provider import EmbeddingProvider
 from core.faiss_indexer import FAISS_DIMENSION
@@ -21,11 +24,33 @@ from llm import models, parse_json_from_llm
 logger = logging.getLogger(__name__)
 
 
+def _knowledge_entries(workspace: str) -> list[tuple[str, Any]]:
+    """PKB: docs de workspaces/<ws>/knowledge/**/*.md → claves 'kb_<ruta>'.
+
+    Se cargan en el switch de workspace (junto a memory/<ws>/*.md) para que
+    la búsqueda semántica del MemoryManager cubra el conocimiento curado del
+    proyecto SIN subsistema nuevo. El prefijo kb_ es protegido (nunca se
+    pisa ni se borra por la tool memory_inspector).
+    """
+    from core.path_resolver import paths
+
+    entries: list[tuple[str, Any]] = []
+    kdir = paths.workspace_knowledge_dir(workspace)
+    if not kdir.is_dir():
+        return entries
+    for file in sorted(kdir.rglob("*.md")):
+        rel = file.relative_to(kdir).as_posix()
+        key = "kb_" + re.sub(r"[^a-z0-9_]+", "_", rel[: -len(".md")].lower())
+        entries.append((key, file.read_text(encoding="utf-8", errors="replace").strip()))
+    return entries
+
+
 class MemoryManager:
     _PROTECTED_EXACT: set[str] = {
         "kairos_daemon_heartbeat",
         "user_profile",
         "user_profile_last_update",
+        "last_task_summary",
         "security_private",
         "last_creative_output",
         "last_analysis",
@@ -33,7 +58,7 @@ class MemoryManager:
         "last_connection",
         "last_successful_code",
     }
-    _PROTECTED_PREFIXES: tuple[str, ...] = ("workflow_subtask_", "last_", "merged_")
+    _PROTECTED_PREFIXES: tuple[str, ...] = ("workflow_subtask_", "last_", "merged_", "kb_")
 
     _instance = None
     _lock = threading.RLock()
@@ -53,26 +78,51 @@ class MemoryManager:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.active_workspace = None
         self.documents: list[tuple[str, Any]] = []
-        self.index = faiss.IndexFlatL2(FAISS_DIMENSION)
+        self.index = self._new_index()
+        # mapeo estable id→clave (IndexIDMap2) — evita desincronización
+        # posicional entre índice y documents en overwrites/rebuilds.
+        self._ids: dict[str, int] = {}
+        self._id_to_key: dict[int, str] = {}
+        self._next_id = 0
         self.embedder = EmbeddingProvider  # lazy — carga en background
         self._access_log: dict[str, float] = {}  # key -> last access timestamp
+        # claves excluidas del índice en el último
+        # switch por fallo de embedding (consultable; el warning va al log).
+        self.last_switch_skipped: list[str] = []
         logger.info("✅ Memoria 3-capas inicializada (embeddings en carga lazy)")
 
-    def _embed(self, text: str):
-        """Wrapper que espera al modelo si aún no está listo."""
+    @staticmethod
+    def _new_index():
+        """Índice con mapeo estable id→vector: remove_ids y add_with_ids."""
+        return faiss.IndexIDMap2(faiss.IndexFlatL2(FAISS_DIMENSION))
+
+    def _remove_entry_locked(self, key: str) -> None:
+        """Elimina clave de índice, mapas de id, documentos y access-log. Requiere _lock."""
+        vid = self._ids.pop(key, None)
+        if vid is not None:
+            try:
+                self.index.remove_ids(np.array([vid], dtype="int64"))
+            except Exception:
+                logger.warning("remove_ids falló para '%s'", key, exc_info=True)
+            self._id_to_key.pop(vid, None)
+        self.documents = [d for d in self.documents if d[0] != key]
+        self._access_log.pop(key, None)
+
+    def _embed(self, text: str, kind: str = "passage"):
+        """Wrapper que espera al modelo si aún no está listo (kind e5)."""
         if not self.embedder.wait_until_ready(timeout=60):
             logger.warning("Modelo de embeddings no disponible tras timeout")
             return None
-        return self.embedder.encode(text)
+        return self.embedder.encode(text, kind=kind)
 
-    async def _embed_async(self, text: str):
+    async def _embed_async(self, text: str, kind: str = "passage"):
         """Async wrapper — offloads CPU-bound embedding to a thread."""
         import asyncio
 
         if not self.embedder.wait_until_ready(timeout=60):
             logger.warning("Modelo de embeddings no disponible tras timeout")
             return None
-        return await asyncio.to_thread(self.embedder.encode, text)
+        return await asyncio.to_thread(self.embedder.encode, text, kind=kind)
 
     # ==================== HELPERS ====================
     def get_user_summary(self) -> str:
@@ -99,7 +149,8 @@ class MemoryManager:
         return "\n".join(f"- {f}" for f in facts[:max_facts])
 
     async def save_user_correction(self, original_task: str, correction: str) -> bool:
-        key = f"correction_{hash(original_task) % 100000}"
+        # hash() de str varía POR PROCESO — sha1 determinista cross-restart
+        key = f"correction_{hashlib.sha1(original_task.encode()).hexdigest()[:8]}"
         value = {
             "original": original_task[:300],
             "correction": correction[:800],
@@ -108,6 +159,17 @@ class MemoryManager:
         return await self.write(key, value, validated=True, content_hint="analytical")
 
     # ==================== CAMBIO DE WORKSPACE ====================
+    @staticmethod
+    def _migrate_legacy_last_update(ws_dir: Path) -> None:
+        """Renombra el resumen de última tarea al nombre honesto: la clave
+        legacy sugería perfil de usuario pero contenía el resumen del run."""
+        legacy = ws_dir / "user_profile_last_update.md"
+        if legacy.exists():
+            try:
+                legacy.replace(ws_dir / "last_task_summary.md")
+            except OSError:
+                logger.warning("No se pudo renombrar el resumen legacy de tarea", exc_info=True)
+
     async def switch_workspace(self, workspace: str):
         """Switch to the given workspace, loading its documents and index.
         Embedding computation runs in a thread pool to avoid blocking the event loop."""
@@ -122,15 +184,27 @@ class MemoryManager:
             try:
                 ws_dir = self.base_dir / workspace
                 ws_dir.mkdir(parents=True, exist_ok=True)
+                self._migrate_legacy_last_update(ws_dir)
 
                 # Read files under lock (fast I/O)
                 file_entries: list[tuple[str, Any]] = []
+                new_access: dict[str, float] = {}
                 for file in ws_dir.glob("*.md"):
+                    # legacy write-only — excluir del load (no re-embeddear)
+                    if file.stem.startswith("workflow_subtask_"):
+                        continue
                     with open(file, encoding="utf-8") as f:
                         content = f.read().strip()
                     key = file.stem
                     val = json.loads(content) if content.startswith("{") else content
                     file_entries.append((key, val))
+                    # mtime real como registro de acceso inicial del workspace
+                    new_access[key] = file.stat().st_mtime
+
+                # PKB: docs de knowledge/**/*.md con prefijo kb_
+                for kb_key, kb_val in _knowledge_entries(workspace):
+                    file_entries.append((kb_key, kb_val))
+                    new_access[kb_key] = time.time()
             except Exception as e:
                 logger.warning("Unhandled exception in MemoryManager", exc_info=True)
                 self.active_workspace = old_ws
@@ -140,25 +214,62 @@ class MemoryManager:
 
         # Compute embeddings in thread pool (slow operation, non-blocking for async)
         def _build_index():
-            new_index = faiss.IndexFlatL2(FAISS_DIMENSION)
-            new_docs = []
+            new_index = MemoryManager._new_index()
+            new_docs: list[tuple[str, Any]] = []
+            ids: dict[str, int] = {}
+            id_to_key: dict[int, str] = {}
+            vid = 0
+            skipped: list[str] = []  # exclusiones VISIBLES, no silenciosas
             for key, val in file_entries:
                 try:
                     emb = self._embed(str(val))
-                    new_index.add(emb.reshape(1, -1))
+                    if emb is None:
+                        raise ValueError("embedding no disponible")
+                    new_index.add_with_ids(emb.reshape(1, -1), np.array([vid], dtype="int64"))
+                    ids[key] = vid
+                    id_to_key[vid] = key
+                    vid += 1
                     new_docs.append((key, val))
-                except Exception:
-                    logger.warning("Error generating embedding for '%s', skipping", key)
-            return new_index, new_docs
+                except Exception as e:
+                    # lo que falla embedding se excluye de AMBAS estructuras
+                    # (ntotal == len(documents)) — pero se registra y se
+                    # reporta en el resumen del switch.
+                    skipped.append(key)
+                    logger.warning(
+                        "embedding falló para '%s' (%s) — excluido del índice semántico",
+                        key,
+                        e,
+                    )
+            return new_index, new_docs, ids, id_to_key, vid, skipped
 
-        new_index, new_docs = await asyncio.to_thread(_build_index)
+        new_index, new_docs, ids, id_to_key, next_vid, skipped = await asyncio.to_thread(
+            _build_index
+        )
 
         # Atomic swap of index and documents under lock
         with self._lock:
+            doc_keys = {k for k, _ in new_docs}
+            new_access = {k: v for k, v in new_access.items() if k in doc_keys}
             self.active_workspace = workspace
             self.documents = new_docs
             self.index = new_index
+            self._ids = ids
+            self._id_to_key = id_to_key
+            self._next_id = next_vid
+            # access-log limpio y poblado con mtimes reales del workspace entrante
+            self._access_log.clear()
+            self._access_log.update(new_access)
+            # registro consultable de lo excluido en el último switch
+            self.last_switch_skipped = skipped
             logger.info(f"🔄 Workspace switched to '{workspace}' ({len(new_docs)} documents)")
+        if skipped:
+            logger.warning(
+                "switch a '%s': %d documento(s) EXCLUIDOS del índice semántico por fallo de "
+                "embedding: %s — revisa logs y el estado del embedder",
+                workspace,
+                len(skipped),
+                ", ".join(skipped[:8]) + ("…" if len(skipped) > 8 else ""),
+            )
 
     # ==================== ESCRITURA EN SYSTEM (global) ====================
     async def write_system(self, key: str, value: Any) -> bool:
@@ -178,7 +289,7 @@ class MemoryManager:
                 logger.error(f"Error escribiendo en system/{key}: {e}")
                 return False
 
-    # ==================== ROBUST WRITE WITH ROLLBACK (FIXED) ====================
+    # ==================== ROBUST WRITE WITH ROLLBACK ====================
     async def write(
         self, key: str, value: Any, validated: bool = False, content_hint: str | None = None
     ) -> bool:
@@ -208,6 +319,7 @@ class MemoryManager:
             logger.error(f"❌ Embedding no disponible para '{key}'")
             return False
 
+        needs_rebuild = False
         with self._lock:
             old_entry = next(((k, v) for k, v in self.documents if k == key), None)
             self.documents = [doc for doc in self.documents if doc[0] != key]
@@ -225,11 +337,23 @@ class MemoryManager:
                         f.write(str(value))
                 file_created = True
 
-                self.index.add(embedding.reshape(1, -1))
+                # vector con id estable — overwrite purga el vector viejo
+                # vía remove_ids en lugar de añadir un huérfano.
+                vid = self._ids.get(key)
+                if vid is None:
+                    vid = self._next_id
+                    self._next_id += 1
+                else:
+                    self.index.remove_ids(np.array([vid], dtype="int64"))
+                    self._id_to_key.pop(vid, None)
+                self.index.add_with_ids(embedding.reshape(1, -1), np.array([vid], dtype="int64"))
+                self._ids[key] = vid
+                self._id_to_key[vid] = key
+
                 self.documents.append((key, value))
                 self._access_log[key] = time.time()
             except Exception as e:
-                logger.error(f"Error saving '{key}': {e}")
+                logger.error(f"Error saving '{key}': {e}", exc_info=True)
                 # Always restore the previous entry
                 if old_entry is not None:
                     self.documents.append(old_entry)
@@ -246,13 +370,19 @@ class MemoryManager:
                     logger.info(f"↩️ Rollback completado para '{key}'")
                 elif file_created and file.exists():
                     file.unlink()
+                # el índice pudo quedar modificado a medias — reconstruir alineado.
+                needs_rebuild = True
                 return False
+
+        if needs_rebuild:
+            await self._rebuild_index()
+            return False
 
         logger.info(f"✅ Memoria escrita: {key} (score: {score})")
         return True
 
     def _get_quality_threshold(self, content_hint: str | None, key: str) -> int:
-        if key == "user_profile_last_update":
+        if key in ("user_profile_last_update", "last_task_summary"):
             return 15
         if key.startswith("workflow_subtask_"):
             return 20
@@ -343,13 +473,11 @@ VALUE: {safe_value}
         if len(docs) < 2:
             return 0
 
-        seen: set[int] = set()
-        for i, (key_a, val_a) in enumerate(docs):
-            if i in seen:
+        seen: set[str] = set()
+        for _i, (key_a, val_a) in enumerate(docs):
+            if key_a in seen:
                 continue
-            if key_a in self._PROTECTED_EXACT or any(
-                key_a.startswith(p) for p in self._PROTECTED_PREFIXES
-            ):
+            if self._is_protected_key(key_a):
                 continue
             try:
                 emb_a = await self._embed_async(str(val_a))
@@ -364,12 +492,19 @@ VALUE: {safe_value}
                 )
                 continue
 
-            for dist, idx in zip(distances[0], indices[0], strict=False):
-                if idx < 0 or idx >= len(docs) or idx == i or idx in seen:
+            for dist, vid in zip(distances[0], indices[0], strict=False):
+                vid = int(vid)
+                if vid < 0:
+                    continue
+                # resolución por id estable — no posicional
+                key_b = self._id_to_key.get(vid)
+                if key_b is None or key_b == key_a or key_b in seen:
                     continue
                 similarity = 1.0 / (1.0 + float(dist))
                 if similarity > 0.92:
-                    key_b, val_b = docs[idx]
+                    val_b = next((v for k, v in docs if k == key_b), None)
+                    if val_b is None:
+                        continue
                     # Keep the document with higher quality score
                     crit_a = await self._llm_critique(key_a, val_a)
                     crit_b = await self._llm_critique(key_b, val_b)
@@ -377,24 +512,23 @@ VALUE: {safe_value}
                     score_b = crit_b.get("quality_score", 0)
 
                     if score_a >= score_b:
-                        to_remove = (idx, key_b)
+                        loser = key_b
                         logger.info(
                             f"Duplicate merged: '{key_b}' → '{key_a}' (sim={similarity:.3f})"
                         )
                     else:
-                        to_remove = (i, key_a)
+                        loser = key_a
                         logger.info(
                             f"Duplicate merged: '{key_a}' → '{key_b}' (sim={similarity:.3f})"
                         )
 
-                    seen.add(to_remove[0])
+                    seen.add(loser)
                     with self._lock:
                         ws_dir = self.base_dir / self.active_workspace
-                        file = ws_dir / f"{to_remove[1]}.md"
+                        file = ws_dir / f"{loser}.md"
                         if file.exists():
                             file.unlink()
-                        self.documents = [d for d in self.documents if d[0] != to_remove[1]]
-                        self._access_log.pop(to_remove[1], None)
+                        self._remove_entry_locked(loser)
                     removed += 1
                     break  # Only remove one duplicate per source document
 
@@ -415,11 +549,9 @@ VALUE: {safe_value}
             return 0
 
         # Find similar-but-not-identical pairs (similarity 0.65-0.92)
-        checked: set[tuple[int, int]] = set()
-        for i, (key_a, val_a) in enumerate(docs):
-            if key_a in self._PROTECTED_EXACT or any(
-                key_a.startswith(p) for p in self._PROTECTED_PREFIXES
-            ):
+        checked: set[tuple[str, str]] = set()
+        for _i, (key_a, val_a) in enumerate(docs):
+            if self._is_protected_key(key_a):
                 continue
             try:
                 emb_a = await self._embed_async(str(val_a))
@@ -434,10 +566,15 @@ VALUE: {safe_value}
                 )
                 continue
 
-            for dist, idx in zip(distances[0], indices[0], strict=False):
-                if idx < 0 or idx >= len(docs) or idx == i:
+            for dist, vid in zip(distances[0], indices[0], strict=False):
+                vid = int(vid)
+                if vid < 0:
                     continue
-                pair = tuple(sorted([i, idx]))
+                # resolución por id estable — no posicional
+                key_b = self._id_to_key.get(vid)
+                if key_b is None or key_b == key_a:
+                    continue
+                pair: tuple[str, str] = (key_a, key_b) if key_a <= key_b else (key_b, key_a)
                 if pair in checked:
                     continue
                 checked.add(pair)
@@ -446,15 +583,19 @@ VALUE: {safe_value}
                 if not (0.65 <= similarity <= 0.92):
                     continue
 
-                key_b, val_b = docs[idx]
+                val_b = next((v for k, v in docs if k == key_b), None)
+                if val_b is None:
+                    continue
                 resolution = await self._arbitrate_contradiction(key_a, val_a, key_b, val_b)
                 if resolution is None:
                     continue
 
                 resolved += 1
-                # Write merged resolution, remove original pair
+                # Hecho consolidado con clave determinista cross-restart
+                # (hashlib sha1, no hash()) y prefijo fact_ BUSCABLE (no protegido).
+                digest = hashlib.sha1(f"{key_a}|{key_b}".encode()).hexdigest()[:8]
                 await self.write(
-                    f"merged_{key_a}_{key_b}"[:80],
+                    f"fact_{key_a}_{key_b}_{digest}"[:80],
                     resolution,
                     validated=True,
                 )
@@ -464,8 +605,7 @@ VALUE: {safe_value}
                         file = ws_dir / f"{rm_key}.md"
                         if file.exists():
                             file.unlink()
-                        self.documents = [d for d in self.documents if d[0] != rm_key]
-                        self._access_log.pop(rm_key, None)
+                        self._remove_entry_locked(rm_key)
 
         if resolved > 0:
             await self._rebuild_index()
@@ -506,13 +646,19 @@ VALUE: {safe_value}
         removed = 0
 
         with self._lock:
+            ws_dir = self.base_dir / self.active_workspace
             stale_keys = []
             for key, _val in self.documents:
-                if key in self._PROTECTED_EXACT or any(
-                    key.startswith(p) for p in self._PROTECTED_PREFIXES
-                ):
+                if self._is_protected_key(key):
                     continue
-                last_access = self._access_log.get(key, 0)
+                last_access = self._access_log.get(key)
+                if last_access is None:
+                    # fallback al mtime real del archivo en disco
+                    f = ws_dir / f"{key}.md"
+                    try:
+                        last_access = f.stat().st_mtime if f.exists() else 0.0
+                    except OSError:
+                        last_access = 0.0
                 if last_access < threshold:
                     stale_keys.append(key)
 
@@ -522,9 +668,8 @@ VALUE: {safe_value}
                     file = ws_dir / f"{key}.md"
                     if file.exists():
                         file.unlink()
-                    self._access_log.pop(key, None)
+                    self._remove_entry_locked(key)
                     logger.info(f"Pruned stale document: {key}")
-                self.documents = [d for d in self.documents if d[0] not in stale_keys]
                 removed = len(stale_keys)
 
         if removed > 0:
@@ -532,23 +677,40 @@ VALUE: {safe_value}
         return removed
 
     async def _rebuild_index(self) -> None:
-        """Rebuild FAISS index from current documents (called after batch modifications)."""
+        """Rebuild alineado: los docs cuyo embedding falle se excluyen de
+        AMBAS estructuras (índice y documents) para preservar el invariante
+        ntotal == len(documents). Regenera los mapas id→clave."""
         with self._lock:
             doc_snapshot = list(self.documents)
 
-        precomputed: list = []
-        for _, val in doc_snapshot:
+        aligned: list[tuple[tuple[str, Any], Any]] = []
+        for pair in doc_snapshot:
             try:
-                emb = await self._embed_async(str(val))
-                if emb is not None:
-                    precomputed.append(emb)
+                emb = await self._embed_async(str(pair[1]))
             except Exception as e:
                 logger.warning(f"Error generating embedding during index rebuild: {e}")
+                emb = None
+            if emb is not None:
+                aligned.append((pair, emb))
 
+        new_index = self._new_index()
+        ids: dict[str, int] = {}
+        id_to_key: dict[int, str] = {}
         with self._lock:
-            self.index = faiss.IndexFlatL2(FAISS_DIMENSION)
-            for emb in precomputed:
-                self.index.add(emb.reshape(1, -1))
+            next_id = self._next_id
+            for (key, _val), emb in aligned:
+                vid = ids.get(key)
+                if vid is None:
+                    vid = next_id
+                    next_id += 1
+                new_index.add_with_ids(emb.reshape(1, -1), np.array([vid], dtype="int64"))
+                ids[key] = vid
+                id_to_key[vid] = key
+            self.index = new_index
+            self._ids = ids
+            self._id_to_key = id_to_key
+            self._next_id = next_id
+            self.documents = [pair for pair, _ in aligned]
             logger.debug(f"FAISS index rebuilt: {self.index.ntotal} vectors")
 
     async def self_healing_check(self):
@@ -584,8 +746,7 @@ VALUE: {safe_value}
                     file = ws_dir / f"{key}.md"
                     if file.exists():
                         file.unlink()
-                    self.documents = [doc for doc in self.documents if doc[0] != key]
-                    self._access_log.pop(key, None)
+                    self._remove_entry_locked(key)
                     logger.warning(f"🗑️ Eliminado por baja calidad: {key}")
 
         # Phase 2: Duplicate detection via FAISS similarity
@@ -597,27 +758,11 @@ VALUE: {safe_value}
         # Phase 4: Prune stale documents (30+ days unaccessed)
         pruned_count = await self._prune_stale(max_age_days=30)
 
-        # Atomic index rebuild: take snapshot under lock,
-        # precompute embeddings outside the lock, then rebuild
-        # the index inside the lock with the precomputed embeddings.
-        with self._lock:
-            doc_snapshot = list(self.documents)
-
-        # Precalcular embeddings FUERA del lock
-        precomputed: list = []
-        for _, val in doc_snapshot:
-            try:
-                emb = await self._embed_async(str(val))
-                if emb is not None:
-                    precomputed.append(emb)
-            except Exception as e:
-                logger.warning(f"Error generando embedding durante self-healing: {e}")
-
-        # Rebuild index inside the lock
-        with self._lock:
-            self.index = faiss.IndexFlatL2(FAISS_DIMENSION)
-            for emb in precomputed:
-                self.index.add(emb.reshape(1, -1))
+        # Rebuild SOLO si el healing actuó (incondicional re-embeddearía
+        # el corpus completo en cada pasada sin cambios).
+        acted = bool(low_quality) or dup_count > 0 or contra_count > 0 or pruned_count > 0
+        if acted:
+            await self._rebuild_index()
 
         logger.info(
             f"✅ Self-healing completado en workspace '{self.active_workspace}' | "
@@ -632,9 +777,44 @@ VALUE: {safe_value}
             key.startswith(p) for p in self._PROTECTED_PREFIXES
         )
 
+    @staticmethod
+    def _results_from_ids(
+        distances,
+        indices,
+        doc_map: dict[str, Any],
+        id_to_key: dict[int, str],
+        access_log: dict[str, float],
+        is_protected,
+        min_similarity: float,
+    ) -> list[dict]:
+        """Resuelve resultados por id estable (IndexIDMap2), no posicional."""
+        results: list[dict] = []
+        for dist, vid in zip(distances[0], indices[0], strict=False):
+            vid = int(vid)
+            if vid < 0:
+                continue
+            key = id_to_key.get(vid)
+            if key is None or is_protected(key):
+                continue
+            val = doc_map.get(key)
+            if val is None:
+                continue
+            if min_similarity > 0 and 1.0 / (1.0 + dist) < min_similarity:
+                continue
+            access_log[key] = time.time()
+            results.append(
+                {
+                    "key": key,
+                    "value": val,
+                    "distance": float(dist),
+                    "similarity": round(1.0 / (1.0 + float(dist)), 4),
+                }
+            )
+        return results
+
     def search(self, query: str, k: int = 5, min_similarity: float = 0.0) -> list[dict]:
         """Búsqueda semántica real usando FAISS. Retorna top-k documentos con scores."""
-        query_emb = self._embed(query)
+        query_emb = self._embed(query, kind="query")  # A-XI
         if query_emb is None:
             return []
         with self._lock:
@@ -644,26 +824,16 @@ VALUE: {safe_value}
                 distances, indices = self.index.search(
                     query_emb.reshape(1, -1), min(k, self.index.ntotal)
                 )
-                results = []
-                for dist, idx in zip(distances[0], indices[0], strict=False):
-                    if idx < 0 or idx >= len(self.documents):
-                        continue
-                    similarity_score = 1.0 / (1.0 + dist)
-                    if similarity_score < min_similarity and min_similarity > 0:
-                        continue
-                    key, val = self.documents[idx]
-                    if self._is_protected_key(key):
-                        continue
-                    self._access_log[key] = time.time()
-                    results.append(
-                        {
-                            "key": key,
-                            "value": val,
-                            "distance": float(dist),
-                            "similarity": round(1.0 / (1.0 + float(dist)), 4),
-                        }
-                    )
-                return results
+                doc_map = {k_: v for k_, v in self.documents}
+                return self._results_from_ids(
+                    distances,
+                    indices,
+                    doc_map,
+                    self._id_to_key,
+                    self._access_log,
+                    self._is_protected_key,
+                    min_similarity,
+                )
             except Exception as e:
                 logger.error(f"Error en búsqueda semántica: {e}")
                 return []
@@ -672,7 +842,7 @@ VALUE: {safe_value}
         """Async version — offloads embedding computation to a thread."""
         import asyncio
 
-        query_emb = await self._embed_async(query)
+        query_emb = await self._embed_async(query, kind="query")  # A-XI
         if query_emb is None:
             return []
 
@@ -684,26 +854,16 @@ VALUE: {safe_value}
                     distances, indices = self.index.search(
                         query_emb.reshape(1, -1), min(k, self.index.ntotal)
                     )
-                    results = []
-                    for dist, idx in zip(distances[0], indices[0], strict=False):
-                        if idx < 0 or idx >= len(self.documents):
-                            continue
-                        similarity_score = 1.0 / (1.0 + dist)
-                        if similarity_score < min_similarity and min_similarity > 0:
-                            continue
-                        key, val = self.documents[idx]
-                        if self._is_protected_key(key):
-                            continue
-                        self._access_log[key] = time.time()
-                        results.append(
-                            {
-                                "key": key,
-                                "value": val,
-                                "distance": float(dist),
-                                "similarity": round(1.0 / (1.0 + float(dist)), 4),
-                            }
-                        )
-                    return results
+                    doc_map = {k_: v for k_, v in self.documents}
+                    return self._results_from_ids(
+                        distances,
+                        indices,
+                        doc_map,
+                        self._id_to_key,
+                        self._access_log,
+                        self._is_protected_key,
+                        min_similarity,
+                    )
                 except Exception as e:
                     logger.error(f"Error en búsqueda semántica: {e}")
                     return []
@@ -726,17 +886,32 @@ VALUE: {safe_value}
             else {"name": None, "country": None, "preferences": {}}
         )
 
+    @staticmethod
+    def _deep_merge_profile(current: dict, new_data: dict) -> dict:
+        """Merge profundo — 'preferences' se fusiona clave a clave en vez
+        de reemplazar el dict entero (pérdida silenciosa de preferencias)."""
+        merged = {**current}
+        for k, v in new_data.items():
+            if isinstance(v, dict) and isinstance(merged.get(k), dict):
+                merged[k] = {**merged[k], **v}
+            elif v is not None:
+                merged[k] = v
+        return merged
+
     async def update_user_profile(self, new_data: dict) -> bool:
         if not new_data:
             return False
         current = self.get_user_profile()
-        updated = {**current, **new_data}
-        # Defensa en profundidad contra el bucle de contaminación del perfil:
-        # nunca persistir un perfil trivial (solo name, p. ej. "ChatGPT" stale)
-        # aunque venga de un caller distinto al finalizer.
+        current_has_data = any(current.values())
+        updated = self._deep_merge_profile(current, new_data)
         from core.utils import is_trivial_profile
 
-        if is_trivial_profile(updated):
+        # Gate contextual anti-stale: con perfil YA poblado, hechos
+        # solo-nombre no lo tocan (una conversación contaminada no re-escribe
+        # el nombre). Con perfil vacío, sembrar con el nombre es el dato
+        # legítimo que el usuario acaba de decir — rechazarlo dejaba al
+        # sistema sin memoria cross-sesión (user_profile jamás nacía).
+        if current_has_data and is_trivial_profile(new_data):
             return False
         return await self.write("user_profile", updated, validated=True)
 

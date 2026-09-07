@@ -35,7 +35,7 @@ class TestAccessTracking:
 
 class TestPruneStale:
     @pytest.mark.asyncio
-    async def test_prunes_old_documents(self):
+    async def test_prunes_old_documents(self, monkeypatch):
         from core.memory.manager import MemoryManager
 
         mgr = MemoryManager()
@@ -46,7 +46,7 @@ class TestPruneStale:
             "old_doc": time.time() - (31 * 86400),
             "recent_doc": time.time(),
         }
-        mgr._embed = MagicMock(return_value=None)
+        monkeypatch.setattr(mgr, "_embed", MagicMock(return_value=None), raising=False)
 
         with patch.object(mgr, "_rebuild_index", new_callable=AsyncMock):
             removed = await mgr._prune_stale(max_age_days=30)
@@ -56,7 +56,7 @@ class TestPruneStale:
             assert "recent_doc" in remaining
 
     @pytest.mark.asyncio
-    async def test_protects_system_keys(self):
+    async def test_protects_system_keys(self, monkeypatch):
         from core.memory.manager import MemoryManager
 
         mgr = MemoryManager()
@@ -72,7 +72,7 @@ class TestPruneStale:
             "kairos_daemon_heartbeat": time.time() - (60 * 86400),
             "security_private": time.time() - (60 * 86400),
         }
-        mgr._embed = MagicMock(return_value=None)
+        monkeypatch.setattr(mgr, "_embed", MagicMock(return_value=None), raising=False)
 
         with patch.object(mgr, "_rebuild_index", new_callable=AsyncMock):
             removed = await mgr._prune_stale(max_age_days=30)
@@ -80,7 +80,7 @@ class TestPruneStale:
             assert len(mgr.documents) == 3
 
     @pytest.mark.asyncio
-    async def test_no_stale_documents(self):
+    async def test_no_stale_documents(self, monkeypatch):
         from core.memory.manager import MemoryManager
 
         mgr = MemoryManager()
@@ -88,7 +88,7 @@ class TestPruneStale:
         mgr.base_dir = MagicMock()
         mgr.documents = [("fresh", "content")]
         mgr._access_log = {"fresh": time.time()}
-        mgr._embed = MagicMock(return_value=None)
+        monkeypatch.setattr(mgr, "_embed", MagicMock(return_value=None), raising=False)
 
         with patch.object(mgr, "_rebuild_index", new_callable=AsyncMock):
             removed = await mgr._prune_stale(max_age_days=30)
@@ -98,7 +98,7 @@ class TestPruneStale:
 
 class TestRebuildIndex:
     @pytest.mark.asyncio
-    async def test_rebuild_clears_and_rebuilds(self):
+    async def test_rebuild_clears_and_rebuilds(self, monkeypatch):
         import numpy as np
 
         from core.faiss_indexer import FAISS_DIMENSION
@@ -108,8 +108,13 @@ class TestRebuildIndex:
         mgr.documents = [("doc1", "hello world")]
         mgr.active_workspace = "main"
 
-        # _rebuild_index usa el camino async (fix 2026-08: no bloquear el loop)
-        mgr._embed_async = AsyncMock(return_value=np.zeros(FAISS_DIMENSION, dtype=np.float32))
+        # _rebuild_index usa el camino async
+        monkeypatch.setattr(
+            mgr,
+            "_embed_async",
+            AsyncMock(return_value=np.zeros(FAISS_DIMENSION, dtype=np.float32)),
+            raising=False,
+        )
 
         await mgr._rebuild_index()
         assert mgr.index.ntotal == 1

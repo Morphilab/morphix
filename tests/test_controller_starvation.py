@@ -1,8 +1,8 @@
 # tests/test_controller_starvation.py
 """Tests del retry por reasoning-starvation en ModelsController.call.
 
-Bug 2026-08-15: cuando el caller pasa max_tokens (p. ej. Safety Net con
-max_tokens=4000), el retry B3 dobla effective_max_tokens pero call_kwargs.update(kwargs)
+Cuando el caller pasa max_tokens (p. ej. Safety Net con
+max_tokens=4000), el retry dobla effective_max_tokens pero call_kwargs.update(kwargs)
 re-aplica el valor del caller → el reintento nunca crece el presupuesto.
 """
 
@@ -91,7 +91,7 @@ async def test_no_caller_max_tokens_retry_doubles_role_value():
 async def test_ollama_stream_serializes_empty_args_dict():
     """Un tool call Ollama con arguments={} debe serializarse como '{}' (no
     None): así el accumulador downstream lo procesa y el repair loop actúa
-    (bug 2026-08-15: json.dumps(raw_args) if raw_args → {} falsy → None)."""
+    (sin la guarda: json.dumps(raw_args) if raw_args → {} falsy → None)."""
     from llm.controller import models as _models
 
     client = MagicMock()
@@ -186,3 +186,19 @@ async def test_ollama_starvation_retry_grows_num_predict():
     second_options = mock_chat.call_args_list[1].kwargs["options"]
     assert second_options["num_predict"] == 8000
     assert resp is not None
+
+
+def test_backoff_factor_loaded_when_max_retries_given():
+    """Constructor con max_retries explícito NO debe marcar _config_loaded=True
+    (con backoff_factor None, None**attempt crashea en el primer retry
+    fuera del try/except y mata el call completo).
+
+    Esperado: lazy-load de settings NO está condicionado a
+    max_retries=None; cualquier campo pendiente dispara la carga.
+    """
+    from llm.controller import ModelsController
+
+    ctrl = ModelsController(max_retries=3)
+    assert (
+        ctrl.backoff_factor is not None
+    ), "backoff_factor debe resolver lazy aunque max_retries sea explícito"

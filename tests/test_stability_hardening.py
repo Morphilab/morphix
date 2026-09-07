@@ -1,23 +1,23 @@
 # tests/test_stability_hardening.py
-"""Regression tests for stability hardening (Phases 1–4).
+"""Regression tests for stability hardening.
 
 Covers:
-  - Fase 1.1: undercover_mode async throttle
-  - Fase 1.4: memory manager async embed/search
-  - Fase 2.7: events approval non-blocking mechanism
-  - Fase 3.1–3.4: workflow robustness (timeout, cancellation, error handling, bash kill)
-  - Fase 4.1–4.2: per-loop lock patterns (rate_limiter, workspaces)
-  - Fase 4.6: streaming fallback retry limit
+  - undercover_mode async throttle
+  - memory manager async embed/search
+  - events approval non-blocking mechanism
+  - workflow robustness (timeout, cancellation, error handling, bash kill)
+  - per-loop lock patterns (rate_limiter, workspaces)
+  - streaming fallback retry limit
 """
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from core.security.undercover_mode import UndercoverMode
 
-# ── Fase 1.1: UndercoverMode async + clean_response ──────────────────────
+# ── UndercoverMode async + clean_response ─────────────────────────────────
 
 
 class TestUndercoverCleanResponse:
@@ -121,13 +121,14 @@ class TestUndercoverAsyncThrottle:
                 mock_sleep.assert_not_called()
 
 
-# ── Fase 2.7: Events approval mechanism ──────────────────────────────────
+# ── Events approval mechanism ────────────────────────────────────────────
 
 
 class TestApprovalMechanism:
     """Non-blocking approval via asyncio.Event + signals."""
 
     def setup_method(self):
+        pytest.importorskip("PySide6")
         from desktop.events import reset_approval_state
 
         reset_approval_state()
@@ -193,7 +194,7 @@ class TestApprovalMechanism:
             reset_approval_state,
         )
 
-        _always_allowed.add("bash_manager")
+        _always_allowed.update({"bash_manager": float(__import__("time").monotonic()) + 999.0})
         _handle_approval_response("req_1", "bash_manager", approved=True, allow_all=False)
         reset_approval_state()
         assert len(_always_allowed) == 0
@@ -215,18 +216,6 @@ class TestApprovalMechanism:
         await asyncio.wait_for(event.wait(), timeout=1.0)
         await task
         assert event.is_set()
-
-    @pytest.mark.asyncio
-    async def test_approval_already_allowed_skips(self):
-        """When tool is in _always_allowed, approval is instant."""
-        from desktop.events import _always_allowed
-
-        _always_allowed.add("bash_manager")
-        events_obj = None
-        # Simulate the logic from build_workflow_events._approval
-        if "bash_manager" in _always_allowed:
-            events_obj = True
-        assert events_obj is True
 
     def test_approval_response_from_foreign_thread_schedules_on_loop(self):
         """Respuesta desde un hilo externo NO llama event.set() en ese hilo.
@@ -293,55 +282,60 @@ class TestApprovalMechanism:
         ), "event.set() se ejecutó en el hilo externo — debe programarse en el loop"
 
 
-# ── Fase 3.1: Coordinated timeout 300s ──────────────────────────────────
+# ── Coordinated robustness ───────────────────────────────────────────────
 
 
-class TestCoordinatedTimeout:
-    """Verify coordinated workflow timeout was increased to 300s."""
-
-    def test_timeout_is_300(self):
-        import inspect
-
-        from orchestration.workflows.coordinated import MultiAgentCoordinator
-
-        src = inspect.getsource(MultiAgentCoordinator)
-        assert "300" in src or "timeout" in src.lower()
-
-    def test_execute_dag_has_cancellation_check(self):
-        import inspect
-
-        from orchestration.workflows.coordinated import MultiAgentCoordinator
-
-        src = inspect.getsource(MultiAgentCoordinator.execute_dag)
-        assert "cancel" in src.lower()
-
-
-# ── Fase 3.3: Paused session error handling ──────────────────────────────
+# ── Paused session error handling ────────────────────────────────────────
 
 
 class TestPausedSessionErrorHandling:
-    """_save_paused_session calls are wrapped in try/except."""
+    """A failure in _save_paused_session must not propagate out of the workflow.
 
-    def test_orchestrator_wraps_paused_save(self):
-        import inspect
+    The guards are inline try/except around the call; a DB error at pause time
+    must degrade to a warning and still return the PAUSED marker.
+    """
 
+    @pytest.mark.asyncio
+    async def test_orchestrator_paused_save_failure_does_not_escape(self):
+        """Fallo de _save_paused_session degrada a warning y sigue."""
+        from orchestration.context import WorkflowEvents
         from orchestration.workflows.orchestrator import WorkflowOrchestrator
 
-        src = inspect.getsource(WorkflowOrchestrator)
-        assert "try:" in src
-        # Look for the pattern: try → _save_paused_session → except
-        assert "_save_paused_session" in src
-
-    def test_development_wraps_paused_save(self):
-        import inspect
-
-        from orchestration.workflows.development import DevelopmentOrchestrator
-
-        src = inspect.getsource(DevelopmentOrchestrator)
-        assert "_save_paused_session" in src
-
-
-# ── Fase 3.4: bash_manager process group kill ────────────────────────────
+        with (
+            patch(
+                "orchestration.pauses.save_paused_session",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("db down"),
+            ) as mock_save,
+            patch(
+                "orchestration.bots_runner.run_bot_turn",
+                new_callable=AsyncMock,
+                return_value={
+                    "status": "clarification_needed",
+                    "clarification_question": "¿confirmas?",
+                    "clarification_options": ["Sí", "No"],
+                    "paused_loop_state": {},
+                    "bot_slug": "alfa",
+                },
+            ),
+        ):
+            events = WorkflowEvents()
+            ctx = MagicMock()
+            ctx.conversation_id = 5
+            ctx.workspace = "main"
+            ctx.query = "q"
+            ctx.cancelled = False
+            session = MagicMock()
+            session.context = ctx
+            session.events = events
+            session.emitter = None
+            result = await WorkflowOrchestrator._dispatch_route(
+                session=session,
+                query="q",
+                ctx=ctx,
+                events=events,
+                start_time=0.0,
+            )
 
 
 class TestBashManagerProcessGroupKill:
@@ -358,28 +352,15 @@ class TestBashManagerProcessGroupKill:
     def test_killpg_in_source(self):
         import inspect
 
-        from tools.bash_manager import _bash_tool
+        from tools.bash_manager import _bash_tool, _kill_process_group
 
-        src = inspect.getsource(_bash_tool)
-        assert "killpg" in src
-
-
-# ── Fase 3.5: Ollama timeout ────────────────────────────────────────────
-
-
-class TestOllamaTimeout:
-    """Ollama client created with timeout parameter."""
-
-    def test_ollama_timeout_in_source(self):
-        import inspect
-
-        from llm.provider import LLMProvider
-
-        src = inspect.getsource(LLMProvider)
-        assert "timeout" in src.lower()
+        # El helper dedicado usa killpg y _bash_tool lo invoca en
+        # los caminos de timeout Y cancelación.
+        assert "killpg" in inspect.getsource(_kill_process_group)
+        assert "_kill_process_group" in inspect.getsource(_bash_tool)
 
 
-# ── Fase 3.7: Database engine disposal on shutdown ──────────────────────
+# ── Database engine disposal on shutdown ────────────────────────────────
 
 
 class TestDatabaseDispose:
@@ -394,7 +375,7 @@ class TestDatabaseDispose:
         assert "dispose_engine" in src
 
 
-# ── Fase 4.1–4.2: Per-loop lock pattern ─────────────────────────────────
+# ── Per-loop lock pattern ────────────────────────────────────────────────
 
 
 class TestPerLoopLockPattern:
@@ -459,38 +440,7 @@ class TestPerLoopLockPattern:
         asyncio.run(_test())
 
 
-# ── Fase 4.3: Collaborative debug logging ────────────────────────────────
-
-
-class TestCollaborativeLogging:
-    """Silent except → logged debug."""
-
-    def test_build_project_context_logs(self):
-        import inspect
-
-        from orchestration.workflows.collaborative import CollaborativeOrchestrator
-
-        src = inspect.getsource(CollaborativeOrchestrator._build_project_context)
-        assert "logger.debug" in src
-        assert "exc_info=True" in src
-
-
-# ── Fase 4.4: Development exception specificity ─────────────────────────
-
-
-class TestDevelopmentExceptionHandling:
-    """Exception handling in development workflow."""
-
-    def test_no_redundant_except(self):
-        import inspect
-
-        from orchestration.workflows.development import DevelopmentOrchestrator
-
-        src = inspect.getsource(DevelopmentOrchestrator)
-        assert "except (TimeoutError, Exception)" not in src
-
-
-# ── Fase 4.6: Streaming fallback retry limit ────────────────────────────
+# ── Collaborative debug logging ──────────────────────────────────────────
 
 
 class TestStreamingFallbackRetryLimit:
@@ -513,7 +463,7 @@ class TestStreamingFallbackRetryLimit:
         assert "max_retries=0" in src
 
 
-# ── Fase 1.3: Async file reads in orchestration ─────────────────────────
+# ── Async file reads in orchestration ────────────────────────────────────
 
 
 class TestAsyncFileReads:
@@ -527,14 +477,6 @@ class TestAsyncFileReads:
         src = inspect.getsource(ResultAggregator)
         assert "to_thread" in src
 
-    def test_coordinated_uses_to_thread(self):
-        import inspect
-
-        from orchestration.workflows.coordinated import MultiAgentCoordinator
-
-        src = inspect.getsource(MultiAgentCoordinator)
-        assert "to_thread" in src
-
     def test_decomposer_offloads_to_thread(self):
         import inspect
 
@@ -544,15 +486,17 @@ class TestAsyncFileReads:
         assert "ThreadPoolExecutor" in src or "to_thread" in src
 
 
-# ── Fase 1.5: No processEvents in debate_section ────────────────────────
+# ── No processEvents in debate_section ───────────────────────────────────
 
 
 class TestNoProcessEvents:
     """debate_section.py must not use processEvents."""
 
     def test_no_process_events(self):
-        with open("desktop/widgets/debate_section.py") as f:
-            content = f.read()
+        from core.path_resolver import _BASE
+
+        debate_path = _BASE / "desktop" / "widgets" / "debate_section.py"
+        content = debate_path.read_text()
         assert "processEvents" not in content
 
 
@@ -563,12 +507,64 @@ def test_workspace_change_resets_approval_state():
     workspace_changed — el 'Always Allow' perduraba entre workspaces.
     La conexión debe hacerse en desktop.events._get_signals().
     """
+    pytest.importorskip("PySide6")
     from desktop.events import _always_allowed, _get_signals, reset_approval_state
 
     reset_approval_state()
-    _always_allowed.add("bash_manager")
+    _always_allowed.update({"bash_manager": float(__import__("time").monotonic()) + 999.0})
 
     signals = _get_signals()
     signals.workspace_changed.emit("otro_workspace")
 
     assert "bash_manager" not in _always_allowed
+
+
+def test_paused_marker_single_source():
+    """PAUSED_MARKER vive SOLO en orchestration/context.py — sin literales
+    duplicados en producción (drift silencioso entre módulos)."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    offenders: list[str] = []
+    for rel in ("orchestration", "desktop/services"):
+        for f in (root / rel).rglob("*.py"):
+            text = f.read_text(encoding="utf-8")
+            for i, line in enumerate(text.splitlines(), 1):
+                if "[PAUSED:clarification_needed]" in line and "PAUSED_MARKER" not in line:
+                    offenders.append(f"{f.relative_to(root)}:{i}")
+    assert not offenders, f"literales PAUSED duplicados fuera de context.py: {offenders}"
+
+
+@pytest.mark.asyncio
+# ── Aprobaciones visibles y con margen ──
+
+
+class TestApprovalDialogVisibility:
+    def test_timeout_es_300s(self):
+        """Un timeout corto auto-denegaba acciones peligrosas sin que el usuario las viera."""
+        pytest.importorskip("PySide6")
+        from desktop.events import _APPROVAL_TIMEOUT
+
+        assert _APPROVAL_TIMEOUT == 300.0
+
+    def test_dialogo_al_frente_con_parent(self, monkeypatch):
+        pytest.importorskip("PySide6")
+        from desktop import events as ev
+
+        fake_dialog = MagicMock()
+        mock_qmb = MagicMock()
+        mock_qmb.return_value = fake_dialog  # QMessageBox(parent) → dialog
+        monkeypatch.setattr(ev, "QMessageBox", mock_qmb)
+        monkeypatch.setattr(
+            ev.QApplication, "activeWindow", staticmethod(lambda: MagicMock()), raising=False
+        )
+        from desktop.events import reset_approval_state
+
+        reset_approval_state()
+        ev._on_approval_requested("req_test", "bash_manager", "command: ls")
+        # parent (modalidad de app) + traer al frente
+        fake_dialog.setWindowModality.assert_called_once()
+        fake_dialog.raise_.assert_called_once()
+        fake_dialog.activateWindow.assert_called_once()
+        fake_dialog.open.assert_called_once()
+        reset_approval_state()

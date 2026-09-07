@@ -15,11 +15,9 @@ class TestParsePlanJson:
         assert result is None
 
     def test_invalid_json_returns_none(self):
-        # parse_json_from_llm has a fallback to empty dict, so
-        # parse_plan_json returns that dict (not None).
-        # Invalid JSON that somehow parses as non-dict should return None.
+        # contrato estricto — JSON inválido → None (no {} ambiguo).
         result = parse_plan_json("not json")
-        assert isinstance(result, dict)
+        assert result is None
 
 
 class TestToolCallsFromResponse:

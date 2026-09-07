@@ -239,6 +239,51 @@ class TestUpdateUserProfile:
         assert written["name"] == "Ana"
         assert written["city"] == "Lima"
 
+    @pytest.mark.asyncio
+    async def test_seeds_name_only_when_profile_empty(self, monkeypatch):
+        """Perfil vacío + hecho solo-nombre = el dato legítimo que el usuario
+        acaba de decir: se siembra. Sin esto, user_profile jamás nace y el
+        sistema no recuerda el nombre entre sesiones."""
+        mm = MemoryManager()
+        monkeypatch.setattr(
+            mm, "get_user_profile", lambda: {"name": None, "country": None, "preferences": {}}
+        )
+        mock_write = AsyncMock(return_value=True)
+        monkeypatch.setattr(mm, "write", mock_write)
+        assert await mm.update_user_profile({"name": "Ana"}) is True
+        mock_write.assert_awaited_once()
+        assert mock_write.await_args.args[1]["name"] == "Ana"
+
+    @pytest.mark.asyncio
+    async def test_name_only_update_ignored_when_profile_has_data(self, monkeypatch):
+        """Con perfil poblado, un hecho solo-nombre no lo toca (anti-stale)."""
+        mm = MemoryManager()
+        monkeypatch.setattr(
+            mm, "get_user_profile", lambda: {"name": "Ana", "city": "Lima", "preferences": {}}
+        )
+        mock_write = AsyncMock(return_value=True)
+        monkeypatch.setattr(mm, "write", mock_write)
+        assert await mm.update_user_profile({"name": "Ana"}) is False
+        mock_write.assert_not_awaited()
+
+    def test_user_summary_for_name_only_profile(self, monkeypatch):
+        """El resumen de un perfil solo-nombre no es vacío (inyección viva)."""
+        mm = MemoryManager()
+        monkeypatch.setattr(mm, "get_user_profile", lambda: {"name": "Ana", "preferences": {}})
+        assert "Ana" in mm.get_user_summary()
+
+
+class TestLegacyLastUpdateMigration:
+    def test_renames_legacy_summary_file(self, tmp_path):
+        (tmp_path / "user_profile_last_update.md").write_text("resumen", encoding="utf-8")
+        MemoryManager._migrate_legacy_last_update(tmp_path)
+        assert (tmp_path / "last_task_summary.md").read_text(encoding="utf-8") == "resumen"
+        assert not (tmp_path / "user_profile_last_update.md").exists()
+
+    def test_noop_without_legacy_file(self, tmp_path):
+        MemoryManager._migrate_legacy_last_update(tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
 
 class TestWrite:
     @pytest.mark.asyncio
@@ -305,7 +350,7 @@ class TestRebuildIndex:
         mm.documents = [("a", "val_a"), ("b", "val_b")]
         mm.index.ntotal = 5
         mock_emb = np.zeros((FAISS_DIMENSION,), dtype=np.float32)
-        # _rebuild_index usa el camino async (fix 2026-08: no bloquear el loop)
+        # _rebuild_index usa el camino async
         monkeypatch.setattr(mm, "_embed_async", AsyncMock(return_value=mock_emb))
 
         await mm._rebuild_index()
@@ -331,12 +376,17 @@ class TestSearchProtectedKeys:
         mm.documents = docs
         fake_index = MagicMock()
         fake_index.ntotal = len(docs)
+        # El índice devuelve ids ESTABLES; mapearlos como haría IDMap2
         fake_index.search.return_value = (
             np.zeros((1, len(docs)), dtype=np.float32),
             np.arange(len(docs), dtype=np.int64).reshape(1, -1),
         )
         mm.index = fake_index
-        monkeypatch.setattr(mm, "_embed", lambda q: np.zeros((FAISS_DIMENSION,), dtype=np.float32))
+        mm._ids = {k: i for i, (k, _) in enumerate(docs)}
+        mm._id_to_key = {i: k for k, i in mm._ids.items()}
+        monkeypatch.setattr(
+            mm, "_embed", lambda q, kind="passage": np.zeros((FAISS_DIMENSION,), dtype=np.float32)
+        )
         monkeypatch.setattr(
             mm,
             "_embed_async",

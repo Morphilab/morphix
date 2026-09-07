@@ -18,11 +18,11 @@ class TestOfflineManager:
         with patch("httpx.AsyncClient", return_value=mock_client):
             result = await om.detect()
             assert result is True
-            assert om._is_offline is True
+            assert om._state_offline is True
 
     def test_is_offline_when_forced(self):
         om = OfflineManager()
-        om._is_offline = False
+        om._state_offline = False
         from core.config import settings
 
         original = settings.offline_mode
@@ -33,9 +33,12 @@ class TestOfflineManager:
             settings.offline_mode = original
 
     def test_is_offline_when_detected(self):
-        om = OfflineManager()
-        om._is_offline = True
-        assert om.is_offline() is True
+        # estado compartido a nivel CLASE (no shadowing de instancia)
+        OfflineManager._state_offline = True
+        try:
+            assert OfflineManager().is_offline() is True
+        finally:
+            OfflineManager._state_offline = None
 
     def test_toggle_offline_on(self):
         om = OfflineManager()
@@ -47,9 +50,10 @@ class TestOfflineManager:
             result = om.toggle_offline()
             assert result is True
             assert settings.offline_mode is True
-            assert om._is_offline is True
+            assert OfflineManager._state_offline is True
         finally:
             settings.offline_mode = original
+            OfflineManager._state_offline = None
 
     def test_toggle_offline_off(self):
         om = OfflineManager()
@@ -61,6 +65,7 @@ class TestOfflineManager:
             result = om.toggle_offline()
             assert result is False
             assert settings.offline_mode is False
-            assert om._is_offline is False
+            assert OfflineManager._state_offline is False
         finally:
             settings.offline_mode = original
+            OfflineManager._state_offline = None

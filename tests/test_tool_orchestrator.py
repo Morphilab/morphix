@@ -6,6 +6,17 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_backoff_wait(monkeypatch):
+    """Backoff real entre reintentos (~10s/test) → sleep instantáneo."""
+    import asyncio
+
+    async def _instant(*a, **k):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _instant)
+
+
 class TestResultBasedFastFail:
     @pytest.mark.asyncio
     async def test_file_not_found_skips_retry(self):
@@ -167,7 +178,8 @@ class TestTokenBudgetSkipAndTopology:
         "❌ No se pudo aplicar el diff. Puede que los números de línea hayan cambiado.",
     ],
 )
-async def test_unrecoverable_failures_skip_retry(failure_output):
+async def test_unrecoverable_failures_skip_retry(failure_output, monkeypatch):
+    monkeypatch.setenv("ALLOW_UNATTENDED_DANGEROUS", "true")
     """Fallos irrecuperables (seguridad/budget/git/diff) no deben reintentarse."""
     from tools.orchestrator import ToolOrchestrator
 
@@ -230,3 +242,198 @@ class TestTokenBudgetAtomicity:
         assert sum(1 for ok in results if ok) == 1
         assert state.total == 60
         assert state.total <= state.max_budget
+
+
+class TestBudgetRefundOnDefinitiveFailure:
+    async def _run_failing(self, tool_func):
+        from tools.orchestrator import ToolOrchestrator
+
+        with (
+            patch("tools.orchestrator.settings", _mock_budget_settings(max_budget=100_000)),
+            patch("tools.orchestrator.tools_registry.get_tool", return_value=tool_func),
+        ):
+            ToolOrchestrator.reset_token_budget()
+            result = await ToolOrchestrator.execute_tool(
+                tool_name="file_manager",
+                parameters={"action": "write", "path": "a.py", "content": "x" * 50},
+                workspace="test_ws",
+            )
+            from tools.orchestrator import _token_budget_ctx
+
+            return result, _token_budget_ctx.get()
+
+    @pytest.mark.asyncio
+    async def test_max_retries_exhaustion_refunds_reserve(self):
+        """Fallo definitivo tras reintentos devuelve la reserva."""
+        tool_func = AsyncMock(side_effect=Exception("boom inesperado"))
+        result, state = await self._run_failing(tool_func)
+        assert result["error"] == "max_retries_exceeded"
+        assert state is not None
+        assert (
+            state.total == 0
+        ), f"ORCH-M2 REGRESIÓN: reserva quemada tras fallo definitivo (total={state.total})"
+
+    @pytest.mark.asyncio
+    async def test_fast_fail_refunds_reserve(self):
+        """Fast-fail determinista también devuelve la reserva."""
+        tool_func = AsyncMock(
+            return_value={"success": False, "output": "no hay un repositorio git"}
+        )
+        result, state = await self._run_failing(tool_func)
+        assert result["error"] == "tool_reported_failure"
+        assert tool_func.call_count == 1
+        assert state.total == 0, f"fast-fail sin refund: {state.total}"
+
+
+class TestDiffEditorApprovalGate:
+    """diff_editor.apply es escritura → exige aprobación; create/read siguen fluidos."""
+
+    @pytest.mark.asyncio
+    async def test_diff_editor_apply_requires_approval(self, monkeypatch):
+        from tools.orchestrator import ToolOrchestrator
+
+        called = {}
+
+        async def fake_approval(tool, params):
+            called["tool"] = tool
+            return False
+
+        monkeypatch.setattr(ToolOrchestrator, "on_approval_required", fake_approval)
+        tool_func = AsyncMock(return_value={"success": True, "output": "ok"})
+
+        with (
+            patch("tools.orchestrator.settings", _mock_budget_settings()),
+            patch("tools.orchestrator.tools_registry.get_tool", return_value=tool_func),
+        ):
+            result = await ToolOrchestrator.execute_tool(
+                tool_name="diff_editor",
+                parameters={
+                    "action": "apply",
+                    "file_path": "a.txt",
+                    "diff_content": "--- a\n+++ b",
+                },
+                workspace="test_ws",
+            )
+
+        assert called.get("tool") == "diff_editor"
+        assert result["error"] == "approval_denied"
+        assert tool_func.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_diff_editor_without_action_requires_approval(self, monkeypatch):
+        """Params SIN 'action' (la tool tenía default='apply', escritura)
+        deben pasar por approval — el gate normaliza y falla cerrado."""
+        from tools.orchestrator import ToolOrchestrator
+
+        called = {}
+
+        async def fake_approval(tool, params):
+            called["tool"] = tool
+            return False
+
+        monkeypatch.setattr(ToolOrchestrator, "on_approval_required", fake_approval)
+        tool_func = AsyncMock(return_value={"success": True, "output": "ok"})
+
+        with (
+            patch("tools.orchestrator.settings", _mock_budget_settings()),
+            patch("tools.orchestrator.tools_registry.get_tool", return_value=tool_func),
+        ):
+            result = await ToolOrchestrator.execute_tool(
+                tool_name="diff_editor",
+                parameters={"file_path": "a.txt"},
+                workspace="test_ws",
+            )
+
+        assert called.get("tool") == "diff_editor"
+        assert result["error"] == "approval_denied"
+        assert tool_func.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_diff_editor_create_does_not_require_approval(self, monkeypatch):
+        from tools.orchestrator import ToolOrchestrator
+
+        async def boom(tool, params):
+            raise AssertionError("no debe pedirse approval para create/read")
+
+        monkeypatch.setattr(ToolOrchestrator, "on_approval_required", boom)
+        tool_func = AsyncMock(return_value={"success": True, "output": "ok"})
+
+        with (
+            patch("tools.orchestrator.settings", _mock_budget_settings()),
+            patch("tools.orchestrator.tools_registry.get_tool", return_value=tool_func),
+        ):
+            result = await ToolOrchestrator.execute_tool(
+                tool_name="diff_editor",
+                parameters={"action": "create", "file_path": "a.txt"},
+                workspace="test_ws",
+            )
+
+        assert result["success"] is True
+        assert tool_func.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_overbudget_discard_reports_side_effects():
+    """Al descartar por presupuesto el resultado de una tool que YA
+    ejecutó efectos, la respuesta debe avisarlo explícitamente."""
+    from tools.orchestrator import ToolOrchestrator
+
+    tool_func = AsyncMock(
+        return_value={"success": True, "output": "escrito", "tokens_used": 500_000}
+    )
+    with (
+        patch("tools.orchestrator.settings", _mock_budget_settings(max_budget=100)),
+        patch("tools.orchestrator.tools_registry.get_tool", return_value=tool_func),
+    ):
+        ToolOrchestrator.reset_token_budget()
+        result = await ToolOrchestrator.execute_tool(
+            tool_name="file_manager",
+            parameters={"action": "write", "path": "x.py", "content": "x"},
+            workspace="test_ws",
+        )
+
+    assert result["success"] is False
+    assert result.get("side_effects_executed") is True
+    assert "efecto" in str(result.get("output", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_tool_without_tokens_used_does_not_double_count_params():
+    """Tool sin reporte de tokens_used NO carga la estimación de parámetros:
+    el coste real ya se contó como completion del LLM. La estimación solo
+    actúa como reserva transitoria contra el overcommit concurrente."""
+    from tools.orchestrator import ToolOrchestrator, get_llm_token_usage
+
+    tool_func = AsyncMock(return_value={"success": True, "output": "escrito"})
+    with (
+        patch("tools.orchestrator.settings", _mock_budget_settings(max_budget=10_000)),
+        patch("tools.orchestrator.tools_registry.get_tool", return_value=tool_func),
+    ):
+        ToolOrchestrator.reset_token_budget()
+        big_content = "x" * 4_000  # ~1k tokens de parámetros
+        result = await ToolOrchestrator.execute_tool(
+            tool_name="file_manager",
+            parameters={"action": "write", "path": "x.py", "content": big_content},
+            workspace="test_ws",
+        )
+        assert result["success"] is True
+        assert get_llm_token_usage() == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_reporting_tokens_used_is_charged():
+    """Tool que SÍ reporta tokens_used: su gasto real sustituye la reserva."""
+    from tools.orchestrator import ToolOrchestrator, get_llm_token_usage
+
+    tool_func = AsyncMock(return_value={"success": True, "output": "ok", "tokens_used": 300})
+    with (
+        patch("tools.orchestrator.settings", _mock_budget_settings(max_budget=10_000)),
+        patch("tools.orchestrator.tools_registry.get_tool", return_value=tool_func),
+    ):
+        ToolOrchestrator.reset_token_budget()
+        await ToolOrchestrator.execute_tool(
+            tool_name="memory_saver",
+            parameters={"action": "write", "key": "k", "value": "v"},
+            workspace="test_ws",
+        )
+        assert get_llm_token_usage() == 300

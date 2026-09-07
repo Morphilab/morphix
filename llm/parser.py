@@ -38,14 +38,14 @@ def parse_json_from_llm(text: str, default: Any = None) -> dict:
 
     # 1. json.loads directo
     result, _ = try_parse_json(text)
-    if result is not None:
+    if isinstance(result, dict):
         return result
 
     # 2. Extraer de bloque markdown ```json ... ```
     block = extract_json_block(text)
     if block:
         result, _ = try_parse_json(block)
-        if result is not None:
+        if isinstance(result, dict):
             return result
 
     # 3. Extract first balanced JSON object with json.JSONDecoder
@@ -96,11 +96,17 @@ def try_parse_json(text: str) -> tuple[dict | None, str | None]:
 
 def parse_plan_json(text: str) -> dict | None:
     """Parseo específico para planes JSON del LLM.
-    Wrapper de parse_json_from_llm con type check estricto.
-    Retorna dict o None si no es un dict válido.
+    Type check estricto: SOLO dict válido; listas/strings → None.
     """
-    data = parse_json_from_llm(text)
-    return data if isinstance(data, dict) else None
+    data, _ = try_parse_json(text)
+    if isinstance(data, dict):
+        return data
+    block = extract_json_block(text or "")
+    if block:
+        data, _ = try_parse_json(block)
+        if isinstance(data, dict):
+            return data
+    return None
 
 
 def tool_calls_from_response(response) -> list[dict] | None:
