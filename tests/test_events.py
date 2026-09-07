@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from orchestration.events import (
+from orchestration.context import (
     WorkflowContext,
     WorkflowEvents,
     emit_agent,

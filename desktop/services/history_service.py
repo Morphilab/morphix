@@ -4,13 +4,11 @@ import re
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from core.database import get_async_session
 from core.embedding_provider import EmbeddingProvider
 from core.models import Conversation, Message
 from core.repositories.conversation_repository import ConversationRepository
-from llm import models
 
 logger = logging.getLogger(__name__)
 
@@ -25,25 +23,37 @@ def _get_embed_model():
 
 
 class HistoryService:
-    _redis_client = None
+    # umbral sobre vectores NORMALIZADOS (L2² = 2 − 2·cos):
+    # dist < 0.9 ⇔ coseno > ~0.60 — recall orientado a conversaciones
+    # relacionadas. El 0.4 heredado asumía escala no normalizada y dejaba
+    # la búsqueda semántica casi siempre vacía.
+    _SEMANTIC_DIST_THRESHOLD = 0.9
 
     @staticmethod
-    async def _get_redis():
-        if HistoryService._redis_client is None:
-            try:
-                from core.config import settings
-
-                redis_url = settings.redis_url
-                import redis.asyncio as aioredis
-
-                HistoryService._redis_client = aioredis.from_url(
-                    redis_url, socket_connect_timeout=2, socket_timeout=2
-                )
-                logger.info(f"Redis cache conectado: {redis_url}")
-            except Exception as e:
-                logger.warning(f"Redis no disponible: {e}")
-                HistoryService._redis_client = None
-        return HistoryService._redis_client
+    async def _keyword_fallback(query: str, session: AsyncSession) -> list[Conversation]:
+        """Búsqueda SQL LIKE por contenido de mensajes cuando el
+        modelo de embeddings no está disponible."""
+        like = f"%{query[:60]}%"
+        stmt = (
+            select(Conversation)
+            .join(
+                Message,
+                Message.conversation_id == Conversation.id,  # type: ignore[arg-type,attr-defined]
+            )
+            .where(Message.content.ilike(like))  # type: ignore[attr-defined,union-attr]
+            .distinct()
+            .order_by(Conversation.created_at.desc())  # type: ignore[attr-defined]
+            .limit(20)
+        )
+        result = await session.execute(stmt)
+        convs = result.scalars().all()
+        seen: set = set()
+        out: list[Conversation] = []
+        for c in convs:
+            if c.id not in seen:
+                seen.add(c.id)
+                out.append(c)
+        return out
 
     @staticmethod
     async def load_conversations(query: str = "") -> list[Conversation]:
@@ -79,25 +89,42 @@ class HistoryService:
             conversations = result.scalars().all()
 
             if not conversations and query and not date_match and not tag_match:
-                conversations = await HistoryService.semantic_search(query, session)
-                conversations.sort(key=lambda c: c.created_at, reverse=True)
+                try:
+                    conversations = await HistoryService.semantic_search(query, session)
+                    conversations.sort(key=lambda c: c.created_at, reverse=True)
+                except Exception:
+                    # la carga de historial NUNCA debe romperse por RAG
+                    logger.warning("semantic_search falló — se ignora", exc_info=True)
+                    conversations = []
 
             return conversations
 
     @staticmethod
     async def semantic_search(query: str, session: AsyncSession) -> list[Conversation]:
-        """Búsqueda semántica con FAISS + caché Redis (ejecuta encode en thread).
+        """Búsqueda semántica con FAISS sobre la columna Message.embedding.
 
-        DEUDA TÉCNICA (auditoría 2026-08-15): reimplementa la búsqueda
-        FAISS+embeddings a mano (reconstruye el índice por query y cachea por
-        mensaje) en vez de reutilizar core/faiss_indexer.py /
-        core/memory/manager.py. Migrar a la infraestructura compartida
-        cuando se toque esta ruta — no es un bug, es duplicación.
+        La columna persistida ES la caché: los mensajes sin embedding se
+        encodean en batch UNA vez (backfill lazy), se guardan como float32 LE
+        y el flush lo confirma (el commit final lo hace get_async_session).
+        Sin re-encodeo por query ni índice Redis de vectores desechable.
         """
         import asyncio
 
         embed_model = _get_embed_model()
-        query_emb = await asyncio.to_thread(embed_model.encode, query)
+        if embed_model is None:
+            # provider zombi/no listo → fallback keyword, no crash
+            logger.warning("Embeddings no disponibles — fallback keyword en semantic_search")
+            return await HistoryService._keyword_fallback(query, session)
+        try:
+            # encode de CLASE EmbeddingProvider — aplica prefijo de la
+            # familia (e5: 'query: ') y normalización L2 para escala de umbrales.
+            query_emb = await asyncio.to_thread(EmbeddingProvider.encode, query, "query")
+        except Exception:
+            logger.warning("Encode falló — fallback keyword", exc_info=True)
+            return await HistoryService._keyword_fallback(query, session)
+        if query_emb is None:
+            # el encode retorna None cuando el modelo no está listo
+            return await HistoryService._keyword_fallback(query, session)
 
         stmt = select(Message).order_by(Message.id.desc()).limit(200)  # type: ignore[union-attr]
         result = await session.execute(stmt)
@@ -106,34 +133,50 @@ class HistoryService:
         if not all_msgs:
             return []
 
-        import faiss
         import numpy as np
 
-        r = await HistoryService._get_redis()
-        embeddings = []
+        # backfill lazy — mensajes sin embedding O con fingerprint de
+        # otra familia (misma-dim de otro modelo mezclaría escalas).
+        current_fp = EmbeddingProvider.fingerprint()
+        missing = [m for m in all_msgs if not m.embedding or m.embedding_fp != current_fp]
+        if missing:
+            texts = [m.content for m in missing]
+            embs = await asyncio.to_thread(EmbeddingProvider.encode_batch, texts)
+            for m, emb in zip(missing, embs, strict=False):
+                if emb is not None:
+                    m.embedding = np.asarray(emb, dtype=np.float32).tobytes()
+                    m.embedding_fp = current_fp
+            await session.flush()  # commit final lo hace get_async_session
+
+        # infraestructura compartida FAISSIndexer en vez de faiss crudo
+        from core.faiss_indexer import FAISSIndexer
+
+        dim = int(np.asarray(query_emb).shape[-1])
+        ix = FAISSIndexer(dimension=dim, embedder=EmbeddingProvider)
+
+        conv_by_msg: dict[str, int | None] = {}
+        added = 0
         for msg in all_msgs:
-            cache_key = f"emb:{msg.id}"
-            cached_emb = None
-            if r:
-                cached_emb = await r.get(cache_key)
-            if cached_emb:
-                emb = np.frombuffer(cached_emb, dtype=np.float32)
-            else:
-                emb = await asyncio.to_thread(embed_model.encode, msg.content)
-                if r:
-                    await r.set(cache_key, emb.tobytes(), ex=3600)
-            embeddings.append(emb)
+            if not msg.embedding or msg.embedding_fp != current_fp:
+                continue  # sin embedding o de otra familia — ignorar, no romper RAG
+            emb = np.frombuffer(msg.embedding, dtype=np.float32)
+            try:
+                ix.add_embedding(str(msg.id), msg.content, emb)
+            except ValueError:
+                continue  # vector de otra escala/dim — ignorar, no romper RAG
+            conv_by_msg[str(msg.id)] = msg.conversation_id
+            added += 1
 
-        embeddings_arr = np.array(embeddings).astype("float32")  # type: ignore[assignment]
-        index = faiss.IndexFlatL2(embeddings_arr.shape[1])  # type: ignore[attr-defined]
-        index.add(embeddings_arr)
+        if not added:
+            return []
 
-        distances, indices = index.search(np.array([query_emb]).astype("float32"), 10)
+        hits = ix.search(query, k=10)
 
         matched_ids = [
-            all_msgs[idx].conversation_id
-            for idx, dist in zip(indices[0], distances[0], strict=False)
-            if dist < 0.4
+            cid
+            for h in hits
+            if h.get("distance", float("inf")) < HistoryService._SEMANTIC_DIST_THRESHOLD
+            and (cid := conv_by_msg.get(str(h.get("key")))) is not None
         ]
 
         if not matched_ids:
@@ -144,113 +187,8 @@ class HistoryService:
         return result2.scalars().all()  # type: ignore[return-value]
 
     @staticmethod
-    async def perform_rag_search(query: str, limit: int = 6) -> list[dict]:
-        async with get_async_session() as session:
-            relevant_convs = await HistoryService.semantic_search(query, session)
-            conv_ids = [conv.id for conv in relevant_convs[:limit]]
-
-            if not conv_ids:
-                return []
-
-            stmt = (
-                select(Conversation)
-                .where(Conversation.id.in_(conv_ids))  # type: ignore[arg-type,union-attr]
-                .options(selectinload(Conversation.messages))  # type: ignore[arg-type]
-            )
-            result = await session.execute(stmt)
-            conversations = {c.id: c for c in result.scalars().unique().all()}
-
-            results = []
-            for conv_id in conv_ids:
-                conv = conversations.get(conv_id)
-                if not conv:
-                    continue
-                messages = (
-                    sorted(conv.messages, key=lambda m: m.timestamp)[:5]  # type: ignore[arg-type]
-                    if conv.messages
-                    else []
-                )
-
-                snippet_parts = []
-                for msg in messages:
-                    preview = msg.content.strip()
-                    if len(preview) > 200:
-                        preview = preview[:200] + "..."
-                    snippet_parts.append(f"{msg.role.capitalize()}: {preview}")
-
-                snippet = "\n".join(snippet_parts) or "(Sin contenido)"
-
-                results.append(
-                    {
-                        "title": conv.title or "Sin título",
-                        "created_at": conv.created_at,
-                        "snippet": snippet,
-                        "id": conv.id,
-                    }
-                )
-            return results
-
-    @staticmethod
-    async def rag_query(query: str) -> dict:
-        if not query.strip():
-            return {"success": False, "message": "La pregunta está vacía"}
-
-        results = await HistoryService.perform_rag_search(query)
-        if not results:
-            return {
-                "success": False,
-                "message": "No encontré conversaciones relevantes en tu historial.",
-            }
-
-        context = "\n\n".join(
-            [
-                f"Conversación: {r['title']} ({r['created_at'].strftime('%d/%m/%Y %H:%M')})\n"
-                f"{r['snippet']}\n{'─' * 40}"
-                for r in results
-            ]
-        )
-
-        prompt = f"""Eres un asistente personal que conoce todo el historial del usuario.
-
-Pregunta del usuario: {query}
-
-Contexto relevante de su historial (más reciente primero):
-{context}
-
-Responde de forma natural, útil y conversacional. Usa el contexto para dar respuestas precisas y personales."""
-
-        try:
-            response = await models.call(
-                messages=[{"role": "user", "content": prompt}],
-                role="default",
-                temperature=0.7,
-            )
-            answer = response.choices[0].message.content.strip()
-            return {"success": True, "answer": answer, "sources": len(results)}
-        except Exception as e:
-            logging.error(f"Error en RAG query: {e}")
-            return {"success": False, "message": f"Error al procesar la pregunta: {e!s}"}
-
-    # === CRUD delegation (all async now) ===
-    @staticmethod
-    async def edit_conversation(conv_id: int, new_title: str) -> bool:
-        return await ConversationRepository.update_title(conv_id, new_title)
-
-    @staticmethod
     async def delete_conversation(conv_id: int) -> bool:
         return await ConversationRepository.delete(conv_id)
-
-    @staticmethod
-    async def clone_conversation(conv_id: int) -> bool:
-        return await ConversationRepository.clone(conv_id)
-
-    @staticmethod
-    async def create_branch(conv_id: int, branch_point: int = 0) -> bool:
-        return await ConversationRepository.create_branch(conv_id, branch_point)
-
-    @staticmethod
-    async def analyze_conversation(conv_id: int) -> str:
-        return await ConversationRepository.analyze(conv_id)
 
     @staticmethod
     async def get_messages(conv_id: int) -> list[dict]:
@@ -263,14 +201,27 @@ Responde de forma natural, útil y conversacional. Usa el contexto para dar resp
         return await ConversationRepository.get_conversation(conv_id)
 
     @staticmethod
-    async def list_conversations(limit: int = 50, offset: int = 0) -> list[dict]:
-        """List conversations with pagination, newest first."""
-        return await ConversationRepository.list_all(limit=limit, offset=offset)
+    async def list_conversations(query: str = "", limit: int = 50) -> list[dict]:
+        """Lista de conversaciones (nuevas primero), dicts para la GUI.
 
-    @staticmethod
-    async def count_conversations() -> int:
-        """Total number of conversations in the current workspace."""
-        return await ConversationRepository.count_all()
+        Sin ``query``: passthrough plano a ``list_all`` (comportamiento
+        histórico). Con ``query``: delega en ``load_conversations`` — filtros
+        ``date:YYYY-MM-DD`` / ``tag:x`` / texto (title/tags) con fallback
+        semántico — y normaliza a dict (es la ruta viva del buscador del
+        Historial).
+        """
+        if not query:
+            return await ConversationRepository.list_all(limit=limit, offset=0)
+        convs = await HistoryService.load_conversations(query)
+        return [
+            {
+                "id": c.id,
+                "title": c.title,
+                "created_at": getattr(c, "created_at", None),
+                "tags": getattr(c, "tags", ""),
+            }
+            for c in convs
+        ][:limit]
 
     @staticmethod
     async def export_conversation(conv_id: int, format: str = "md"):

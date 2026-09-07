@@ -78,3 +78,39 @@ def test_escapes_html_in_task_names():
     html = render_from_subtasks([{"name": "<script>alert(1)</script>", "status": "pending"}])
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_render_from_subtasks_accepts_injected_colors():
+    from orchestration.status import render_from_subtasks
+
+    html = render_from_subtasks(
+        [{"name": "Diseñar", "status": "running"}],
+        phase="build",
+        colors={"running": "#123456", "card_bg": "#0A0A14", "body_bg": "#05050A"},
+    )
+    assert "#123456" in html
+    assert "#0A0A14" in html
+    assert "#05050A" in html
+
+
+def test_render_accepts_injected_colors():
+    from unittest.mock import MagicMock
+
+    from orchestration.status import render
+
+    g = MagicMock()
+    g.number_of_nodes.return_value = 1
+    g.nodes.return_value = [0]
+    g.nodes.__getitem__.side_effect = lambda n: {
+        0: {"task": "T", "agent": "a", "status": "completed"}
+    }[n]
+    html = render(g, colors={"completed": "#ABCDEF"})
+    assert "#ABCDEF" in html
+
+
+def test_render_defaults_match_current_palette():
+    from orchestration.status import DEFAULT_CARD_COLORS, render_from_subtasks
+
+    html = render_from_subtasks([{"name": "X", "status": "pending"}])
+    assert DEFAULT_CARD_COLORS["card_bg"] in html
+    assert DEFAULT_CARD_COLORS["body_bg"] in html

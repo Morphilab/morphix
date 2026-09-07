@@ -17,14 +17,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from desktop.theme import INPUT_STYLE, StyleFactory
+from desktop.icons import get_icon
+from desktop.theme import COLORS, INPUT_STYLE, StyleFactory
 
 if TYPE_CHECKING:
-    from desktop.maestro_tab import MaestroTab
+    from desktop.maestro_tab import SessionPane
 
 
-def build_chat_panel(tab: MaestroTab) -> QWidget:
-    # --- Center panel: Chat ---
+def build_chat_panel(tab: SessionPane) -> QWidget:
+    # -- Center panel: Chat ---
     center = QWidget()
     center_layout = QVBoxLayout(center)
     center_layout.setContentsMargins(4, 4, 4, 8)
@@ -39,7 +40,25 @@ def build_chat_panel(tab: MaestroTab) -> QWidget:
     tab.chat_layout.setSpacing(4)
     tab.chat_layout.addStretch()
     tab.chat_scroll.setWidget(tab.chat_container)
+    tab.chat_container.setAutoFillBackground(False)
     tab.chat_scroll.viewport().installEventFilter(tab)
+
+    # Nota de sesión vacía: guía la primera
+    # acción con formato de NOTA (borde dashed, italic, dim) — distinto de un
+    # mensaje. Vive SOLO mientras el chat está vacío: se oculta con el primer
+    # contenido (burbuja/typing/debate) y reaparece en clear_chat.
+    tab._idle_note = QLabel(
+        "◌  Lanza un workflow desde el Dashboard o escribe tu tarea abajo — "
+        "el progreso, las subtareas y los archivos aparecerán en el panel de actividad."
+    )
+    tab._idle_note.setWordWrap(True)
+    tab._idle_note.setStyleSheet(
+        f"color: {COLORS['text_dim']}; font-size: 11px; font-style: italic; "
+        f"border: 1px dashed {COLORS['border_light']}; border-radius: 9px; "
+        f"padding: 10px 12px; background: transparent;"
+    )
+    tab._idle_note.setVisible(True)
+    tab.chat_layout.insertWidget(tab.chat_layout.count() - 1, tab._idle_note)
 
     # Multiline input (Ctrl+Enter = send, Shift+Enter = newline)
     tab.input_field = QTextEdit()
@@ -49,26 +68,35 @@ def build_chat_panel(tab: MaestroTab) -> QWidget:
     tab.input_field.setStyleSheet(INPUT_STYLE)
     tab.input_field.installEventFilter(tab)
 
-    # PDF input row
+    # Adjunto PDF — fuera del flujo permanente; el widget se conserva oculto
+    # porque _on_pdf_loaded lee la ruta desde él (compat interna).
     tab.pdf_path_field = QLineEdit()
-    tab.pdf_path_field.setPlaceholderText("Ruta de PDF (opcional)")
-    tab.pdf_path_field.setStyleSheet(StyleFactory.input_line())
-    tab.pdf_load_btn = QPushButton("Cargar")
-    tab.pdf_load_btn.setStyleSheet(StyleFactory.secondary_button())
-    tab.pdf_load_btn.clicked.connect(tab._load_pdf)
+    tab.pdf_path_field.setVisible(False)
     tab._current_pdf_text = ""
 
-    pdf_row = QHBoxLayout()
-    pdf_row.addWidget(tab.pdf_path_field, 1)
-    pdf_row.addWidget(tab.pdf_load_btn)
+    tab._attach_btn = QPushButton()
+    tab._attach_btn.setIcon(get_icon("attach", COLORS["text_secondary"]))
+    tab._attach_btn.setToolTip("Adjuntar PDF (opcional)")
+    tab._attach_btn.setStyleSheet(StyleFactory.ghost_button())
+    tab._attach_btn.clicked.connect(tab._attach_pdf)
 
     tab.send_btn = QPushButton("Enviar")
     tab.send_btn.setStyleSheet(StyleFactory.accent_button())
     tab.send_btn.clicked.connect(tab.send_message)
 
+    # botón de parada por sesión (⏹). Visible solo mientras
+    # esta sesión tiene un workflow en curso.
+    tab._stop_btn = QPushButton("⏹")
+    tab._stop_btn.setToolTip("Detener la ejecución de esta sesión")
+    tab._stop_btn.setStyleSheet(StyleFactory.danger_button())
+    tab._stop_btn.setVisible(False)
+    tab._stop_btn.clicked.connect(tab._stop_workflow)
+
     input_row = QHBoxLayout()
+    input_row.addWidget(tab._attach_btn)
     input_row.addWidget(tab.input_field, 1)
     input_row.addWidget(tab.send_btn)
+    input_row.addWidget(tab._stop_btn)
 
     center_layout.addWidget(tab.chat_scroll, 1)
 
@@ -76,12 +104,20 @@ def build_chat_panel(tab: MaestroTab) -> QWidget:
     tab._status_banner = QLabel("")
     tab._status_banner.setWordWrap(True)
     tab._status_banner.setVisible(False)
-    tab._status_banner.setStyleSheet(
-        "QLabel { background: #3B82F6; color: white; border-radius: 6px;"
-        " padding: 6px 10px; font-size: 12px; }"
-    )
+    tab._status_banner.setStyleSheet(StyleFactory.status_banner("info"))
     center_layout.addWidget(tab._status_banner)
 
-    center_layout.addLayout(pdf_row)
+    # abandono EXPLÍCITO de la pausa de clarificación — visible solo
+    # mientras haya una pausa armada (ver SessionPane._update_pause_affordance).
+    tab._abandon_pause_btn = QPushButton("⏸ Abandonar pausa")
+    tab._abandon_pause_btn.setStyleSheet(StyleFactory.ghost_button())
+    tab._abandon_pause_btn.setToolTip(
+        "Descarta la pausa de clarificación en esta sesión "
+        "(la fila persiste en BD y se recupera recargando la conversación)"
+    )
+    tab._abandon_pause_btn.setVisible(False)
+    tab._abandon_pause_btn.clicked.connect(tab._abandon_pause)
+    center_layout.addWidget(tab._abandon_pause_btn)
+
     center_layout.addLayout(input_row)
     return center

@@ -1,25 +1,27 @@
-"""StatChips — fila compacta de chips de estado (⏱ ⚡ 🧠 🚦 📂)."""
+"""StatChips — fila compacta de chips de estado con puntos indicadores."""
 
 from __future__ import annotations
 
+from html import escape as _escape
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-CHIP_DEFS = [
-    ("elapsed_time", "⏱"),
-    ("tokens_used", "⚡"),
-    ("current_agent", "🧠"),
-    ("status", "🚦"),
-    ("phase", "📂"),
-]
+from desktop.theme import StyleFactory, ThemeManager
 
-CHIP_STYLE = (
-    "background: #1A1A1A; border: 1px solid #2A2A2A; border-radius: 8px;"
-    " padding: 3px 8px; font-size: 11px; color: #E5E5E5;"
-)
+CHIP_KEYS = ["elapsed_time", "tokens_used", "current_agent", "status", "phase"]
+
+_DOT_NEUTRAL = "#55575F"
+
+CHIP_STYLE = StyleFactory.chip()
+
+
+def _dot(color: str) -> str:
+    return f"<span style='color:{color}'>&#9679;</span>"
 
 
 class StatChips(QWidget):
-    """Chips derivados del contrato normalizado de stats."""
+    """Chips derivados del contrato normalizado de stats (dot + valor)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,8 +29,9 @@ class StatChips(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self._labels: dict[str, QLabel] = {}
-        for key, icon in CHIP_DEFS:
-            lbl = QLabel(f"{icon} —")
+        for key in CHIP_KEYS:
+            lbl = QLabel(f"{_dot(_DOT_NEUTRAL)} —")
+            lbl.setTextFormat(Qt.TextFormat.RichText)
             lbl.setStyleSheet(CHIP_STYLE)
             lbl.setToolTip(key.replace("_", " "))
             layout.addWidget(lbl)
@@ -48,14 +51,26 @@ class StatChips(QWidget):
                     text = str(value)
             elif key == "current_agent" and str(value) in ("—", "None"):
                 text = "—"
-            lbl.setText(f"{next(icon for k, icon in CHIP_DEFS if k == key)} {text}")
+            dot_color = _DOT_NEUTRAL
             if key == "status":
-                green = "completado" in text.lower()
-                lbl.setStyleSheet(CHIP_STYLE + f" color: {'#22C55E' if green else '#F59E0B'};")
+                lower = text.lower()
+                _c = ThemeManager.current().colors
+                if "completad" in lower:
+                    dot_color = _c.success
+                    extra = f"<b>{_escape(text)}</b>"
+                elif any(w in lower for w in ("ejecut", "running", "curso", "execut")):
+                    dot_color = _c.status_running
+                    extra = _escape(text)
+                else:
+                    dot_color = _c.warning
+                    extra = _escape(text)
+            elif key in ("elapsed_time", "tokens_used"):
+                extra = f"<b>{_escape(text)}</b>"
+            else:
+                extra = f"<b>{_escape(text)}</b>"
+            lbl.setText(f"{_dot(dot_color)}&nbsp;&nbsp;{extra}")
 
     def reset(self):
         """Vuelve los chips al estado inicial (—)."""
-        for key, lbl in self._labels.items():
-            icon = next(icon for k, icon in CHIP_DEFS if k == key)
-            lbl.setText(f"{icon} —")
-            lbl.setStyleSheet(CHIP_STYLE)
+        for lbl in self._labels.values():
+            lbl.setText(f"{_dot(_DOT_NEUTRAL)} —")

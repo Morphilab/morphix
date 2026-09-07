@@ -1,5 +1,5 @@
 # mypy: ignore-errors
-"""Maestro top bar — 1 fila compacta: modo, workspace, proyecto, agente, acciones, workflow."""
+"""Maestro top bar — 1 fila compacta: logo · modo · workflow · agente · proyecto · ＋ · export."""
 
 from __future__ import annotations
 
@@ -9,138 +9,186 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QProgressBar,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from core.config import settings
 from desktop.theme import COLORS, StyleFactory
 
 if TYPE_CHECKING:
-    from desktop.maestro_tab import MaestroTab
+    from desktop.maestro_tab import SessionPane
 
 
-def build_top_bar(tab: MaestroTab) -> QWidget:
+def build_top_bar(tab: SessionPane) -> QWidget:
+    """1 fila compacta: logo · modo · workflow · agente · proyecto · ＋ · export.
+
+    spec §5: 6 visibles. Sin duplicados (Online/ws viven en el sidebar).
+    """
     bar = QWidget()
-    bar.setStyleSheet(f"QWidget {{ background: {COLORS['bg_near_black']}; }}")
+    # Regla de 2 tonos, variante estricta): chrome/canvas =
+    # bg_deepest; superficies interactivas = bg_solid. Solo hover se aparta.
+    bar.setStyleSheet(f"QWidget {{ background: {COLORS['bg_deepest']}; }}")
     outer = QVBoxLayout(bar)
-    outer.setContentsMargins(8, 6, 8, 6)
+    outer.setContentsMargins(8, 4, 8, 4)
     outer.setSpacing(6)
 
-    proj_btn_style = StyleFactory.small_button()
     combo_style = StyleFactory.combo_box()
-    tab._toggle_style_active = StyleFactory.toggle_active()
-    tab._toggle_style_inactive = StyleFactory.toggle_inactive()
+    tag_style = StyleFactory.small_button()
 
-    # --- Fila única compacta ---
     row = QHBoxLayout()
-    row.setSpacing(6)
-    is_off = settings.offline_mode
-    tab.mode_label = QLabel("Offline" if is_off else "Online")
-    tab.mode_label.setStyleSheet(
-        f"color: {'#F59E0B' if is_off else '#22C55E'}; font-size: 11px; font-weight: bold;"
-    )
+    row.setSpacing(4)
 
-    from core.workspaces import get_global_workspaces
+    # Logo "Morphix" eliminado: era un QLabel por cada SessionPane
+    # (hasta 4× con multi-sesión) y el sidebar
+    # ya lleva la marca. La fila gana ~60px para los combos.
 
-    tab.ws_label = QLabel(get_global_workspaces().current)
-    tab.ws_label.setStyleSheet("color: #A0A0A0; font-size: 11px;")
-    row.addWidget(tab.mode_label)
-    row.addWidget(QLabel("·"))
-    row.addWidget(QLabel("ws:"))
-    row.addWidget(tab.ws_label)
-
-    tab._chat_toggle = QPushButton("💬 Chat")
-    tab._chat_toggle.setStyleSheet(tab._toggle_style_active)
+    # ── Modo (estado — NUNCA en menú, spec §2) ──
+    # Segmentado real (aprobado 2-A): el contenedor NO tiene borde propio;
+    # el activo lleva fondo claro y radio solo en su extremo exterior —
+    # un solo bloque, sin bordes intermedios ni esquinas que chocan.
+    tab._chat_toggle = QPushButton("Chat")
     tab._chat_toggle.setToolTip("Modo conversación directa")
-    tab._orchestrate_toggle = QPushButton("⚙️ Orquestar")
-    tab._orchestrate_toggle.setStyleSheet(tab._toggle_style_inactive)
+    tab._orchestrate_toggle = QPushButton("Orquestar")
     tab._orchestrate_toggle.setToolTip("Modo orquestación de workflows")
     tab._chat_toggle.clicked.connect(lambda: tab._set_mode("chat"))
     tab._orchestrate_toggle.clicked.connect(lambda: tab._set_mode("orchestrate"))
-    row.addSpacing(12)
-    row.addWidget(QLabel("Modo:"))
-    row.addWidget(tab._chat_toggle)
-    row.addWidget(tab._orchestrate_toggle)
+    mode_grp = QWidget()
+    mode_lay = QHBoxLayout(mode_grp)
+    mode_lay.setContentsMargins(0, 0, 0, 0)
+    mode_lay.setSpacing(0)
+    mode_lay.addWidget(tab._chat_toggle)
+    mode_lay.addWidget(tab._orchestrate_toggle)
+    tab._apply_mode_styles()
+    row.addWidget(mode_grp)
 
-    tab._project_label = QLabel("Proyecto: —")
-    tab._project_label.setStyleSheet("color: #A0A0A0; font-size: 10px; padding: 2px 4px;")
-    tab._project_combo = QComboBox()
-    tab._project_combo.setStyleSheet(combo_style)
-    tab._project_combo.setToolTip("Proyecto activo del workspace")
-    tab._refresh_project_list()
-    tab._project_combo.currentIndexChanged.connect(tab._on_project_combo_changed)
-    tab._new_proj_btn = QPushButton("➕")
-    tab._new_proj_btn.setStyleSheet(proj_btn_style)
-    tab._new_proj_btn.setToolTip("Nuevo proyecto")
-    tab._new_proj_btn.clicked.connect(tab._create_project)
-    tab._import_proj_btn = QPushButton("📂")
-    tab._import_proj_btn.setStyleSheet(proj_btn_style)
-    tab._import_proj_btn.setToolTip("Importar proyecto")
-    tab._import_proj_btn.clicked.connect(tab._import_project)
-    row.addSpacing(12)
-    row.addWidget(tab._project_label)
-    row.addWidget(tab._project_combo)
-    row.addWidget(tab._new_proj_btn)
-    row.addWidget(tab._import_proj_btn)
+    # ── Picker de workflow (NUEVO — solo visible en Orquestar) ──
+    tab._workflow_combo = QComboBox()
+    tab._workflow_combo.setStyleSheet(combo_style)
+    tab._workflow_combo.setToolTip("Workflow activo (Orquestar)")
+    tab._workflow_combo.currentTextChanged.connect(tab._on_workflow_picked)
+    tab._workflow_combo.setVisible(False)
+    row.addWidget(tab._workflow_combo)
 
+    # ── Agente ──
     tab._agent_combo = QComboBox()
     tab._agent_combo.setStyleSheet(combo_style)
-    tab._agent_combo.setMinimumWidth(130)
+    tab._agent_combo.setMinimumWidth(100)
     tab._agent_combo.setToolTip("Agente activo")
     tab._populate_agents(None)
     tab._agent_combo.currentIndexChanged.connect(tab._on_agent_combo_changed)
-    row.addSpacing(12)
-    row.addWidget(QLabel("Agente:"))
+    tab._agent_label = QLabel("Agente:")
+    row.addWidget(tab._agent_label)
     row.addWidget(tab._agent_combo)
 
-    tab._preload_btn = QPushButton("⚡")
-    tab._preload_btn.setStyleSheet(proj_btn_style)
-    tab._preload_btn.setToolTip("Pre-cargar proyecto")
-    tab._preload_btn.clicked.connect(tab._preload_project)
-    tab._preload_btn.setEnabled(False)
-    tab._preload_status = QLabel("")
-    tab._preload_status.setStyleSheet("color: #A0A0A0; font-size: 10px;")
+    # ── Info contextual ──
+    # Un solo botón cuyo texto cambia según el contexto: ⓘ Agente (chat),
+    # ⓘ Workflow (orquestar), ⓘ Bot (chat eterno de bot). El label lo
+    # recalcula SessionPane._update_info_button(); el contenido lo resuelve
+    # SessionPane._open_info_dialog() → EntityInfoDialog.
+    tab._info_btn = QPushButton("ⓘ Agente")
+    tab._info_btn.setStyleSheet(tag_style)
+    tab._info_btn.setToolTip("Información de la entidad activa")
+    tab._info_btn.clicked.connect(tab._open_info_dialog)
+    row.addWidget(tab._info_btn)
+
+    # ── Indicador de proyecto con menú (spec §5) ──
+    tab._project_btn = QToolButton()
+    tab._project_btn.setText("▤ — sin proyecto")
+    tab._project_btn.setStyleSheet(project_button_style(False))
+    tab._project_menu = QMenu(tab._project_btn)
+    tab._preload_action = tab._project_menu.addAction("⟳  Pre-cargar índice")
+    tab._preload_action.setEnabled(False)
+    tab._project_menu.addSeparator()
+    tab._change_project_action = tab._project_menu.addAction("▤  Cambiar proyecto → Dashboard")
+    tab._preload_action.triggered.connect(tab._preload_project)
+    tab._change_project_action.triggered.connect(tab._request_change_project)
+    tab._project_btn.setMenu(tab._project_menu)
+    tab._project_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    tab._project_btn.setToolTip(
+        "Proyecto activo del workspace (se cambia desde el Dashboard → Proyectos)"
+    )
+    row.addWidget(tab._project_btn)
+
+    # ── Selector de rama git (v1: solo locales, checkout bloqueado si dirty) ──
+    # Mismo lenguaje visual que el botón de proyecto. Oculto si no hay
+    # proyecto/repo; SessionPane._refresh_branch_btn puebla el menú.
+    tab._branch_btn = QToolButton()
+    tab._branch_btn.setText("⑂ —")
+    tab._branch_btn.setStyleSheet(project_button_style(False))
+    tab._branch_btn.setToolTip("Rama git del proyecto activo")
+    # InstantPopup: el menú abre con UN clic (DelayedPopup — el default —
+    # exige mantener presionado; se veía como "no clickeable").
+    tab._branch_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    tab._branch_btn.setVisible(False)
+    row.addWidget(tab._branch_btn)
+
+    # Progreso de pre-carga inline (absorbe _preload_progress/_preload_status)
     tab._preload_progress = QProgressBar()
     tab._preload_progress.setRange(0, 100)
     tab._preload_progress.setValue(0)
-    tab._preload_progress.setMaximumHeight(14)
-    tab._preload_progress.setMaximumWidth(160)
+    tab._preload_progress.setMaximumHeight(10)
+    tab._preload_progress.setMaximumWidth(120)
     tab._preload_progress.setTextVisible(False)
     tab._preload_progress.setVisible(False)
     tab._preload_progress.setStyleSheet(StyleFactory.progress_bar(COLORS["success"]))
-    row.addWidget(tab._preload_btn)
+    tab._preload_status = QLabel("")
+    tab._preload_status.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 10px;")
     row.addWidget(tab._preload_progress)
     row.addWidget(tab._preload_status, 1)
+
     row.addStretch()
 
-    tab._workflow_label = QLabel("—")
-    tab._workflow_label.setStyleSheet("color: #A0A0A0; font-size: 11px;")
-    tab._workflow_label.setToolTip("Workflow activo")
-    row.addWidget(tab._workflow_label)
+    # ── Refrescar: recarga combos/detalle sin
+    # reabrir la app (workflows/agentes cambian por YAML a mano).
+    tab._refresh_btn = QPushButton("⟳")
+    tab._refresh_btn.setStyleSheet(tag_style)
+    tab._refresh_btn.setToolTip("Refrescar workflows, agentes y detalle del workflow")
+    tab._refresh_btn.clicked.connect(tab._refresh_all)
+    row.addWidget(tab._refresh_btn)
 
-    btn_style = StyleFactory.secondary_button()
-    tab.offline_btn = QPushButton("Offline" if is_off else "Online")
-    tab.offline_btn.setStyleSheet(btn_style)
-    tab.offline_btn.setToolTip("Activar/desactivar modo offline")
-    tab.offline_btn.clicked.connect(tab._toggle_offline)
-    tab.download_btn = QPushButton("⇩")
-    tab.download_btn.setStyleSheet(btn_style)
-    tab.download_btn.setToolTip("Descargar conversación")
-    tab.download_btn.clicked.connect(tab._download_conversation)
-    tab.download_format = QComboBox()
-    tab.download_format.addItems(["md", "json", "pdf", "html"])
-    tab.download_format.setStyleSheet(combo_style)
-    tab.download_format.setToolTip("Formato de exportación")
-    tab._new_conv_btn = QPushButton("✚")
-    tab._new_conv_btn.setStyleSheet(btn_style)
+    # ── Nueva conversación ──
+    tab._new_conv_btn = QPushButton("＋ Nueva")
+    tab._new_conv_btn.setStyleSheet(tag_style)
     tab._new_conv_btn.setToolTip("Nueva conversación")
     tab._new_conv_btn.clicked.connect(tab._new_conversation)
-    row.addWidget(tab.download_btn)
-    row.addWidget(tab.download_format)
     row.addWidget(tab._new_conv_btn)
-    row.addWidget(tab.offline_btn)
+
+    # ── Export fusionado (spec §5) ──
+    tab._export_btn = QToolButton()
+    tab._export_btn.setText("⬇ ▾")
+    tab._export_btn.setStyleSheet(tag_style)
+    tab._export_btn.setToolTip("Exportar conversación")
+    export_menu = QMenu(tab._export_btn)
+    for fmt in ("md", "json", "pdf", "html"):
+        act = export_menu.addAction(fmt)
+        act.triggered.connect(lambda checked=False, f=fmt: tab._download_conversation(fmt=f))
+    tab._export_btn.setMenu(export_menu)
+    tab._export_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    row.addWidget(tab._export_btn)
+
     outer.addLayout(row)
     return bar
+
+
+def project_button_style(active: bool) -> str:
+    from desktop.theme import COLORS, ThemeManager
+
+    color = ThemeManager.current().colors.success if active else COLORS["text_dim"]
+    return (
+        f"QToolButton {{ background: transparent; color: {color}; "
+        f"border: 1px dashed {COLORS['border_light']}; border-radius: 6px; "
+        f"padding: 3px 8px; font-size: 11px; }}"
+        f"QToolButton::menu-indicator {{ subcontrol-position: right center; right: 4px; }}"
+    )
+
+
+def _divider() -> QWidget:
+    d = QWidget()
+    d.setFixedWidth(1)
+    d.setFixedHeight(14)
+    d.setStyleSheet(f"background: {COLORS['border_light']};")
+    return d

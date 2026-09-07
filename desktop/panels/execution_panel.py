@@ -12,21 +12,24 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from desktop.theme import StyleFactory
+from desktop.theme import COLORS, StyleFactory, ThemeManager
 from desktop.widgets.collapsible_section import CollapsibleSection
 from desktop.widgets.stat_chips import StatChips
 
 if TYPE_CHECKING:
-    from desktop.maestro_tab import MaestroTab
+    from desktop.maestro_tab import SessionPane
 
 LIST_STYLE = (
-    "QListWidget { background: #0F0F0F; border: 1px solid #2A2A2A; "
-    "border-radius: 8px; padding: 4px; font-size: 11px; color: #A0A0A0; }"
-    "QListWidget::item { padding: 3px 6px; }"
+    f"QListWidget {{ background: {COLORS['bg_surface']}; "
+    f"border: 1px solid {COLORS['border_default']}; "
+    f"border-radius: 9px; padding: 2px 0px; font-size: 12px; "
+    f"color: {COLORS['text_secondary']}; }}"
+    f"QListWidget::item {{ padding: 7px 13px; "
+    f"border-bottom: 1px solid rgba(255, 255, 255, 30); }}"
 )
 
 
-def build_execution_panel(tab: MaestroTab) -> QWidget:
+def build_execution_panel(tab: SessionPane) -> QWidget:
     panel = QWidget()
     layout = QVBoxLayout(panel)
     layout.setContentsMargins(4, 4, 4, 4)
@@ -55,9 +58,16 @@ def build_execution_panel(tab: MaestroTab) -> QWidget:
     tab._files_section = CollapsibleSection("Archivos creados", collapsed=True)
     tab._files_written_list = QListWidget()
     tab._files_written_list.setStyleSheet(
-        LIST_STYLE + "QListWidget { color: #22C55E; font-size: 10px; }"
+        LIST_STYLE
+        + f"QListWidget {{ font-family: {ThemeManager.current().typography.family_mono}; "
+        f"font-size: 11px; }}"
     )
     tab._files_section.add_widget(tab._files_written_list)
     layout.addWidget(tab._files_section)
+
+    # La leyenda de estado vacío ('Sin ejecución activa…') vive ahora en el
+    # CHAT como nota dashed (tab._idle_note — chat_panel.py, opción A del
+    # El chip ●/○ de la cabecera ACTIVIDAD conserva el
+    # indicador en idle; el label del panel se eliminó por redundante.
 
     return panel

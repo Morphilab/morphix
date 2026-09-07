@@ -21,11 +21,16 @@ STATUS_ICONS = {
 
 
 class _AgentBlock(QWidget):
-    """Collapsible block for a single agent's output."""
+    """Collapsible block for a single agent's output.
 
-    def __init__(self, agent_name: str, color: str, parent=None):
+    ``agent_name`` identifica al agente (encolado/estado); ``display_name``
+    es lo que se muestra en el header (puede añadir el paso del workflow).
+    """
+
+    def __init__(self, agent_name: str, color: str, parent=None, display_name: str = ""):
         super().__init__(parent)
         self.agent_name = agent_name
+        self.display_name = display_name or agent_name
         self.color = color
         self._collapsed = True
 
@@ -34,7 +39,7 @@ class _AgentBlock(QWidget):
         main.setSpacing(0)
 
         # Toggle header
-        self.toggle = QPushButton(f"🧑‍💻 {agent_name.capitalize()}  ⏳  ▼")
+        self.toggle = QPushButton(f"🧑‍💻 {self.display_name.capitalize()}  ⏳  ▼")
         self.toggle.setStyleSheet(
             f"QPushButton {{ background: {COLORS['bg_surface_raised']}; "
             f"color: {color}; border: 1px solid {color}44; "
@@ -96,7 +101,7 @@ class _AgentBlock(QWidget):
     def set_status(self, status: str):
         icon = STATUS_ICONS.get(status, "⏳")
         arrow = "▲" if not self._collapsed else "▼"
-        self.toggle.setText(f"🧑‍💻 {self.agent_name.capitalize()}  {icon}  {arrow}")
+        self.toggle.setText(f"🧑‍💻 {self.display_name.capitalize()}  {icon}  {arrow}")
 
     def _adjust_height(self):
         doc = self.browser.document()
@@ -115,11 +120,19 @@ class _AgentBlock(QWidget):
 
 
 class DebateSection(QWidget):
-    """Container for per-agent collapsible blocks in the chat flow."""
+    """Container for per-agent collapsible blocks in the chat flow.
 
-    def __init__(self, parent=None):
+    Los bloques se indexan por (agente, paso): en un loop DSL el mismo agente
+    aparece en pasos distintos y cada uno merece su propio bloque — sin esto
+    el diálogo de todo el run se acumulaba en un único bloque desorganizado.
+    El estado (set_status) viaja sin paso y se aplica al bloque ACTIVO del
+    agente (el último que empezó).
+    """
+
+    def __init__(self, title: str = "🤖 Actividad de agentes", parent=None):
         super().__init__(parent)
         self._blocks: dict[str, _AgentBlock] = {}
+        self._active_by_agent: dict[str, str] = {}
         self._palette = list(AGENT_PALETTE)
         self._color_idx = 0
 
@@ -128,40 +141,52 @@ class DebateSection(QWidget):
         main.setSpacing(4)
 
         # Section header
-        header = QLabel("💬 Debate entre agentes")
-        header.setStyleSheet(
+        self._header = QLabel(title)
+        self._header.setStyleSheet(
             f"color: {COLORS['accent']}; font-size: 13px; font-weight: bold; " f"padding: 2px 4px;"
         )
-        main.addWidget(header)
+        main.addWidget(self._header)
         self._layout = main
 
+    def set_title(self, title: str) -> None:
+        self._header.setText(title)
+
     def _get_color(self, agent_name: str) -> str:
-        if agent_name in self._blocks:
-            return self._blocks[agent_name].color
+        for block in self._blocks.values():
+            if block.agent_name == agent_name:
+                return block.color
         color = self._palette[self._color_idx % len(self._palette)]
         self._color_idx += 1
         return color
 
-    def start_agent(self, agent_name: str):
-        if agent_name not in self._blocks:
-            color = self._get_color(agent_name)
-            block = _AgentBlock(agent_name, color)
-            self._blocks[agent_name] = block
-            self._layout.addWidget(block)
+    def _block_key(self, agent_name: str, label: str) -> str:
+        return f"{agent_name}||{label or ''}"
 
-    def append_chunk(self, agent_name: str, chunk: str):
-        self.start_agent(agent_name)
-        self._blocks[agent_name].append_text(chunk)
+    def start_agent(self, agent_name: str, label: str = ""):
+        key = self._block_key(agent_name, label)
+        if key not in self._blocks:
+            color = self._get_color(agent_name)
+            display = agent_name if not label else f"{agent_name} · {label}"
+            block = _AgentBlock(agent_name, color, display_name=display)
+            self._blocks[key] = block
+            self._layout.addWidget(block)
+        self._active_by_agent[agent_name] = key
+
+    def append_chunk(self, agent_name: str, chunk: str, label: str = ""):
+        self.start_agent(agent_name, label)
+        self._blocks[self._block_key(agent_name, label)].append_text(chunk)
 
     def set_status(self, agent_name: str, status: str):
-        if agent_name in self._blocks:
-            self._blocks[agent_name].set_status(status)
+        active_key = self._active_by_agent.get(agent_name)
+        if active_key in self._blocks:
+            self._blocks[active_key].set_status(status)
 
     def clear(self):
         for block in self._blocks.values():
             self._layout.removeWidget(block)
             block.deleteLater()
         self._blocks.clear()
+        self._active_by_agent.clear()
         self._color_idx = 0
 
     def is_empty(self) -> bool:

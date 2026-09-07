@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QTabWidget, QTextBrowser
 
-from desktop.theme import StyleFactory
+from desktop.theme import COLORS, StyleFactory
 from desktop.widgets.phase_cards import PhaseCards
 
 if TYPE_CHECKING:
-    from desktop.maestro_tab import MaestroTab
+    from desktop.maestro_tab import SessionPane
 
 
-def build_detail_panel(tab: MaestroTab) -> QTabWidget:
+def build_detail_panel(tab: SessionPane) -> QTabWidget:
     tabs = QTabWidget()
     tabs.setStyleSheet(StyleFactory.detail_tabs())
     tab._detail_tabs = tabs
@@ -29,7 +29,7 @@ def build_detail_panel(tab: MaestroTab) -> QTabWidget:
     tab._status_log_view.setStyleSheet(log_style)
     tab._status_log_view.document().setMaximumBlockCount(400)
     tab._status_log_view.setHtml(
-        "<p style='color:#888; text-align:center'>Listo. Envía una consulta</p>"
+        f"<p style='color:{COLORS['text_dim']}; text-align:center'>Listo. Envía una consulta</p>"
     )
     tab.status_log = tab._status_log_view  # backward-compat alias
     tabs.addTab(tab._status_log_view, "Log")
@@ -39,14 +39,17 @@ def build_detail_panel(tab: MaestroTab) -> QTabWidget:
 
 
 def update_tabs_for_workflow(
-    tab: MaestroTab,
+    tab: SessionPane,
     workflow_allowed_tools: list[str] | None = None,
     agent_tools: list[str] | None = None,
 ):
-    """Oculta/muestra el tab Bash según allowlist (spec §4.4).
+    """Muestra el tab Bash SIEMPRE; deshabilitado si bash_manager no está permitido.
+
+    El tab jamás se oculta según la allowlist: misma información sin sorpresa,
+    visible pero deshabilitado con tooltip explicativo.
 
     Precedencia: perfil del agente forzado (chat directo) → allowlist del
-    workflow → sin información: mostrar siempre.
+    workflow → sin información: habilitado.
     """
     from tools.specs import tool_matches_allowlist
 
@@ -59,4 +62,9 @@ def update_tabs_for_workflow(
     bash_idx = tab._detail_tabs.indexOf(tab.bash_panel)
     if bash_idx < 0:
         return
-    tab._detail_tabs.setTabVisible(bash_idx, has_bash)
+    tab._detail_tabs.setTabVisible(bash_idx, True)
+    tab._detail_tabs.setTabEnabled(bash_idx, has_bash)
+    tab._detail_tabs.setTabToolTip(
+        bash_idx,
+        "" if has_bash else "bash_manager no está en el allowlist de este workflow/agente",
+    )

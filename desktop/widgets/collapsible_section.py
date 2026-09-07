@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+
+from desktop.theme import ThemeManager
+
+# Tinta del subrayado de sección (mockup v9: #45464D).
+_UNDERLINE = "#45464D"
 
 
 class CollapsibleSection(QWidget):
@@ -22,10 +27,16 @@ class CollapsibleSection(QWidget):
         main.setSpacing(2)
 
         self._toggle_btn = QPushButton()
+        self._toggle_btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        _c = ThemeManager.current().colors
         self._toggle_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; color: #E5E5E5;"
-            " font-size: 12px; font-weight: bold; text-align: left; padding: 4px 2px; }"
-            "QPushButton:hover { color: #22C55E; }"
+            f"QPushButton {{ background: transparent; border: none; "
+            f"border-radius: 0px; "
+            f"border-bottom: 2px solid {_UNDERLINE}; "
+            f"color: {_c.text_secondary}; font-size: 10px; "
+            f"font-weight: bold; text-align: left; padding: 6px 0 5px 0; }}"
+            f"QPushButton:hover {{ color: {_c.accent_secondary}; "
+            f"border-bottom-color: {_c.accent_secondary_dark}; }}"
         )
         self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle_btn.clicked.connect(self.toggle)
@@ -43,6 +54,7 @@ class CollapsibleSection(QWidget):
         arrow = "▶" if self._collapsed else "▼"
         self._toggle_btn.setText(f"{arrow}  {self._title}")
         self._body.setVisible(not self._collapsed)
+        self._toggle_btn.adjustSize()
 
     def toggle(self):
         self._collapsed = not self._collapsed

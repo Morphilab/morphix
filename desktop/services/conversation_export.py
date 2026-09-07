@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+
+from agents.audit import redact_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,24 @@ INTERNAL_MARKERS = (
     "Mantén siempre esta identidad",
     "Soy Morphix, un asistente experto",
 )
+
+# Misma protección anti-watermark que core/repositories (paridad).
+_WATERMARK_STRIP_RE = None
+
+
+def _strip_watermarks(text: str) -> str:
+    """Elimina marcas de versión tipo [ver.<hex>] del contenido exportado."""
+    import re
+
+    global _WATERMARK_STRIP_RE  # noqa: PLW0603
+    if _WATERMARK_STRIP_RE is None:
+        _WATERMARK_STRIP_RE = re.compile(r"\s*\[ver\.[0-9a-f]{6,}\]")
+    return _WATERMARK_STRIP_RE.sub("", text)
+
+
+# Todo contenido de mensaje escrito al archivo exportado pasa por aquí.
+def _sanitize(text: str) -> str:
+    return redact_credentials(_strip_watermarks(text))
 
 
 def _is_internal(msg: dict) -> bool:
@@ -31,7 +51,7 @@ async def export_history_to_file(history: list[dict[str, Any]], filename: str, f
         data = [
             {
                 "role": m.get("role", "?"),
-                "content": m.get("content", ""),
+                "content": _sanitize(m.get("content", "")),
                 "agent": m.get("agent"),
                 "label": m.get("label"),
             }
@@ -44,10 +64,12 @@ async def export_history_to_file(history: list[dict[str, Any]], filename: str, f
     elif fmt == "md":
         with open(filename, "w", encoding="utf-8") as f:
             f.write("# Conversación Morphix\n")
-            f.write(f"**Fecha:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n")
+            f.write(
+                f"**Fecha:** {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n"
+            )
             for msg in history:
                 role = msg.get("role", "?")
-                content = msg.get("content", "")
+                content = _sanitize(msg.get("content", ""))
                 if _is_internal(msg):
                     continue
                 if role == "assistant":
@@ -68,7 +90,11 @@ async def export_history_to_file(history: list[dict[str, Any]], filename: str, f
         from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-        data = [m for m in history if not _is_internal(m)]
+        data = [
+            {**m, "content": _sanitize(m.get("content", ""))}
+            for m in history
+            if not _is_internal(m)
+        ]
 
         doc = SimpleDocTemplate(filename, pagesize=letter)
         styles = getSampleStyleSheet()
@@ -99,10 +125,15 @@ async def export_history_to_file(history: list[dict[str, Any]], filename: str, f
 
             formatter = HtmlFormatter(style="default", noclasses=True)
 
-            def _hl_code(text: str) -> str:
+            def _render_html(text: str) -> str:
+                """Escapa TODO lo que está FUERA de fences; los fences
+                los renderiza pygments (que ya HTML-escapa el código)."""
                 import re
 
-                def _repl(m):
+                parts: list[str] = []
+                last = 0
+                for m in re.finditer(r"```(\w*)\n(.*?)```", text, flags=re.DOTALL):
+                    parts.append(escape(text[last : m.start()]))
                     lang = m.group(1) or "python"
                     code = m.group(2)
                     try:
@@ -112,13 +143,14 @@ async def export_history_to_file(history: list[dict[str, Any]], filename: str, f
                             lexer = guess_lexer(code)
                         except ClassNotFound:
                             lexer = get_lexer_by_name("text")
-                    return highlight(code, lexer, formatter)
-
-                return re.sub(r"```(\w*)\n(.*?)```", _repl, text, flags=re.DOTALL)
+                    parts.append(highlight(code, lexer, formatter))
+                    last = m.end()
+                parts.append(escape(text[last:]))
+                return "".join(parts)
 
         except ImportError:
 
-            def _hl_code(text: str) -> str:
+            def _render_html(text: str) -> str:
                 return f"<pre><code>{escape(text)}</code></pre>"
 
         with open(filename, "w", encoding="utf-8") as f:
@@ -142,12 +174,14 @@ async def export_history_to_file(history: list[dict[str, Any]], filename: str, f
             f.write("<h1>Conversación Morphix</h1>\n")
             f.write(
                 f"<p><strong>Fecha:</strong> "
-                f"{datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}</p>\n"
+                f"{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}</p>\n"
                 "<hr>\n"
             )
             for msg in history:
                 role = msg.get("role", "unknown")
-                content = msg.get("content", "")
+                content = _sanitize(msg.get("content", ""))
+                if _is_internal(msg):
+                    continue
                 role_label = {
                     "assistant": "Maestro",
                     "user": "Usuario",
@@ -155,7 +189,7 @@ async def export_history_to_file(history: list[dict[str, Any]], filename: str, f
                     "tool": "Herramienta",
                 }.get(role, role.capitalize())
                 f.write(f'<div class="msg">\n<p class="role">{role_label}:</p>\n')
-                f.write(f'<div class="content">{_hl_code(content)}</div>\n')
+                f.write(f'<div class="content">{_render_html(content)}</div>\n')
                 f.write("</div>\n<hr>\n")
             f.write("</body>\n</html>")
 

@@ -6,14 +6,13 @@ El tab se suscribe a los callbacks para actualizar la UI.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from orchestration.context import Session
+from orchestration.context import PAUSED_MARKER, Session
 
 logger = logging.getLogger(__name__)
-
-PAUSED = "[PAUSED:clarification_needed]"
 
 
 class WorkflowRunner:
@@ -24,6 +23,12 @@ class WorkflowRunner:
         self.on_assistant: Callable[[str], Awaitable[None]] | None = None
         self.on_pause: Callable[[Session, str], Awaitable[None]] | None = None
         self.streaming_check: Callable[[], bool] | None = None
+        # Fin de ejecución (éxito, fallo o cancelación): resetea UI dependiente
+        # del último stats (p.ej. rutas sin emit terminal como coordinated).
+        self.on_finish: Callable[[], None] | None = None
+        # ⏹ — persistencia de la conversación parcial (el
+        # host la conecta; el runner no conoce la BD ni el historial de UI).
+        self.on_cancel_persist: Callable[[Session], Awaitable[None]] | None = None
 
     async def run(self, session: Session) -> None:
         """Corre run_full_workflow y reporta el resultado."""
@@ -33,7 +38,7 @@ class WorkflowRunner:
             final = await WorkflowOrchestrator.run_full_workflow(session=session)
             ctx = session.context
 
-            if final == PAUSED:
+            if final == PAUSED_MARKER:
                 question = ctx.last_clarification or "¿Podrías clarificar?"
                 if self.on_system:
                     await self.on_system(f"⏸️ Pausa: {question}")
@@ -48,10 +53,25 @@ class WorkflowRunner:
             elif not had_streaming:
                 if self.on_system:
                     await self.on_system("⚠️ El workflow no produjo respuesta.")
+        except asyncio.CancelledError:
+            # ⏹ del usuario — CancelledError es BaseException,
+            # el `except Exception` de abajo no lo veía: ni mensaje ni persistencia
+            # (la conversación detenida desaparecía del Historial).
+            logger.info("Workflow cancelado por el usuario (⏹)")
+            if self.on_system:
+                await self.on_system("⏹ Ejecución detenida. Se conserva la conversación parcial.")
+            if self.on_cancel_persist is not None:
+                try:
+                    await self.on_cancel_persist(session)
+                except Exception:
+                    logger.warning("Persistencia de run cancelado falló", exc_info=True)
         except Exception as e:
             logger.error(f"Error en workflow: {e}", exc_info=True)
             if self.on_system:
                 await self.on_system(f"❌ Error: {e}")
+        finally:
+            if self.on_finish:
+                self.on_finish()
 
     async def resume(self, session: Session, answer: str) -> None:
         """Reanuda un workflow pausado tras clarificación."""
@@ -59,7 +79,7 @@ class WorkflowRunner:
 
         try:
             final = await WorkflowOrchestrator.resume_workflow(session=session, answer=answer)
-            if final == PAUSED:
+            if final == PAUSED_MARKER:
                 question = session.context.last_clarification or "¿Podrías clarificar?"
                 if self.on_system:
                     await self.on_system(f"⏸️ Pausa adicional: {question}")
@@ -68,10 +88,22 @@ class WorkflowRunner:
                 return
             if final and final.strip() and self.on_assistant:
                 await self.on_assistant(final)
+        except asyncio.CancelledError:
+            logger.info("Resume cancelado por el usuario (⏹)")
+            if self.on_system:
+                await self.on_system("⏹ Ejecución detenida. Se conserva la conversación parcial.")
+            if self.on_cancel_persist is not None:
+                try:
+                    await self.on_cancel_persist(session)
+                except Exception:
+                    logger.warning("Persistencia de resume cancelado falló", exc_info=True)
         except Exception as e:
             logger.error(f"Error resumiendo workflow: {e}", exc_info=True)
             if self.on_system:
                 await self.on_system(f"❌ Error: {e}")
+        finally:
+            if self.on_finish:
+                self.on_finish()
 
     async def run_direct_agent(self, session: Session, query: str, agent: str) -> str | None:
         """Conversación directa 1:1 con un agente (function-calling nativo).
@@ -81,11 +113,15 @@ class WorkflowRunner:
         """
         from agents.registry import agents_registry as _reg
         from core.workflow_state import get_active_workflow
-        from core.workspaces import get_global_workspaces
-        from orchestration.loader import load_workflow_template
+        from core.workspaces import begin_workflow_run, end_workflow_run, get_global_workspaces
+        from desktop.services.workflow_view import load_workflow_view
         from orchestration.loop import execute_agent_loop
         from tools.specs import expand_allowed_tools
 
+        token = begin_workflow_run()
+        from tools.orchestrator import set_file_write_run
+
+        set_file_write_run(token)
         try:
             agent_profile = _reg.get_profile(agent)
             agent_tools = agent_profile.get("tools", []) if agent_profile else []
@@ -99,21 +135,22 @@ class WorkflowRunner:
             loop_result: dict | None = None
             if agent_tools:
                 expanded_tools = expand_allowed_tools(agent_tools) or []
-                try:
-                    template = load_workflow_template(
-                        workspace_name=workspace, workflow_name=get_active_workflow()
-                    )
-                except Exception:
-                    logger.warning("Template no disponible en chat directo", exc_info=True)
-                    template = None
-                workflow_allowed = template.get("tools", {}).get("allowed") if template else None
-                if workflow_allowed:
+                # el workflow activo es per-sesión, no global.
+                active_wf = (
+                    getattr(session.context, "active_workflow", None) or get_active_workflow()
+                )
+                view = load_workflow_view(workspace, active_wf)
+                if view is not None:
+                    # la intersección con el allowlist del workflow manda.
+                    # Intersección vacía = agente sin tools (nunca el toolset completo).
                     from tools.specs import tool_matches_allowlist
 
                     effective_tools = [
-                        t for t in expanded_tools if tool_matches_allowlist(t, workflow_allowed)
+                        t
+                        for t in expanded_tools
+                        if tool_matches_allowlist(t, view.get("tools_allowed") or [])
                     ]
-                if not effective_tools:
+                else:
                     effective_tools = expanded_tools
 
                 loop_result = await execute_agent_loop(
@@ -152,3 +189,5 @@ class WorkflowRunner:
             if self.on_system:
                 await self.on_system(f"❌ Error: {e}")
             return None
+        finally:
+            end_workflow_run(token)

@@ -11,15 +11,16 @@ import asyncio
 import logging
 import threading
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from orchestration.context import WorkflowEvents
 
 logger = logging.getLogger(__name__)
 
 # Session-level "Always Allow" tracking for tool approvals
-_always_allowed: set[str] = set()
+# name -> expiry (monotonic). TTL<=0 ⇒ no recuerda nada.
+_always_allowed: dict[str, float] = {}
 
 # Pending approval requests: request_id → asyncio.Event
 _approval_events: dict[str, asyncio.Event] = {}
@@ -38,7 +39,7 @@ _approval_lock = threading.Lock()
 # Safety net: if the user does not answer the approval dialog within this
 # window, the request is denied automatically instead of hanging the workflow
 # indefinitely (previously a missing response blocked the whole workflow).
-_APPROVAL_TIMEOUT = 60.0  # seconds
+_APPROVAL_TIMEOUT = 300.0  # timeout largo: evita auto-denegar sin que el usuario vea el diálogo
 
 
 def reset_approval_state() -> None:
@@ -48,6 +49,25 @@ def reset_approval_state() -> None:
         _approval_events.clear()
         _approval_loops.clear()
         _approval_results.clear()
+
+
+def _always_allow_grants(tool_name: str) -> bool:
+    """True si hay un 'Always Allow' VIGENTE; limpia entradas vencidas."""
+    import time as _t
+
+    from core.config import settings
+
+    ttl = float(getattr(settings, "approval_always_allow_ttl", 1800.0))
+    if ttl <= 0:
+        return False
+    with _approval_lock:
+        expiry = _always_allowed.get(tool_name)
+        if expiry is None:
+            return False
+        if expiry > _t.monotonic():
+            return True
+        _always_allowed.pop(tool_name, None)  # vencida ⇒ re-preguntar
+        return False
 
 
 def _format_params(params: dict) -> str:
@@ -71,7 +91,13 @@ def _handle_approval_response(request_id: str, tool_name: str, approved: bool, a
     """
     with _approval_lock:
         if allow_all:
-            _always_allowed.add(tool_name)
+            from core.config import settings
+
+            ttl = float(getattr(settings, "approval_always_allow_ttl", 1800.0))
+            if ttl > 0:
+                import time as _t
+
+                _always_allowed[tool_name] = _t.monotonic() + ttl
             approved = True
         event = _approval_events.pop(request_id, None)
         if event is None:
@@ -93,7 +119,7 @@ class DesktopSignals(QObject):
     system_message = Signal(str)
     assistant_message = Signal(str)
     user_message = Signal(str)
-    agent_message = Signal(str, str, str)  # agent_name, label, text (deprecated, use agent_stream)
+    agent_message = Signal(str, str, str)  # agent_name, label, text (emisor: runtime DSL)
     agent_stream = Signal(str, str, str)  # agent_name, label, chunk_text
     agent_status = Signal(str, str)  # agent_name, status
     stats_update = Signal(dict)
@@ -103,6 +129,7 @@ class DesktopSignals(QObject):
     indexing_progress = Signal(dict)  # {phase, current_file, files_scanned, pct}
     approval_requested = Signal(str, str, str)  # request_id, tool_name, params_text
     open_file_requested = Signal(str)  # path (relativo al proyecto activo)
+    view_file_requested = Signal(str)  # abrir en el visor standalone
 
 
 _signals = None
@@ -122,15 +149,19 @@ def _get_signals() -> DesktopSignals:
 
 def _on_approval_requested(request_id: str, tool_name: str, params_text: str):
     """Qt slot: shows non-blocking approval dialog and resolves the asyncio.Event."""
+    # El timeout largo evita auto-denegar acciones que el usuario
+    # no alcanzó a ver. Modal con la ventana activa como parent +
+    # raise/activateWindow para no quedar detrás.
     msg = (
         f"Allow execution of:\n\n"
         f"Tool: {tool_name}\n"
         f"Parameters:\n{params_text}\n\n"
         f"This tool can modify files or execute commands."
     )
-    dialog = QMessageBox()
+    dialog = QMessageBox(QApplication.activeWindow())
     dialog.setWindowTitle("Approve Tool Execution")
     dialog.setText(msg)
+    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
     dialog.setStandardButtons(
         QMessageBox.StandardButton.Yes
         | QMessageBox.StandardButton.YesToAll
@@ -147,42 +178,53 @@ def _on_approval_requested(request_id: str, tool_name: str, params_text: str):
         _handle_approval_response(request_id, tool_name, approved, allow_all)
 
     dialog.finished.connect(_on_finished)
+    dialog.raise_()
+    dialog.activateWindow()
     dialog.open()
 
 
-def build_workflow_events() -> WorkflowEvents:
-    """Construye WorkflowEvents conectados a señales Qt."""
+def build_workflow_events(signals: DesktopSignals | None = None) -> WorkflowEvents:
+    """Construye WorkflowEvents conectados a señales Qt.
+
+    Multi-sesión: ``signals`` es el bus de la sesión (cada SessionPane
+    crea el suyo); los eventos de sesión (stream/system/assistant/user/agent/
+    stats) van a ESE bus. La aprobación sigue en el bus global (el diálogo es
+    único para toda la app). Sin argumento, usa el singleton global
+    (backward-compat para daemons de bots y callers legacy).
+    """
     from orchestration.context import WorkflowEvents
 
+    sig = signals or _get_signals()
+
     async def _stream(text: str) -> None:
-        _get_signals().stream_chunk.emit(text)
+        sig.stream_chunk.emit(text)
 
     async def _system(text: str) -> None:
-        _get_signals().system_message.emit(text)
+        sig.system_message.emit(text)
 
     async def _assistant(text: str) -> None:
-        _get_signals().assistant_message.emit(text)
+        sig.assistant_message.emit(text)
 
     async def _user(text: str) -> None:
-        _get_signals().user_message.emit(text)
+        sig.user_message.emit(text)
 
     async def _agent(agent_name: str, label: str, text: str) -> None:
-        _get_signals().agent_message.emit(agent_name, label, text)
+        sig.agent_message.emit(agent_name, label, text)
 
     async def _agent_stream(agent_name: str, label: str, chunk: str) -> None:
-        _get_signals().agent_stream.emit(agent_name, label, chunk)
+        sig.agent_stream.emit(agent_name, label, chunk)
 
     async def _agent_status(agent_name: str, status: str) -> None:
-        _get_signals().agent_status.emit(agent_name, status)
+        sig.agent_status.emit(agent_name, status)
 
     async def _stats(data: dict) -> None:
-        _get_signals().stats_update.emit(data)
+        sig.stats_update.emit(data)
 
     async def _approval(tool_name: str, params: dict) -> bool:
-        with _approval_lock:
-            if tool_name in _always_allowed:
-                return True
+        if _always_allow_grants(tool_name):
+            return True
 
+        with _approval_lock:
             global _approval_counter
             _approval_counter += 1
             request_id = f"req_{_approval_counter}"

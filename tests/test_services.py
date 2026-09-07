@@ -135,8 +135,8 @@ async def test_run_direct_agent_returns_response():
 
 
 @pytest.mark.asyncio
-async def test_run_direct_agent_template_failure_falls_back():
-    """Un fallo de load_workflow_template no aborta la conversación directa."""
+async def test_run_direct_agent_sin_view_usa_tools_del_agente():
+    """Sin workflow view (doc ausente), el agente directo conserva sus tools."""
     runner = WorkflowRunner()
     runner.on_assistant = AsyncMock()
     session = AsyncMock()
@@ -154,8 +154,8 @@ async def test_run_direct_agent_template_failure_falls_back():
             return_value=["file_manager"],
         ),
         patch(
-            "orchestration.loader.load_workflow_template",
-            side_effect=Exception("template roto"),
+            "orchestration.loader.load_workflow_document",
+            return_value=None,
         ),
         patch(
             "orchestration.loop.execute_agent_loop",
@@ -206,3 +206,65 @@ async def test_export_unknown_format_raises(tmp_path):
     with pytest.raises(ValueError, match="Formato no soportado"):
         await export_history_to_file([{"role": "user", "content": "x"}], str(target), "xyz")
     assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_export_strips_watermarks_all_formats(tmp_path):
+    """El export de la GUI strippea watermarks como el repository."""
+    history = [
+        {"role": "assistant", "content": "respuesta [ver.baf52ba919] con marca"},
+    ]
+    for fmt in ("md", "json", "html"):
+        target = tmp_path / f"conv.{fmt}"
+        await export_history_to_file(history, str(target), fmt)
+        text = target.read_text(encoding="utf-8")
+        assert "ver.baf52ba919" not in text, f"watermark en {fmt}"
+
+
+@pytest.mark.asyncio
+async def test_repository_export_filters_system_in_json_and_pdf(tmp_path, monkeypatch):
+    """JSON/PDF del repository filtran role=system interno (como MD/HTML)."""
+    from unittest.mock import MagicMock
+
+    from core.models import Conversation, Message
+    from core.repositories.conversation_repository import ConversationRepository
+
+    sys_msg = Message(role="system", content="Eres Morphix, un asistente experto")
+    usr_msg = Message(role="user", content="hola visible")
+    conv = MagicMock(spec=Conversation)
+    conv.id = 1
+    conv.title = "t"
+
+    result_msgs = MagicMock()
+    result_msgs.scalars.return_value.all.return_value = [sys_msg, usr_msg]
+
+    conv_result = MagicMock()
+    conv_result.scalar.return_value = conv
+
+    def fake_session():
+        class _S:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, model, key):
+                return conv
+
+            async def execute(self, stmt):
+                return result_msgs
+
+        return _S()
+
+    monkeypatch.setattr("core.repositories.conversation_repository.get_async_session", fake_session)
+    monkeypatch.setattr("core.path_resolver.paths.exports_dir", lambda: tmp_path)
+
+    out_json = await ConversationRepository.export(1, format="json")
+    data = json.loads(out_json and open(out_json, encoding="utf-8").read())
+    roles = [d["role"] for d in data]
+    assert "system" not in roles, f"system coló en JSON: {data}"
+
+    out_md = await ConversationRepository.export(1, format="md")
+    md_text = open(out_md, encoding="utf-8").read()
+    assert "Eres Morphix" not in md_text

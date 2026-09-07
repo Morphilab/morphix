@@ -55,3 +55,53 @@ def import_project(src: str, name: str) -> tuple[bool, str]:
     except Exception as e:
         logger.error(f"Error copiando proyecto: {e}", exc_info=True)
         return False, str(e)
+
+
+def clone_project(url: str, name: str | None = None) -> tuple[bool, str]:
+    """Clona un repo git → code_projects/<name>. Retorna (ok, message).
+
+    - Rechaza si el destino ya existe (sin invocar git).
+    - `--depth 1` + timeout duro 120s.
+    - Limpia el clon parcial ante cualquier fallo.
+    - Redacta credenciales del mensaje de error (URLs con user:token)."""
+    import shutil
+    import subprocess
+
+    from agents.audit import redact_credentials
+
+    if name is None:
+        # derivar nombre del repo desde la URL
+        tail = url.rstrip("/").rsplit("/", 1)[-1]
+        tail = tail[:-4] if tail.endswith(".git") else tail
+        name = normalize_project_name(tail)
+    else:
+        name = normalize_project_name(name)
+    if not name:
+        return False, "Nombre de proyecto inválido. Usa solo letras, números y _"
+
+    dst = project_dir(name)
+    if dst.exists():
+        return False, f"Ya existe un proyecto llamado '{name}'"
+
+    try:
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", url, str(dst)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(dst, ignore_errors=True)
+        return False, "git clone excedió el timeout (120s)"
+    except FileNotFoundError:
+        return False, "git no está disponible en el sistema"
+
+    if result.returncode != 0:
+        shutil.rmtree(dst, ignore_errors=True)
+        err_text = (result.stderr or result.stdout or "git clone falló").strip()
+        last_line = err_text.splitlines()[-1] if err_text.splitlines() else "git clone falló"
+        logger.error(f"Error clonando {redact_credentials(url)}: {last_line}")
+        return False, redact_credentials(last_line)
+
+    file_count = sum(1 for _ in dst.rglob("*") if _.is_file())
+    return True, f"{name} ({file_count} archivos)"
