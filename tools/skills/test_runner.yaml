@@ -8,7 +8,7 @@ when_not_to_use:
   - Antes de que el archivo de test exista
 examples:
   - "test_runner: run, file_path='tests/test_mi_modulo.py'"
-  - "test_runner: run, path='tests/test_main.py'"
+  - "test_runner: run, file_path='tests/test_main.py'"
 tips:
   - Prefiere test_runner sobre bash_manager para ejecutar pytest
   - Si los tests fallan, lee el output completo antes de modificar código

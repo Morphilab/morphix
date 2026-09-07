@@ -133,6 +133,14 @@ class CodebaseIndexer:
             logger.debug("Directorio de proyecto no encontrado: %s", base)
             return 0
 
+        # detectar DELETIONS — archivos indexados que ya no existen
+        for rel in list(self._file_hashes):
+            candidate = base / rel
+            if not candidate.exists():
+                self.indexer.remove_prefix(rel + ":")
+                self._file_hashes.pop(rel, None)
+                logger.info("A-XVII: archivo borrado purgado del índice: %s", rel)
+
         # Skip if cache already loaded and not forced
         if not force and self._index_built and self.indexer.document_count > 0:
             logger.info("Using cached FAISS index, skipping re-index")
@@ -187,9 +195,8 @@ class CodebaseIndexer:
                             chunk,
                         )
                     )
-                    total_chunks += 1
 
-                self.indexer.remove(rel_path)
+                self.indexer.remove_prefix(rel_path + ":")  # A-XVII
                 self._file_hashes[rel_path] = current_hash
                 files_processed += 1
 
@@ -208,11 +215,22 @@ class CodebaseIndexer:
                     except Exception:
                         logger.warning("Failed to report indexer progress", exc_info=True)
 
-        # Single rebuild with all new chunks at once
+        # Single rebuild with all new chunks at once.
+        # Los chunks nuevos se encodean en UN pase batch (ST batch_size)
+        # y se insertan con add_embedding — sin encodeo uno-a-uno.
         if pending_chunks:
+            embeddings = self.indexer.encode_many([str(v) for _k, v in pending_chunks])
             self.indexer.rebuild_index()
-            for key, value in pending_chunks:
-                self.indexer.add(key=key, value=value)
+            added_batch = 0
+            for (key, value), emb in zip(pending_chunks, embeddings, strict=False):
+                if emb is None:
+                    continue
+                try:
+                    self.indexer.add_embedding(key=key, value=value, embedding=emb)
+                    added_batch += 1
+                except ValueError:
+                    logger.warning("Chunk descartado por dim incompatible: %s", key)
+            total_chunks += added_batch
 
         self._index_built = self.indexer.index.ntotal > 0
         self._save_cache()

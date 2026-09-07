@@ -1,0 +1,14 @@
+tool: memory_inspector
+when_to_use:
+  - Antes de rehacer trabajo: verificar si ya existe conocimiento persistido del proyecto
+  - Para recordar decisiones, convenciones o hechos guardados en sesiones previas
+  - Para auditar qué hay en memoria antes de borrar o depurar claves
+when_not_to_use:
+  - Para buscar en el código del proyecto (usar code_search)
+  - Para leer archivos (usar file_manager)
+examples:
+  - "memory_inspector: list"
+  - "memory_inspector: read, key='decisiones_arquitectura'"
+tips:
+  - Lista primero (action='list') para descubrir claves disponibles
+  - El borrado requiere confirm_delete=true — no lo uses salvo petición explícita del usuario

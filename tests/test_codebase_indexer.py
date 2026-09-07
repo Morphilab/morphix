@@ -1,7 +1,37 @@
 # tests/test_codebase_indexer.py
 from unittest.mock import patch
 
+import numpy as np
 import pytest
+
+from core.faiss_indexer import FAISS_DIMENSION
+
+
+class FakeFastEmbedder:
+    """Embedder determinista — evita cargar e5 real (~11s/test)."""
+
+    def wait_until_ready(self, timeout: float = 60) -> bool:
+        return True
+
+    def get_instance(self):
+        return self
+
+    def encode(self, text, kind="passage"):
+        return np.ones(FAISS_DIMENSION, dtype="float32")
+
+
+@pytest.fixture(autouse=True)
+def _fast_embedder(monkeypatch):
+    """Provider en estado LISTO con modelo fake."""
+    import threading
+
+    from core.embedding_provider import EmbeddingProvider
+
+    ready = threading.Event()
+    ready.set()
+    monkeypatch.setattr(EmbeddingProvider, "_model", FakeFastEmbedder())
+    monkeypatch.setattr(EmbeddingProvider, "_ready", ready)
+    monkeypatch.setattr(EmbeddingProvider, "_loading", False)
 
 
 @pytest.fixture

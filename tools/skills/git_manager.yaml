@@ -6,8 +6,8 @@ when_to_use:
 when_not_to_use:
   - No requiere comandos git crudos (git_manager abstrae init, add, commit, log, diff)
 examples:
-  - "git_manager: init, workspace='main', project_root='code_projects/mi_app'"
-  - "git_manager: commit, message='feat: agregar endpoint', workspace='main', project_root='code_projects/mi_app'"
+  - "git_manager: init, project_root='code_projects/mi_app'"
+  - "git_manager: commit, message='feat: agregar endpoint', project_root='code_projects/mi_app'"
 tips:
   - Hacé commits frecuentes: uno por cada subtarea completada
   - Usá mensajes en formato convencional (feat:, fix:, refactor:, test:, chore:)
