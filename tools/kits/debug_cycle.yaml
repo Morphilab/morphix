@@ -4,7 +4,7 @@ steps:
   - order: 1
     tool: "lsp_manager"
     action: "diagnostics"
-    params: {path: "ruta/archivo_problema.py"}
+    params: {file: "ruta/archivo_problema.py"}
     note: "Detectá errores de sintaxis, tipo y estilo"
   - order: 2
     tool: "file_manager"
@@ -19,7 +19,7 @@ steps:
   - order: 4
     tool: "lsp_manager"
     action: "diagnostics"
-    params: {path: "ruta/archivo_problema.py"}
+    params: {file: "ruta/archivo_problema.py"}
     note: "Confirmá que los errores desaparecieron"
   - order: 5
     tool: "test_runner"

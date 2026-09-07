@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import json
 import logging
 import os
@@ -9,10 +10,11 @@ from pathlib import Path
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from sqlalchemy import delete as sqlalchemy_delete
 from sqlalchemy import desc, func, select
 
 from core.database import get_async_session
-from core.models import Conversation, Message
+from core.models import Conversation, Message, PausedSession
 from llm import models
 
 logger = logging.getLogger(__name__)
@@ -33,22 +35,38 @@ def _strip_watermarks(text: str) -> str:
     return _WATERMARK_STRIP_RE.sub("", text)
 
 
+_INTERNAL_PHRASES = (
+    "Eres Morphix",
+    "Reglas anti-frustración",
+    "Mantén siempre esta identidad",
+    "Soy Morphix, un asistente experto",
+)
+
+
+def _is_internal_system(role: str, content: str) -> bool:
+    """System interno se filtra en TODOS los formatos de export."""
+    return role == "system" and any(p in content for p in _INTERNAL_PHRASES)
+
+
 def _collect_project_files(base_dir: Path) -> str:
     """Collect text content of project files from a directory for export inclusion.
 
-    Only includes files with extensions: .py, .yaml, .yml, .json, .env, .txt
-    Skips __pycache__ and hidden directories.
+    Only includes files with extensions: .py, .yaml, .yml, .json, .txt
+    Skips __pycache__, hidden directories and secret files (.env*, *.pem, *.key).
     """
     if not base_dir.exists():
         return ""
-    included_exts = {".py", ".yaml", ".yml", ".json", ".env", ".txt"}
+    included_exts = {".py", ".yaml", ".yml", ".json", ".txt"}
     parts: list[str] = []
     for root, dirs, files in os.walk(str(base_dir)):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
         for fname in sorted(files):
             fpath = Path(root) / fname
             suffix = fpath.suffix
-            if suffix in included_exts or fname.endswith((".env", ".env.example")):
+            # nunca exportar secretos
+            if fname.startswith(".env") or suffix in {".pem", ".key"}:
+                continue
+            if suffix in included_exts:
                 try:
                     content = fpath.read_text(encoding="utf-8")
                     rel = str(fpath.relative_to(base_dir))
@@ -101,14 +119,27 @@ class ConversationRepository:
             # Add conversation history entries
             if conversation_history:
                 if conversation_id is not None:
-                    # Resume: save the last assistant AND all agent/tool entries.
-                    # All other entries already exist in the DB.
+                    # la GUI pasa el historial COMPLETO acumulado en cada
+                    # turno — re-insertar todo duplicaba crecientemente. Filtrar
+                    # por firma (role, content[:200]) contra lo ya persistido.
+                    existing_rows = await session.execute(
+                        select(Message.role, Message.content).where(  # type: ignore[call-overload]
+                            Message.conversation_id == conv.id  # type: ignore[arg-type]
+                        )
+                    )
+                    existing: set[tuple[str, str]] = {
+                        (r, (c or "")[:200]) for r, c in existing_rows.all()
+                    }
+
                     assistant_saved = False
                     for entry in reversed(conversation_history):
                         role = entry.get("role", "unknown")
                         content = entry.get("content", "")
                         if not content or role == "system" or role == "user":
                             continue
+                        signature = (role, str(content)[:200])
+                        if signature in existing:
+                            continue  # ya persistido en turnos anteriores
                         if role == "assistant" and content.strip() and not assistant_saved:
                             session.add(
                                 Message(
@@ -190,7 +221,7 @@ class ConversationRepository:
             stmt = (
                 select(Message)
                 .where(Message.conversation_id == conv_id)  # type: ignore[arg-type]
-                .order_by(Message.timestamp)  # type: ignore[arg-type]
+                .order_by(Message.timestamp, Message.id)  # type: ignore[arg-type]
             )
             result = await session.execute(stmt)
             messages = result.scalars().all()
@@ -215,15 +246,28 @@ class ConversationRepository:
                 "tags": conv.tags,
                 "workflow_id": conv.workflow_id,
                 "message_count": msg_count,
+                # Bot Mode: identidad canónica visible para los guards
+                "bot_id": conv.bot_id,
+                "is_canonical": conv.is_canonical,
+                "is_hidden": conv.is_hidden,
             }
 
     @staticmethod
-    async def list_all(limit: int = 50, offset: int = 0) -> list[dict]:
-        """List conversations with pagination, newest first."""
+    async def list_all(
+        limit: int = 50, offset: int = 0, *, exclude_hidden: bool = True
+    ) -> list[dict]:
+        """List conversations with pagination, newest first.
+
+        Bot Mode: los chats canónicos y sesiones ``Group:`` de bots
+        están SIEMPRE ocultos del historial general — la fila del bot es la
+        única puerta a su chat eterno.
+        """
         async with get_async_session() as session:
+            stmt = select(Conversation)
+            if exclude_hidden:
+                stmt = stmt.where(Conversation.is_hidden.is_(False))  # type: ignore[attr-defined]
             stmt = (
-                select(Conversation)
-                .order_by(desc(Conversation.created_at))  # type: ignore[arg-type]
+                stmt.order_by(desc(Conversation.created_at))  # type: ignore[arg-type]
                 .limit(limit)
                 .offset(offset)
             )
@@ -235,15 +279,20 @@ class ConversationRepository:
                     "created_at": conv.created_at,
                     "tags": conv.tags,
                     "workflow_id": conv.workflow_id,
+                    "is_hidden": conv.is_hidden,
+                    "bot_id": conv.bot_id,
+                    "is_canonical": conv.is_canonical,
                 }
                 for conv in result.scalars()
             ]
 
     @staticmethod
-    async def count_all() -> int:
-        """Total number of conversations in the current workspace schema."""
+    async def count_all(*, exclude_hidden: bool = True) -> int:
+        """Total de conversaciones visibles en el workspace activo."""
         async with get_async_session() as session:
             stmt = select(func.count(Conversation.id))  # type: ignore[arg-type]
+            if exclude_hidden:
+                stmt = stmt.where(Conversation.is_hidden.is_(False))  # type: ignore[attr-defined]
             result = await session.execute(stmt)
             return result.scalar() or 0
 
@@ -263,10 +312,20 @@ class ConversationRepository:
     async def delete(conv_id: int) -> bool:
         async with get_async_session() as session:
             conv = await session.get(Conversation, conv_id)
-            if conv:
-                await session.delete(conv)
-                return True
-        return False
+            if not conv:
+                return False
+
+            # borrar hijos primero — FKs legacy sin CASCADE bloqueaban
+            # el delete de la conversación con IntegrityError.
+            from core.models import PausedSession
+
+            for model in (Message, PausedSession):
+                await session.execute(
+                    sqlalchemy_delete(model).where(model.conversation_id == conv_id)  # type: ignore[arg-type]
+                )
+
+            await session.delete(conv)
+            return True
 
     @staticmethod
     async def clone(conv_id: int) -> bool:
@@ -318,7 +377,7 @@ class ConversationRepository:
             stmt = (
                 select(Message)
                 .where(Message.conversation_id == conv_id)  # type: ignore[arg-type]
-                .order_by(Message.timestamp)  # type: ignore[arg-type]
+                .order_by(Message.timestamp, Message.id)  # type: ignore[arg-type]
             )
             if branch_point > 0:
                 stmt = stmt.where(Message.id <= branch_point)  # type: ignore[arg-type,operator]
@@ -342,7 +401,11 @@ class ConversationRepository:
             conv = await session.get(Conversation, conv_id)
             if not conv:
                 return "Conversación no encontrada"
-            stmt = select(Message).where(Message.conversation_id == conv_id)  # type: ignore[arg-type]
+            stmt = (
+                select(Message)
+                .where(Message.conversation_id == conv_id)  # type: ignore[arg-type]
+                .order_by(Message.id)  # type: ignore[arg-type]
+            )
             result = await session.execute(stmt)
             messages = result.scalars().all()
             history_str = "\n".join([f"{m.role}: {m.content}" for m in messages])
@@ -368,7 +431,11 @@ class ConversationRepository:
             if not conv:
                 return False
 
-            stmt = select(Message).where(Message.conversation_id == conv_id)  # type: ignore[arg-type]
+            stmt = (
+                select(Message)
+                .where(Message.conversation_id == conv_id)  # type: ignore[arg-type]
+                .order_by(Message.id)  # type: ignore[arg-type]
+            )
             result = await session.execute(stmt)
             messages = result.scalars().all()
 
@@ -392,6 +459,7 @@ class ConversationRepository:
                         "timestamp": m.timestamp.isoformat(),
                     }
                     for m in messages
+                    if not _is_internal_system(m.role, m.content)
                 ]
 
                 def _write_json():
@@ -409,13 +477,17 @@ class ConversationRepository:
                         "timestamp": m.timestamp.isoformat(),
                     }
                     for m in messages
+                    if not _is_internal_system(m.role, m.content)
                 ]
 
                 def _build_pdf():
                     doc = SimpleDocTemplate(filename, pagesize=letter)
                     styles = getSampleStyleSheet()
                     story = []
-                    story.append(Paragraph(f"Conversación: {conv.title}", styles["Title"]))
+                    # escape XML — ReportLab Paragraph parsea HTML-like
+                    story.append(
+                        Paragraph(f"Conversación: {html.escape(conv.title)}", styles["Title"])
+                    )
                     story.append(Spacer(1, 12))
                     for msg in data:
                         role = msg["role"]
@@ -427,7 +499,8 @@ class ConversationRepository:
                         }.get(role, f"⚙️ {role}")
                         story.append(
                             Paragraph(
-                                f"[{msg['timestamp']}] <b>{label}:</b> {msg['content']}",
+                                f"[{msg['timestamp']}] <b>{label}:</b> "
+                                f"{html.escape(msg['content'])}",
                                 styles["Normal"],
                             )
                         )
@@ -577,3 +650,23 @@ class ConversationRepository:
                 return filename
 
         return False
+
+    @staticmethod
+    async def purge_resolved_paused(max_age_days: int = 30) -> int:
+        """Elimina pausas RESUELTAS más viejas que max_age_days.
+
+        Las pausas resueltas nunca se purgaban → crecimiento ilimitado.
+        Hook diario en daemon_loop.
+        """
+        cutoff = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(
+            days=max_age_days
+        )
+        async with get_async_session() as session:
+            stmt = sqlalchemy_delete(PausedSession).where(
+                PausedSession.resolved_at.is_not(None),  # type: ignore[union-attr,arg-type]
+                PausedSession.resolved_at < cutoff,  # type: ignore[operator,arg-type]
+            )
+            result = await session.execute(stmt)
+            deleted = getattr(result, "rowcount", 0) or 0
+            logger.info("Purgadas %d pausa(s) resuelta(s) >%dd", deleted, max_age_days)
+            return int(deleted)

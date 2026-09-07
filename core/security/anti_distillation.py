@@ -163,14 +163,45 @@ class DistillationTracker:
 
     def get_throttle_delay(self) -> float:
         """Return artificial delay in seconds based on escalation."""
+        self._maybe_deescalate()
         delays = {0: 0.0, 1: 0.0, 2: 2.0, 3: 5.0, 4: 30.0}
         return delays.get(self.escalation_level, 0.0)
 
+    # paso de de-escalación — cada 300s sin intentos, el nivel baja 1
+    _DEESCALATION_STEP_SECONDS = 300.0
+
+    def _maybe_deescalate(self) -> None:
+        """De-escalación temporal leyendo _last_escalation_time/_attempts.
+
+        Cada ventana completa de inactividad baja 1 nivel (sin esto, un
+        nivel alto sería lock eterno sin ruta de reset).
+        """
+        with self._lock:
+            if self.escalation_level <= 0 or not self._attempts:
+                return
+            newest = max(a.timestamp for a in self._attempts)
+            idle = time.time() - newest
+            if idle < self._DEESCALATION_STEP_SECONDS:
+                return
+            steps = int(idle // self._DEESCALATION_STEP_SECONDS)
+            old = self.escalation_level
+            self.escalation_level = max(0, old - steps)
+            if self.escalation_level != old:
+                if self.escalation_level < 3:
+                    self._honeypot_active = False
+                self._last_escalation_time = time.time()
+                logger.info(
+                    f"Anti-distillation de-escalación: {old} → {self.escalation_level} "
+                    f"(inactividad {int(idle)}s)"
+                )
+
     def is_locked(self) -> bool:
-        """Whether the session is fully locked (requires manual reset)."""
+        """Whether the session is fully locked (de-escala con inactividad)."""
+        self._maybe_deescalate()
         return self.escalation_level >= 4
 
     def is_honeypot_active(self) -> bool:
+        self._maybe_deescalate()
         return self.escalation_level >= 3
 
     def reset(self) -> None:

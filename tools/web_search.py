@@ -52,6 +52,14 @@ async def _web_search_tool(query: str, num: int = 5, **kwargs) -> str:
 
     except Exception as e:
         logger.error(f"Web search error: {e}")
+        # 404 de Google CSE casi siempre es key/cx inválidos — dar
+        # pista accionable en lugar de un error HTTP críptico al agente.
+        if "404" in str(e):
+            return (
+                "❌ Búsqueda web no disponible: Google Custom Search rechazó la "
+                "configuración (404). Revisa GOOGLE_API_KEY y GOOGLE_CX en .env "
+                "(el 'cx' debe ser el ID de un motor de búsqueda válido)."
+            )
         return f"❌ Error en búsqueda web: {e!s}"
 
 

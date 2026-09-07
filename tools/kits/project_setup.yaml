@@ -27,7 +27,7 @@ steps:
   - order: 6
     tool: "git_manager"
     action: "add"
-    params: {files: ["."]}
+    params: {}
   - order: 7
     tool: "git_manager"
     action: "commit"

@@ -61,6 +61,32 @@ class TestProtocolBuilders:
         assert get_id({"id": 42, "method": "test"}) == 42
         assert get_id({"method": "test"}) is None
 
+    def test_validate_request_id(self):
+        """Id ausente/null → error -32600; request válido → None."""
+        from core.mcp.protocol import validate_request_id
+
+        err = validate_request_id({"jsonrpc": "2.0", "id": None, "method": "tools/list"})
+        assert err is not None
+        assert err["error"]["code"] == -32600
+        assert err["id"] is None
+
+        err2 = validate_request_id({"jsonrpc": "2.0", "method": "tools/list"})
+        assert err2 is not None and err2["error"]["code"] == -32600
+
+        assert validate_request_id({"jsonrpc": "2.0", "id": 7, "method": "x"}) is None
+
+
+class TestParseAllowArgs:
+    def test_separate_flag_and_equals_forms(self):
+        from core.mcp.server import _parse_allow_args
+
+        assert _parse_allow_args(["--allow", "a"]) == ["a"]
+        assert _parse_allow_args(["--allow=a"]) == ["a"]
+        assert _parse_allow_args(["--allow", "a,b", "--allow=c"]) == ["a", "b", "c"]
+        assert _parse_allow_args(["--allow= a , b "]) == ["a", "b"]
+        assert _parse_allow_args([]) == []
+        assert _parse_allow_args(["--other", "x"]) == []
+
 
 class TestMCPAdapter:
     def test_morphix_to_mcp_tool(self):

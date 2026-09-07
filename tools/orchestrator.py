@@ -53,6 +53,12 @@ class _TokenBudgetState:
         self.total += estimated
         return True
 
+    def refund(self, estimated: int) -> None:
+        """Devuelve la reserva cuando la tool falló definitivamente —
+        sin esto, fallos deterministas queman presupuesto y provocan
+        token_budget_exceeded espurios en subtareas posteriores."""
+        self.total = max(0, self.total - max(0, estimated))
+
     def reconcile(self, estimated: int, actual: int) -> None:
         """Reemplaza la reserva por el gasto real de tokens.
 
@@ -67,6 +73,48 @@ _token_budget_ctx: contextvars.ContextVar[_TokenBudgetState | None] = contextvar
     "tool_token_budget", default=None
 )
 
+# callback de aprobación por-run. Reemplaza el atributo de
+# clase como fuente primaria: cada task de workflow setea el suyo, de modo que
+# dos runs concurrentes no se pisan el callback ni se lo limpian mutuamente.
+_approval_cb_ctx: contextvars.ContextVar[
+    Callable[[str, dict[str, Any]], Awaitable[bool]] | None
+] = contextvars.ContextVar("tool_approval_cb", default=None)
+
+
+def set_approval_callback(cb: Callable[[str, dict[str, Any]], Awaitable[bool]] | None) -> None:
+    """Setea el callback de aprobación para el task actual (ContextVar)."""
+    _approval_cb_ctx.set(cb)
+
+
+def clear_approval_callback() -> None:
+    """Limpia el callback de aprobación del task actual."""
+    _approval_cb_ctx.set(None)
+
+
+def get_approval_callback() -> Callable[[str, dict[str, Any]], Awaitable[bool]] | None:
+    """Callback de aprobación efectivo: ContextVar si está seteado, sino el
+    atributo de clase (fallback legacy para MCP standalone y tests)."""
+    cb = _approval_cb_ctx.get()
+    if cb is not None:
+        return cb
+    return ToolOrchestrator.on_approval_required
+
+
+# token del run actual para detección de colisión de archivos.
+_file_write_run_ctx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "file_write_run", default=None
+)
+
+
+def set_file_write_run(token: int | None) -> None:
+    """Vincula el task actual al run `token` para colisión de escrituras."""
+    _file_write_run_ctx.set(token)
+
+
+def get_file_write_run() -> int | None:
+    """Token de run del task actual (None si no hay workflow activo)."""
+    return _file_write_run_ctx.get()
+
 
 class ToolOrchestrator:
     MAX_RETRIES = settings.tool_max_retries
@@ -75,13 +123,21 @@ class ToolOrchestrator:
     ENABLE_TOKEN_BUDGET = settings.tool_enable_token_budget
 
     # Tools/actions that require explicit user approval
+    # git_manager.push no existe como acción; re-añadir
+    # solo si algún día se implementa push.
     DANGEROUS_ACTIONS: set[str] = {
         "bash_manager",
         "code_exec",
         "file_manager.delete",
-        "git_manager.commit",
-        "git_manager.push",
+        # aplicar un diff es escritura de archivo → exige aprobación.
+        # create/read siguen fluidos (solo generan/leen el diff).
+        "diff_editor.apply",
     }
+    # NOTA: `git_manager.commit` salió de este set — commit es
+    # reversible y sin efecto externo (push ni existe). La decisión de CUÁNDO
+    # committear es del agente (tool a petición) o del workflow (commit_after);
+    # el auto-commit implícito del sistema fue eliminado (interfería en flujos
+    # largos con commits de estados intermedios sin valor semántico).
 
     # Global approval callback — set by UI layer (CLI or GUI)
     on_approval_required: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None
@@ -148,14 +204,39 @@ class ToolOrchestrator:
             }
 
         # Interactive approval for dangerous operations
-        action_key = (
-            f"{tool_name}.{parameters.get('action', '')}" if parameters.get("action") else tool_name
-        )
-        if ToolOrchestrator.on_approval_required is not None and (
+        # Si los arguments crudos llegan SIN 'action' (p.ej. MCP no
+        # valida required del schema), el key sin acción no matchearía el set
+        # y diff_editor ejecutaría su rama apply (default interno) sin
+        # aprobación → normalizar conservadoramente a la acción de escritura.
+        raw_action = parameters.get("action")
+        if raw_action:
+            action_key = f"{tool_name}.{raw_action}"
+        elif tool_name == "diff_editor":
+            action_key = "diff_editor.apply"
+        else:
+            action_key = tool_name
+        is_dangerous = (
             tool_name in ToolOrchestrator.DANGEROUS_ACTIONS
             or action_key in ToolOrchestrator.DANGEROUS_ACTIONS
-        ):
-            approved = await ToolOrchestrator.on_approval_required(tool_name, parameters)
+        )
+        approval_cb = get_approval_callback()
+        if is_dangerous and approval_cb is None:
+            # sin callback (MCP standalone/headless) NUNCA se ejecuta
+            # una acción peligrosa en silencio; opt-in explícito para CI.
+            import os as _os
+
+            if _os.getenv("ALLOW_UNATTENDED_DANGEROUS", "").lower() != "true":
+                return {
+                    "success": False,
+                    "error": "approval_unavailable",
+                    "output": (
+                        f"❌ '{tool_name}' es peligrosa y este proceso no tiene UI "
+                        "de aprobación (MCP standalone). Configura un callback o "
+                        "exporta ALLOW_UNATTENDED_DANGEROUS=true si aceptas el riesgo."
+                    ),
+                }
+        if approval_cb is not None and is_dangerous:
+            approved = await approval_cb(tool_name, parameters)
             if not approved:
                 return {
                     "success": False,
@@ -218,9 +299,14 @@ class ToolOrchestrator:
                     )
 
                 duration = time.time() - start_time
-                actual_tokens = (
-                    result.get("tokens_used", estimated) if isinstance(result, dict) else estimated
-                )
+                # Solo las tools que REPORTAN tokens_used cargan gasto propio;
+                # para el resto, el coste real ya se contó como completion del
+                # LLM (add_llm_token_usage) y facturar la estimación de
+                # parámetros sería doble conteo. La reserva transitoria sigue
+                # acotando el overcommit concurrente.
+                reported_tokens = result.get("tokens_used") if isinstance(result, dict) else None
+                charged_tokens = reported_tokens if reported_tokens is not None else 0
+                actual_tokens = reported_tokens if reported_tokens is not None else estimated
 
                 # Check internal tool success before logging
                 internal_ok = (
@@ -257,6 +343,8 @@ class ToolOrchestrator:
                         logger.warning(
                             f"Tool {tool_name} failed (fast-fail: file/path error) — no retry"
                         )
+                        if budget_reserved and budget_state is not None:
+                            budget_state.refund(estimated)
                         return {
                             "success": False,
                             "error": "tool_reported_failure",
@@ -270,6 +358,8 @@ class ToolOrchestrator:
                                 f"test_runner: {result['failed_count']} failures, "
                                 f"{result['error_count']} errors — no retry (tests are deterministic)"
                             )
+                            if budget_reserved and budget_state is not None:
+                                budget_state.refund(estimated)
                             return {
                                 "success": False,
                                 "error": "tests_failed",
@@ -283,6 +373,8 @@ class ToolOrchestrator:
                         delay = backoff_base**attempt + random.uniform(0, 0.5)
                         await asyncio.sleep(delay)
                         continue
+                    if budget_reserved and budget_state is not None:
+                        budget_state.refund(estimated)
                     return {
                         "success": False,
                         "error": "tool_reported_failure",
@@ -292,7 +384,7 @@ class ToolOrchestrator:
 
                 # Verificar presupuesto con tokens reales antes de contabilizar
                 if budget_reserved and budget_state is not None:
-                    projected = budget_state.total + (actual_tokens - estimated)
+                    projected = budget_state.total + (charged_tokens - estimated)
                     if projected > budget_state.max_budget:
                         budget_state.reconcile(estimated, 0)  # reembolsa la reserva
                         logger.warning(
@@ -302,9 +394,19 @@ class ToolOrchestrator:
                         return {
                             "success": False,
                             "error": "token_budget_exceeded",
-                            "output": f"❌ Presupuesto excedido ({projected}/{budget_state.max_budget})",
+                            # la tool ya ejecutó efectos (archivos/
+                            # comandos); el agente debe saberlo antes de
+                            # reintentar a ciegas.
+                            "side_effects_executed": True,
+                            "output": (
+                                f"⚠️ Presupuesto excedido ({projected}/"
+                                f"{budget_state.max_budget}). La herramienta YA "
+                                f"ejecutó efectos en disco/sistema; su resultado "
+                                f"fue descartado. Verifica el estado real antes "
+                                f"de reintentar."
+                            ),
                         }
-                    budget_state.reconcile(estimated, actual_tokens)
+                    budget_state.reconcile(estimated, charged_tokens)
 
                 logger.info(
                     f"✅ Tool {tool_name} OK (attempt {attempt}) | tokens={actual_tokens} | duration={duration:.2f}s"
@@ -363,6 +465,8 @@ class ToolOrchestrator:
                     await asyncio.sleep(delay)
 
         # Fallback error amigable
+        if budget_reserved and budget_state is not None:
+            budget_state.refund(estimated)
         return {
             "success": False,
             "error": "max_retries_exceeded",
@@ -379,7 +483,7 @@ class ToolOrchestrator:
         if tool_name in ("code_exec", "bash_manager") and not settings.allow_code_execution:
             return False
         # Extension point de permisos dinámicos por-tool (kairos):
-        # hoy no hay callers que registren claves `allow_*`, por lo que el
+        # no hay callers que registren claves `allow_*`, por lo que el
         # default es allow. Si se implementa, registrar las claves en
         # core/feature_flags.py::_init_flags y NO confiar en el default.
         key = f"allow_{tool_name}_{role}"
@@ -434,3 +538,15 @@ def get_llm_token_usage() -> int:
     """
     state = _token_budget_ctx.get()
     return state.total if state is not None else 0
+
+
+def get_token_budget_max() -> int:
+    """Techo del presupuesto activo (0 si no hay presupuesto o está off).
+
+    Los consumidores (p. ej. la compresión del agent-loop) lo usan para
+    alinearse al límite real del run sin re-leer settings.
+    """
+    if not ToolOrchestrator.ENABLE_TOKEN_BUDGET:
+        return 0
+    state = _token_budget_ctx.get()
+    return state.max_budget if state is not None else 0

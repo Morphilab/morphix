@@ -49,9 +49,10 @@ class TestCircuitBreaker:
         cb.record_failure()
         assert cb.state == "open"
         time.sleep(0.02)
-        assert cb.allow_request() is True  # first call: open → half_open
+        assert cb.allow_request() is True  # first call: open → half_open (sonda)
         assert cb.state == "half_open"
-        assert cb.allow_request() is True  # second call: still half_open
+        # una sola sonda en vuelo — la segunda petición se rechaza
+        assert cb.allow_request() is False
         assert cb.state == "half_open"
 
     def test_reopens_after_failure_in_half_open(self):

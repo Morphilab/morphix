@@ -10,15 +10,18 @@ Morphix tools: file_manager, bash_manager, web_search, etc.
 """
 
 import asyncio
+import contextlib
 import logging
 import sys
 
+from core.config import settings
 from core.mcp.adapter import morphix_to_mcp_tool
 from core.mcp.protocol import (
     build_error,
     build_response,
     is_notification,
     read_message,
+    validate_request_id,
     write_message,
 )
 
@@ -26,16 +29,20 @@ logger = logging.getLogger(__name__)
 
 
 class MCPServer:
-    def __init__(self):
+    def __init__(self, tools_allowlist: list[str] | None = None):
         self._initialized = False
         self._server_info = {"name": "morphix", "version": "1.0"}
+        # allowlist opcional — expone SOLO las tools listadas
+        self._tools_allowlist = set(tools_allowlist) if tools_allowlist else None
 
     def _get_tools(self) -> list[dict]:
-        """Collect all registered Morphix tools as MCP tool schemas."""
+        """Collect registered Morphix tools as MCP tool schemas (con allowlist)."""
         from tools.specs import TOOL_DEFINITIONS
 
         tools = []
         for name, tdef in sorted(TOOL_DEFINITIONS.items()):
+            if self._tools_allowlist is not None and name not in self._tools_allowlist:
+                continue
             tool_dict = {
                 "name": name,
                 "description": tdef.description,
@@ -71,6 +78,15 @@ class MCPServer:
         if not tool_name:
             return build_error(msg.get("id"), -32602, "Missing tool name")
 
+        # la allowlist también gobierna tools/call (no solo discovery);
+        # si no, un cliente con --allow file_manager invoca bash_manager por nombre.
+        if self._tools_allowlist is not None and tool_name not in self._tools_allowlist:
+            return build_error(
+                msg.get("id"),
+                -32602,
+                f"Tool '{tool_name}' no está en la allowlist del servidor (--allow)",
+            )
+
         from tools.wrapper import safe_tool_call
 
         try:
@@ -96,7 +112,9 @@ class MCPServer:
 
     async def run(self) -> None:
         """Main loop: read JSON-RPC from stdin, respond on stdout."""
-        reader = asyncio.StreamReader()
+        # límite de línea explícito (default asyncio = 64KB tumba el server
+        # con requests grandes aunque MCP_MAX_LINE_BYTES esté en 4MB).
+        reader = asyncio.StreamReader(limit=max(64 * 1024, int(settings.mcp_max_line_bytes)))
         protocol = asyncio.StreamReaderProtocol(reader)
         await asyncio.get_running_loop().connect_read_pipe(lambda: protocol, sys.stdin)
 
@@ -116,7 +134,20 @@ class MCPServer:
 
         try:
             while True:
-                msg = await read_message(reader)
+                try:
+                    msg = await read_message(reader)
+                except ValueError as e:
+                    # línea >límite o JSON malformado — responder -32700
+                    # ANTES de cerrar (antes: EOF silencioso, id null válido
+                    # para parse-errors según JSON-RPC). Stream corrupto ⇒
+                    # no se continúa; el cliente reconecta.
+                    logger.error(f"MCP server: parse error from client: {e}")
+                    with contextlib.suppress(Exception):
+                        await write_message(
+                            writer,
+                            build_error(None, -32700, f"Parse error: {e}"),
+                        )
+                    break
 
                 if is_notification(msg):
                     method = msg.get("method", "")
@@ -124,8 +155,14 @@ class MCPServer:
                         logger.info("MCP client initialized notification received")
                     continue
 
-                msg_id = msg.get("id")
                 method = msg.get("method", "")
+
+                # id null/ausente → error -32600 (no response con id 0).
+                invalid = validate_request_id(msg)
+                if invalid is not None:
+                    await write_message(writer, invalid)
+                    continue
+                msg_id = msg["id"]
 
                 handler = handlers.get(method)
                 if handler is None:
@@ -139,30 +176,57 @@ class MCPServer:
                     if isinstance(result, dict) and "jsonrpc" in result:
                         await write_message(writer, result)
                     else:
-                        await write_message(writer, build_response(msg_id or 0, result))
+                        await write_message(writer, build_response(msg_id, result))
                 except Exception as e:
                     logger.exception(f"MCP handler '{method}' error")
                     await write_message(writer, build_error(msg_id, -32603, str(e)))
 
+        except ValueError as e:
+            # línea > límite — NO crashear el server con traceback: cerrar
+            # limpio; el cliente detecta stream cerrado y reconecta.
+            logger.error(f"MCP server: line overflow from client: {e}")
         except ConnectionError:
             logger.info("MCP client disconnected")
         except asyncio.CancelledError:
             pass
 
 
+def _parse_allow_args(argv: list[str]) -> list[str]:
+    """Parsea --allow NAME[,NAME2]... y --allow=NAME de argv."""
+    allowlist: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--allow" and i + 1 < len(argv):
+            allowlist.extend(a.strip() for a in argv[i + 1].split(",") if a.strip())
+            i += 2
+            continue
+        if arg.startswith("--allow="):
+            allowlist.extend(a.strip() for a in arg[8:].split(",") if a.strip())
+        i += 1
+    return allowlist
+
+
 def run_mcp_server() -> None:
-    """Entry point for 'morphix mcp-server'."""
+    """Entry point for 'morphix mcp-server'.
+
+    --allow NAME (repetible o separado por comas) restringe las tools
+    expuestas al cliente MCP.
+    """
     logging.basicConfig(
         level=logging.WARNING,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         stream=sys.stderr,
     )
+
+    allowlist: list[str] = _parse_allow_args(sys.argv[1:])
+
     # Load global tools so they're available in the registry
     from tools.loader import load_global_tools
 
     load_global_tools()
 
-    server = MCPServer()
+    server = MCPServer(tools_allowlist=allowlist or None)
     asyncio.run(server.run())
 
 

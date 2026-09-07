@@ -26,10 +26,19 @@ class Metrics:
     cache_miss_tokens: int = 0
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
+    # Disjoint token buckets (token-meter): uncached input, cache read/write.
+    # Wire prompt_tokens INCLUDES cache hits; input_tokens is uncached only.
+    # Billed input = input_tokens + cache_read_tokens + cache_write_tokens.
+    uncached_input_tokens: int = 0
+    cache_write_tokens: int = 0
+    billed_input_tokens: int = 0
+    billed_total_tokens: int = 0
     # LLM latency per provider (sum, calls, max seconds)
     _llm_latency: dict[str, dict] = field(default_factory=dict)
     # Tool-call repair count per model (detects models without native tools)
     _tool_call_repairs: dict[str, int] = field(default_factory=dict)
+    # hilos zombi del sandbox (timeout con hilo vivo)
+    sandbox_zombie_threads: int = 0
 
     def record_workflow_completed(self, tokens: int = 0, tool_calls: int = 0) -> None:
         with self._lock:
@@ -37,11 +46,6 @@ class Metrics:
             self.completed_workflows += 1
             self.total_tokens += tokens
             self.tool_calls += tool_calls
-
-    def record_workflow_failed(self) -> None:
-        with self._lock:
-            self.total_workflows += 1
-            self.failed_workflows += 1
 
     def record_llm_call(self) -> None:
         with self._lock:
@@ -62,9 +66,36 @@ class Metrics:
             self.cache_hit_tokens += cache_hit_tokens
             self.cache_miss_tokens += cache_miss_tokens
 
+    def record_disjoint_usage(
+        self,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+    ) -> None:
+        """Record disjoint token buckets (uncached input / cache read / cache write).
+
+        Follows the DeepSeek wire rule: ``prompt_tokens`` includes cache hits, so
+        the provider reports ``prompt_tokens = cache_read + cache_write`` and the
+        caller must subtract cache hits before calling ``record_llm_usage``. This
+        method stores the disjoint decomposition alongside the wire totals without
+        changing their semantics.
+        """
+        with self._lock:
+            self.uncached_input_tokens += input_tokens
+            self.cache_write_tokens += cache_write_tokens
+            billed_input = input_tokens + cache_read_tokens + cache_write_tokens
+            self.billed_input_tokens += billed_input
+            self.billed_total_tokens += billed_input + output_tokens
+
     def record_rate_limited(self) -> None:
         with self._lock:
             self.rate_limited += 1
+
+    def record_sandbox_zombie(self) -> None:
+        """Un timeout dejó un hilo de sandbox vivo — backpressure activa."""
+        with self._lock:
+            self.sandbox_zombie_threads += 1
 
     def record_tool_call_repair(self, model: str) -> None:
         """Registra un repair de tool call para un modelo (telemetría 3.4)."""
@@ -119,6 +150,10 @@ class Metrics:
                 "cache_miss_tokens": self.cache_miss_tokens,
                 "cache_hit_rate_pct": cache_hit_rate,
                 "tokens_saved": self.cache_hit_tokens,
+                "uncached_input_tokens": self.uncached_input_tokens,
+                "cache_write_tokens": self.cache_write_tokens,
+                "billed_input_tokens": self.billed_input_tokens,
+                "billed_total_tokens": self.billed_total_tokens,
                 "llm_latency": self.get_llm_latency(),
                 "tool_call_repairs": self.get_tool_call_repairs(),
             }

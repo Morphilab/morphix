@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+from pathlib import Path
 
 from agents.audit import log_operation
 from core.config import settings
@@ -10,12 +11,17 @@ from core.path_resolver import paths
 
 logger = logging.getLogger(__name__)
 
+# lock por-ruta — cierra la ventana RMW (read→apply→write) ante
+# dos workflows editando el mismo archivo (lost-update).
+_file_locks: dict[str, asyncio.Lock] = {}
+
 
 async def _diff_editor_tool(
     file_path: str = "",
     diff_content: str | None = None,
     content: str = "",
-    action: str = "apply",
+    *,
+    action: str,
     workspace: str | None = None,
     project_root: str | None = None,
     path: str = "",
@@ -27,6 +33,8 @@ async def _diff_editor_tool(
         diff_content: Contenido del diff unificado a aplicar (para action='apply').
         content: Alias de diff_content (aceptado por compatibilidad con LLM).
         action: 'apply' (aplicar diff) o 'create' (generar diff de cambios).
+            Obligatorio y sin default: sin él la función ejecutaría
+            su rama de escritura silenciosamente → TypeError fail-closed.
         workspace: Workspace activo.
         project_root: Directorio del proyecto.
         path: Alias de file_path (aceptado por compatibilidad con LLM).
@@ -39,13 +47,24 @@ async def _diff_editor_tool(
         return {"success": False, "output": "❌ file_path o path es requerido."}
 
     base = paths.memory_dir(workspace)
+    root_resolved = base.resolve()
     if project_root:
-        base = base / project_root
+        # un project_root ABSOLUTO reemplazaría la base vía pathlib y el
+        # containment contra ella sería auto-consistente (escritura arbitraria).
+        pr = Path(str(project_root)).expanduser()
+        if pr.is_absolute():
+            return {
+                "success": False,
+                "output": "❌ project_root debe ser RELATIVO al workspace.",
+            }
+        base = base / pr
 
     target = base / resolved_path
 
     try:
-        target.resolve().relative_to(base.resolve())
+        # Containment SIEMPRE vs la raíz del workspace (no vs base ya
+        # desplazada) — también rechaza symlinks que apunten fuera.
+        target.resolve().relative_to(root_resolved)
     except ValueError:
         return {"success": False, "output": "❌ Path inseguro: fuera del workspace."}
 
@@ -56,18 +75,51 @@ async def _diff_editor_tool(
         if not target.exists():
             return {"success": False, "output": f"❌ Archivo no encontrado: {resolved_path}"}
 
-        original = await asyncio.to_thread(target.read_text, encoding="utf-8")
-        lines = original.splitlines(keepends=True)
-        new_lines = _apply_patch_lines(lines, resolved_content)
+        async with _file_locks.setdefault(str(target.resolve()), asyncio.Lock()):
+            try:
+                # Referencia ANTES del read: si el mtime cambia antes del
+                # write, alguien más editó el archivo durante la ventana.
+                mtime0 = target.stat().st_mtime_ns
+            except OSError:
+                return {"success": False, "output": f"❌ Archivo no encontrado: {resolved_path}"}
 
-        if new_lines is None:
-            return {
-                "success": False,
-                "output": "❌ No se pudo aplicar el diff. Puede que los números de línea no coincidan.",
-            }
+            original = await asyncio.to_thread(target.read_text, encoding="utf-8")
 
-        new_content = "".join(new_lines)
-        await asyncio.to_thread(target.write_text, new_content, encoding="utf-8")
+            lines = original.splitlines(keepends=True)
+            new_lines = _apply_patch_lines(lines, resolved_content)
+
+            if new_lines is None:
+                return {
+                    "success": False,
+                    "output": "❌ No se pudo aplicar el diff. Puede que los números de línea no coincidan.",
+                }
+
+            new_content = "".join(new_lines)
+
+            def _write_if_unmodified() -> str | None:
+                """Escribe solo si nadie más tocó el archivo durante la ventana."""
+                if target.stat().st_mtime_ns != mtime0:
+                    return "modified"
+                target.write_text(new_content, encoding="utf-8")
+                return None
+
+            # backup para undo ANTES del write (paridad file_manager).
+            try:
+                from core.change_tracker import get_tracker
+
+                get_tracker(workspace, project_root).save_before_write(resolved_path)
+            except Exception:
+                logger.warning("No se pudo guardar backup en change_tracker", exc_info=True)
+
+            conflict = await asyncio.to_thread(_write_if_unmodified)
+            if conflict == "modified":
+                return {
+                    "success": False,
+                    "output": (
+                        f"⚠️ Archivo modificado concurrentemente mientras se aplicaba "
+                        f"el diff: {resolved_path}. Reintenta con el contenido actual."
+                    ),
+                }
 
         # Post-apply validation: ensure result is syntactically valid Python
         if resolved_path.endswith(".py"):
@@ -108,8 +160,14 @@ async def _diff_editor_tool(
             )
             from tools._subprocess import communicate_or_kill
 
-            stdout, _ = await communicate_or_kill(proc, timeout=120.0)
+            stdout, stderr = await communicate_or_kill(proc, timeout=120.0)
             output = stdout.decode()
+            err_text = stderr.decode().strip()
+            # respetar returncode/stderr — sin git repo el diff vacío
+            # NO es "(sin cambios)", es un fallo de entorno.
+            if proc.returncode != 0:
+                detail = err_text.splitlines()[-1] if err_text else f"git exit {proc.returncode}"
+                return {"success": False, "output": f"❌ git diff falló: {detail}"}
             return {
                 "success": True,
                 "output": output if output else "(sin cambios respecto al último commit)",
@@ -154,18 +212,42 @@ def _apply_patch_lines(original_lines: list, diff_text: str) -> list | None:
             return None
 
         new_chunk = []
-        for line in body.splitlines(keepends=True):
-            if line.startswith("+"):
-                new_chunk.append(line[1:])
-            elif line.startswith("-"):
-                continue
-            elif line.startswith(" "):
-                new_chunk.append(line[1:])
+        expected_old: list[str] = []  # líneas que serán eliminadas ('-' y contexto)
+        for raw in body.splitlines(keepends=True):
+            stripped = raw.rstrip("\r\n")
+            if raw.startswith("+"):
+                new_chunk.append(raw[1:])
+            elif raw.startswith("-"):
+                expected_old.append(raw[1:].rstrip("\r\n"))
+            elif raw.startswith(" "):
+                content = raw[1:]
+                new_chunk.append(content)
+                expected_old.append(content.rstrip("\r\n"))
+            elif raw.strip() == "":
+                # contexto VACÍO sin prefijo espacio (formato laxo)
+                # se trata como contexto — jamás se descarta silenciosamente.
+                new_chunk.append(raw)
+                expected_old.append(stripped)
 
-        del lines[old_idx : old_idx + old_cnt]
+        # verificar que las líneas a borrar COINCIDEN con disco
+        if expected_old:
+            actual = [ln.rstrip("\r\n") for ln in lines[old_idx : old_idx + len(expected_old)]]
+            if actual != expected_old:
+                logger.warning(
+                    "Hunk desalineado en línea %d: esperado %r, disco %r",
+                    old_idx + 1,
+                    expected_old[:3],
+                    actual[:3],
+                )
+                return None
+            delete_cnt = len(expected_old)
+        else:
+            delete_cnt = 0
+
+        del lines[old_idx : old_idx + delete_cnt]
         for i, nl in enumerate(new_chunk):
             lines.insert(old_idx + i, nl)
-        offset += len(new_chunk) - old_cnt
+        offset += len(new_chunk) - delete_cnt
 
     return lines
 

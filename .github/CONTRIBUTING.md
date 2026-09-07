@@ -14,7 +14,7 @@ poetry run alembic upgrade head
 - **Tests:** `poetry run pytest`
 - **Lint:** `poetry run ruff check .`
 - **Format:** `poetry run black .`
-- **Typecheck:** `poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/`
+- **Typecheck:** `poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/`
 - **Pre-commit:** `poetry run pre-commit run --all-files`
 
 ## Pull Requests

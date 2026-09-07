@@ -5,6 +5,7 @@ Smart commit: generates the commit message via LLM based on the task.
 
 import logging
 
+from core.constants import SECRET_EXCLUDE_PATHSPEC
 from tools.wrapper import safe_tool_call
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ async def auto_commit(
     project_root: str | None = None,
     message: str = "Auto-commit: tarea completada",
 ) -> dict:
-    """Ejecuta git init, add -A, commit automático. Retorna {success, output}."""
+    """Ejecuta git init, add -A (sin secretos), commit automático. Retorna {success, output}."""
     auto_params = {"workspace": workspace}
     if project_root:
         auto_params["project_root"] = project_root
@@ -28,7 +29,11 @@ async def auto_commit(
     )
     await safe_tool_call(
         tool_name="git_manager",
-        parameters={"action": "add", **auto_params},
+        parameters={
+            "action": "add",
+            "excludes": list(SECRET_EXCLUDE_PATHSPEC),
+            **auto_params,
+        },
         role="agent",
         skip_budget=True,
     )
@@ -39,8 +44,15 @@ async def auto_commit(
         skip_budget=True,
     )
 
-    output = str(commit_res.get("output", "")) if isinstance(commit_res, dict) else str(commit_res)
-    success = "Commit realizado" in output
+    if isinstance(commit_res, dict):
+        output = str(commit_res.get("output", ""))
+        # '': preferir success estructurado; fallback substring para legacy
+        success = (
+            bool(commit_res["success"]) if "success" in commit_res else "Commit realizado" in output
+        )
+    else:
+        output = str(commit_res)
+        success = "Commit realizado" in output
 
     if success:
         logger.info("✅ Auto-commit: %s", message[:60])

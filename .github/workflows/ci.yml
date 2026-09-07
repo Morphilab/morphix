@@ -58,7 +58,7 @@ jobs:
         run: poetry run pytest --cov=core --cov=llm --cov=agents --cov=tools --cov=orchestration --cov-report=xml
 
       - name: Run mypy type check
-        run: poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/
+        run: poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/
 
       - name: Build documentation
         run: poetry run mkdocs build --strict

@@ -72,12 +72,12 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     ),
     "git_manager": ToolDefinition(
         name="git_manager",
-        description="Gestiona repositorios Git: inicializar, añadir archivos, hacer commits.",
+        description="Gestiona repositorios Git: inicializar, añadir archivos, hacer commits, consultar historial y contenido histórico (show).",
         parameters={
             "action": {
                 "type": "string",
-                "enum": ["init", "add", "commit", "log", "diff"],
-                "description": "Operación Git: init (inicializar repo), add (stage archivos), commit (guardar cambios), log (historial), diff (cambios).",
+                "enum": ["init", "add", "commit", "log", "diff", "show"],
+                "description": "Operación Git: init (inicializar repo), add (stage archivos), commit (guardar cambios), log (historial), diff (cambios), show (contenido de un archivo en una ref — read-only).",
             },
             "message": {
                 "type": "string",
@@ -86,6 +86,15 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "project_root": {
                 "type": "string",
                 "description": f"Directorio del proyecto donde ejecutar el comando Git (ej: '{PROJECTS_DIR_NAME}/miapp').",
+            },
+            "ref_path": {
+                "type": "string",
+                "description": "Referencia para action='show' (ej. 'HEAD:README.md', 'public:docs/x.md').",
+            },
+            "excludes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Pathspecs de exclusión para action='add' (solo add). Por defecto se excluyen automáticamente *.env, *.pem, *.key y secrets/**.",
             },
         },
         required=["action"],
@@ -136,6 +145,109 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "path": {
                 "type": "string",
                 "description": "Ruta del archivo PDF a leer, relativa al directorio del proyecto.",
+            },
+            "project_root": {
+                "type": "string",
+                "description": f"Directorio del proyecto (ej: '{PROJECTS_DIR_NAME}/miapp').",
+            },
+        },
+        required=["path"],
+    ),
+    "memory_inspector": ToolDefinition(
+        name="memory_inspector",
+        description=(
+            "Inspecciona la memoria persistente del workspace activo: lista claves, "
+            "lee valores o borra una clave (borrado requiere confirm_delete=true)."
+        ),
+        parameters={
+            "action": {
+                "type": "string",
+                "enum": ["list", "read", "delete"],
+                "description": "Operación a realizar.",
+            },
+            "key": {
+                "type": "string",
+                "description": "Clave de memoria (para read/delete).",
+            },
+            "confirm_delete": {
+                "type": "boolean",
+                "description": "Debe ser true para ejecutar delete.",
+            },
+        },
+        required=["action"],
+    ),
+    "file_view": ToolDefinition(
+        name="file_view",
+        description=(
+            "Abre un archivo del proyecto en una ventana de visualización para el "
+            "usuario (md/pdf/html renderizados; otros como texto). NO devuelve el "
+            "contenido al agente: para leerlo usa pdf_read o file_manager."
+        ),
+        parameters={
+            "path": {
+                "type": "string",
+                "description": "Ruta del archivo, relativa al directorio del proyecto.",
+            },
+            "project_root": {
+                "type": "string",
+                "description": f"Directorio del proyecto (ej: '{PROJECTS_DIR_NAME}/miapp').",
+            },
+        },
+        required=["path"],
+    ),
+    "project_docs": ToolDefinition(
+        name="project_docs",
+        description=(
+            "Project Knowledge Base (PKB): consulta el conocimiento curado del "
+            "proyecto — convenciones, ADRs, checklists, contratos API y guías en "
+            "workspaces/<ws>/knowledge/. SOLO LECTURA: list (categorías), read "
+            "(documento), search (por palabras), inject (contenido top-k relevante "
+            "para inyectar en tu contexto)."
+        ),
+        parameters={
+            "action": {
+                "type": "string",
+                "enum": ["list", "read", "search", "inject"],
+                "description": "Operación: list/read/search/inject.",
+            },
+            "category": {
+                "type": "string",
+                "description": "Categoría (conventions, decisions, checklists, api, onboarding, ...).",
+            },
+            "name": {
+                "type": "string",
+                "description": "Nombre del documento (para read).",
+            },
+            "query": {
+                "type": "string",
+                "description": "Texto de búsqueda (search/inject).",
+            },
+            "k": {
+                "type": "integer",
+                "description": "Máx. documentos a inyectar (default 3, máx 10).",
+            },
+        },
+        required=["action"],
+    ),
+    "vision_analyze": ToolDefinition(
+        name="vision_analyze",
+        description=(
+            "Analiza una imagen del proyecto con el rol de visión: describe su "
+            "contenido, extrae texto (OCR) o interpreta gráficos. Retorna texto."
+        ),
+        parameters={
+            "path": {
+                "type": "string",
+                "description": "Ruta de la imagen, relativa al directorio del proyecto (JPEG/PNG/GIF/WebP, máx 32 MiB).",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["describe", "ocr", "chart"],
+                "description": "Tipo de análisis: describe (descripción general), ocr (texto), chart (gráficos).",
+            },
+            "prompt": {
+                "type": "string",
+                "description": "Instrucción libre que reemplaza el prompt del modo elegido.",
             },
             "project_root": {
                 "type": "string",
@@ -259,6 +371,165 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
         },
         required=["pattern"],
+    ),
+    "load_skill": ToolDefinition(
+        name="load_skill",
+        description=(
+            "Carga una skill procedimental por su name y devuelve instrucciones "
+            "paso a paso. Úsala cuando la sección <SKILLS> indique que una skill "
+            "aplica a la tarea, ANTES de responder o escribir código."
+        ),
+        parameters={
+            "name": {
+                "type": "string",
+                "description": "Nombre de la skill tal como aparece en la lista <SKILLS>.",
+            }
+        },
+        required=["name"],
+    ),
+    "goal_create": ToolDefinition(
+        name="goal_create",
+        description=(
+            "Crea un objetivo de largo plazo para el workspace (máquina de estados "
+            "active/paused/blocked/complete con revisión CAS). Autoridad inicial goal_round."
+        ),
+        parameters={
+            "title": {"type": "string", "description": "Título del goal."},
+            "description": {"type": "string", "description": "Descripción (opcional)."},
+            "max_rounds": {
+                "type": "integer",
+                "description": "Presupuesto de rounds antes de bloquear (default 5).",
+            },
+            "workspace": {"type": "string", "description": "Workspace (default: activo)."},
+        },
+        required=["title"],
+    ),
+    "goal_get": ToolDefinition(
+        name="goal_get",
+        description="Lista los goals del workspace o lee uno por goal_id (con su revisión CAS).",
+        parameters={
+            "goal_id": {"type": "string", "description": "ID del goal (vacío = listar todos)."},
+            "workspace": {"type": "string", "description": "Workspace (default: activo)."},
+        },
+    ),
+    "goal_update": ToolDefinition(
+        name="goal_update",
+        description=(
+            "Actualiza un goal con compare-and-swap (expected_revision obligatorio). "
+            "Estados: active→paused/blocked/complete; blocked→active exige authority='human'. "
+            "complete es terminal."
+        ),
+        parameters={
+            "goal_id": {"type": "string", "description": "ID del goal."},
+            "expected_revision": {
+                "type": "integer",
+                "description": "Revisión CAS actual del goal (léela con goal_get).",
+            },
+            "status": {
+                "type": "string",
+                "enum": ["active", "paused", "blocked", "complete"],
+                "description": "Nuevo estado (transición validada).",
+            },
+            "title": {"type": "string", "description": "Nuevo título (opcional)."},
+            "description": {"type": "string", "description": "Nueva descripción (opcional)."},
+            "authority": {
+                "type": "string",
+                "enum": ["human", "goal_round"],
+                "description": "Autoridad de la decisión (human para desbloquear/completar).",
+            },
+            "workspace": {"type": "string", "description": "Workspace (default: activo)."},
+        },
+        required=["goal_id", "expected_revision"],
+    ),
+    "goal_round": ToolDefinition(
+        name="goal_round",
+        description=(
+            "Registra un round de trabajo sobre el goal (incrementa rounds con CAS). "
+            "Superar max_rounds bloquea el goal automáticamente."
+        ),
+        parameters={
+            "goal_id": {"type": "string", "description": "ID del goal."},
+            "expected_revision": {
+                "type": "integer",
+                "description": "Revisión CAS actual (léela con goal_get).",
+            },
+            "workspace": {"type": "string", "description": "Workspace (default: activo)."},
+        },
+        required=["goal_id", "expected_revision"],
+    ),
+    "todo_write": ToolDefinition(
+        name="todo_write",
+        description=(
+            "Reemplaza la lista completa de tareas (whole-list) con CAS. "
+            ">1 item in_progress es rechazado salvo allow_parallel_in_progress=true."
+        ),
+        parameters={
+            "items": {
+                "type": "array",
+                "description": "Items [{text, status}], status: pending|in_progress|done|blocked.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["pending", "in_progress", "done", "blocked"],
+                        },
+                    },
+                },
+            },
+            "expected_revision": {
+                "type": "integer",
+                "description": "Revisión CAS (vacío = primero).",
+            },
+            "allow_parallel_in_progress": {
+                "type": "boolean",
+                "description": "Permite >1 in_progress (default false).",
+            },
+            "workspace": {"type": "string", "description": "Workspace (default: activo)."},
+        },
+        required=["items"],
+    ),
+    "todo_get": ToolDefinition(
+        name="todo_get",
+        description="Lee la lista de tareas del workspace (con su revisión CAS).",
+        parameters={
+            "workspace": {"type": "string", "description": "Workspace (default: activo)."},
+        },
+    ),
+    "plan_mode": ToolDefinition(
+        name="plan_mode",
+        description="Activa (o reemplaza) el plan activo del workspace con sus pasos.",
+        parameters={
+            "title": {"type": "string", "description": "Título del plan."},
+            "steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Pasos del plan.",
+            },
+            "workspace": {"type": "string", "description": "Workspace (default: activo)."},
+        },
+        required=["title"],
+    ),
+    "exit_plan_mode": ToolDefinition(
+        name="exit_plan_mode",
+        description=(
+            "Salida del plan-mode con decisión explícita: Approve (acepta y desactiva el plan) "
+            "o Keep-planning (sigue planificando). Requiere la revisión CAS actual."
+        ),
+        parameters={
+            "decision": {
+                "type": "string",
+                "enum": ["Approve", "Keep-planning"],
+                "description": "Decisión de salida (default Keep-planning).",
+            },
+            "expected_revision": {
+                "type": "integer",
+                "description": "Revisión CAS del plan (léela con plan_mode).",
+            },
+            "workspace": {"type": "string", "description": "Workspace (default: activo)."},
+        },
+        required=["decision"],
     ),
 }
 

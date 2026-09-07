@@ -18,7 +18,7 @@ class AgentsRegistry:
         self._workspace_agents: dict[str, Callable] = {}
         self._workspace_profiles: dict[str, dict] = {}
 
-    # ---------- Registro global ----------
+    # --------- Registro global ----------
     def register_global(self, agent_type: str, profile: dict | None = None):
         def decorator(func: Callable) -> Callable:
             normalized = agent_type.lower()
@@ -32,7 +32,7 @@ class AgentsRegistry:
 
         return decorator
 
-    # ---------- Registro de workspace ----------
+    # --------- Registro de workspace ----------
     def register_workspace_agent(
         self, agent_type: str, func: Callable, profile: dict | None = None
     ):
@@ -47,7 +47,7 @@ class AgentsRegistry:
         self._workspace_profiles.clear()
         logger.info("Agentes del workspace descargados")
 
-    # ---------- Consulta ----------
+    # --------- Consulta ----------
     def get_agent(self, agent_type: str) -> Callable | None:
         normalized = agent_type.lower()
         if normalized in self._workspace_agents:

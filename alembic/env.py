@@ -43,10 +43,35 @@ def do_run_migrations(connection):
 
 
 async def run_async_migrations() -> None:
-    """Run migrations in 'online' mode with async engine."""
-    connectable = create_async_engine(_get_async_url(), echo=False)
+    """Run migrations in 'online' mode with async engine.
+
+    Las tablas viven en schemas por-workspace: ALEMBIC_SCHEMA (default
+    'main') fija el search_path de la conexión de migración.
+    """
+    import os
+    import re
+
+    from sqlalchemy import text
+
+    schema = os.environ.get("ALEMBIC_SCHEMA", "main")
+    if not re.match(r"^[a-z][a-z0-9_]*$", schema):
+        raise ValueError(f"ALEMBIC_SCHEMA inválido: '{schema}'")
+    connectable = create_async_engine(
+        _get_async_url(),
+        echo=False,
+        connect_args={"server_settings": {"search_path": schema}},
+    )
+    # Fix gotcha 'no schema has been selected': BD vírgenes no traen el
+    # schema destino; alembic_version se crearía antes de la primera
+    # migración y fallaría. Pre-creamos el schema ANTES de migrar.
+    async with connectable.begin() as conn:
+        await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
+        # SA 2.0 commit-as-you-go: si cualquier statement previo dispara
+        # autobegin, begin_transaction() de Alembic devuelve nullcontext y
+        # sin este commit el DDL transaccional se revierte al cerrar.
+        await connection.commit()
     await connectable.dispose()
 
 

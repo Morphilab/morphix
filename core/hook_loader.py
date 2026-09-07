@@ -15,14 +15,26 @@ _workspace_hook_modules: dict[str, list[str]] = {}
 
 
 def _import_module_from_file(name: str, file_path: Path) -> bool:
-    """Import a .py module from disk. Returns True on success."""
+    """Import a .py module from disk. Returns True on success.
+
+    Registra el módulo en sys.modules ANTES de ejecutarlo y
+    salta si ya fue cargado — sin esto, el import canónico posterior creaba
+    un SEGUNDO juego de handlers y cada tool call se auditaba 2×.
+    """
+    if name in sys.modules:
+        return True  # ya cargado — reutilizar (carga única garantizada)
     try:
         spec = importlib.util.spec_from_file_location(name, file_path)
         if spec is None or spec.loader is None:
             logger.error(f"Could not create spec for {file_path}")
             return False
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(name, None)  # no dejar módulos a medio inicializar
+            raise
         return True
     except Exception:
         logger.error(f"Error loading hook {file_path}", exc_info=True)

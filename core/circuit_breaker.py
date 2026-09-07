@@ -26,18 +26,28 @@ class CircuitBreaker:
     _state: str = field(default="closed", init=False)
     _failures: int = field(default=0, init=False)
     _last_failure_time: float = field(default=0.0, init=False)
+    _half_open_probes: int = field(default=0, init=False)
 
     def allow_request(self) -> bool:
-        """True si el request debe enviarse, False si debe rechazarse (circuito abierto)."""
+        """True si el request debe enviarse, False si debe rechazarse.
+
+        En HALF_OPEN se permite UNA sonda — peticiones adicionales se
+        rechazan hasta que la sonda resuelva (evita thundering herd sobre
+        el proveedor caído).
+        """
         with self._lock:
             if self._state == "closed":
                 return True
             if self._state == "open":
                 if time.time() - self._last_failure_time >= self.recovery_timeout:
                     self._state = "half_open"
-                    return True
+                    self._half_open_probes = 0
+                else:
+                    return False
+            # half_open: una única sonda en vuelo
+            if self._half_open_probes >= 1:
                 return False
-            # half_open: allow one probe request
+            self._half_open_probes += 1
             return True
 
     def record_success(self) -> None:
@@ -45,14 +55,19 @@ class CircuitBreaker:
         with self._lock:
             self._state = "closed"
             self._failures = 0
+            self._half_open_probes = 0
 
     def record_failure(self) -> None:
-        """Registra un fallo. Si se supera el umbral, abre el circuito."""
+        """Registra un fallo. Si se supera el umbral, abre el circuito.
+
+        Un fallo en sonda half-open reabre INMEDIATAMENTE.
+        """
         with self._lock:
             self._failures += 1
             self._last_failure_time = time.time()
-            if self._failures >= self.failure_threshold:
+            if self._state == "half_open" or self._failures >= self.failure_threshold:
                 self._state = "open"
+                self._half_open_probes = 0
 
     @property
     def is_open(self) -> bool:

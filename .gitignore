@@ -21,21 +21,12 @@ dist/
 .ruff_cache/
 .pytest_cache/
 .coverage
+.coverage.*
 data/workspaces
 
 # ── Virtual environments ──
 venv/
 .venv/
-
-# ── IDE & editor ──
-.vscode/
-.idea/
-.opencode/
-opencode.json
-.directory
-*.swp
-*.swo
-*~
 
 # ── OS artifacts ──
 .DS_Store
@@ -47,3 +38,4 @@ opencode.json
 site/
 
 # ── Internal dev rules → see .git/info/exclude (cp dev/.gitignore.exclude .git/info/exclude) ──
+coverage.json

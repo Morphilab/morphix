@@ -46,6 +46,10 @@ class KairosFlags:
             "tool_enable_token_budget": app_settings.tool_enable_token_budget,
             "AGENT_SELF_REFLECTION": app_settings.agent_self_reflection,
             "HOOKS_ENABLED": app_settings.hooks_enabled,
+            # flags de emergencia de Bot Mode registrados como bool
+            # para que get() castea el valor de env correctamente ("false"→False)
+            "BOT_MODE": True,
+            "BOT_MODE_PROTOCOL": True,
         }
         # Flags que se han modificado en caliente (no recargar del .env)
         self._dirty_flags: set[str] = set()
@@ -97,6 +101,20 @@ class KairosFlags:
                         )
 
                         await memory.self_healing_check()
+
+                        # purga diaria de pausas resueltas (cada ~24h)
+                        now_ts = time.time()
+                        if now_ts - getattr(self, "_last_purge", 0) > 86400:
+                            self._last_purge = now_ts
+                            try:
+                                from core.repositories.conversation_repository import (
+                                    ConversationRepository,
+                                )
+
+                                await ConversationRepository.purge_resolved_paused()
+                            except Exception:
+                                logger.warning("Purga de pausas falló", exc_info=True)
+
                         logger.debug("💓 Daemon heartbeat enviado")
                     await asyncio.sleep(self.get("SELF_HEAL_INTERVAL"))
                 except Exception as e:

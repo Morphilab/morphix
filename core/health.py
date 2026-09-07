@@ -100,32 +100,6 @@ async def check_llm(report: HealthReport) -> None:
         report.add("LLM", False, str(e)[:120])
 
 
-async def check_redis(report: HealthReport) -> None:
-    """Probe Redis connectivity if configured."""
-    from core.config import Settings, settings
-
-    default_redis_url = Settings.model_fields["redis_url"].default
-    if not settings.redis_url or settings.redis_url == default_redis_url:
-        report.add("Redis", True, "not configured (default)")
-        return
-
-    try:
-        import redis.asyncio as redis
-
-        r = redis.from_url(settings.redis_url)
-        start = time.monotonic()
-        try:
-            await r.ping()  # type: ignore[misc]
-            elapsed = time.monotonic() - start
-            report.add("Redis", True, f"OK ({elapsed * 1000:.0f}ms)")
-        except Exception as e:
-            report.add("Redis", False, str(e)[:120])
-        finally:
-            await r.aclose()
-    except Exception as e:
-        report.add("Redis", False, str(e)[:120])
-
-
 def check_filesystem(report: HealthReport) -> None:
     """Probe critical directories and workspace integrity."""
     from core.path_resolver import MEMORY_BASE, TEMPLATES_DIR
@@ -159,6 +133,70 @@ def check_workspace(report: HealthReport) -> None:
         report.add("Workspace", False, str(e)[:120])
 
 
+def check_embeddings(report: HealthReport) -> None:
+    """Embeddings: estado del provider (sin disparar carga pesada).
+
+    El modelo carga LAZY en background desde
+    init_backend, así que en un proceso one-shot CLI ``_ready`` nunca está
+    seteado — reportarlo como fallo era un falso-negativo estructural
+    ("ISSUES DETECTED" en cada health CLI). Falla SOLO con ``load_error``
+    real; el estado lazy se reporta como OK-neutro con su detalle."""
+    from core.embedding_provider import EmbeddingProvider
+
+    try:
+        from core.embedding_provider import profile_for
+
+        model_name = EmbeddingProvider._model_name()
+        family, _prof = profile_for(model_name)
+        fp = EmbeddingProvider.fingerprint()
+        model = EmbeddingProvider.get_instance()  # no bloquea: None si cargando
+        ready = EmbeddingProvider._ready.is_set()
+        load_error = EmbeddingProvider.load_error
+        common = f"model={model_name} family={family} fp={fp} dim={EmbeddingProvider.dimension()}"
+        if load_error:
+            report.add(
+                "Embeddings",
+                False,
+                f"{common} load_error={str(load_error)[:80]}",
+                model=model_name,
+                family=family,
+                fingerprint=fp,
+                dimension=EmbeddingProvider.dimension(),
+                ready=False,
+                load_error=load_error,
+                attempts=EmbeddingProvider._load_attempts,
+            )
+        elif ready:
+            report.add(
+                "Embeddings",
+                True,
+                f"{common} ready",
+                model=model_name,
+                family=family,
+                fingerprint=fp,
+                dimension=EmbeddingProvider.dimension(),
+                ready=True,
+                load_error=None,
+                attempts=EmbeddingProvider._load_attempts,
+            )
+        else:
+            report.add(
+                "Embeddings",
+                True,
+                f"{common} lazy (no cargado en este proceso)",
+                model=model_name,
+                family=family,
+                fingerprint=fp,
+                dimension=EmbeddingProvider.dimension(),
+                ready=False,
+                load_error=None,
+                attempts=EmbeddingProvider._load_attempts,
+            )
+        del model
+    except Exception as e:
+        report.add("Embeddings", False, str(e)[:120])
+
+
 async def run_health_check() -> HealthReport:
     """Run all health checks and return a structured report."""
     report = HealthReport()
@@ -167,7 +205,7 @@ async def run_health_check() -> HealthReport:
     check_workspace(report)
     await check_database(report)
     await check_llm(report)
-    await check_redis(report)
+    check_embeddings(report)
 
     return report
 

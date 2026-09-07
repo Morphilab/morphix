@@ -11,7 +11,20 @@ from core.constants import TOOL_CALL_TIMEOUT_SECONDS
 from core.metrics import metrics, tool_metrics
 from tools.orchestrator import tool_orchestrator
 
-TOOL_CALL_TIMEOUT = TOOL_CALL_TIMEOUT_SECONDS  # backward-compat alias
+# timeouts por naturaleza de la tool — bash/test_runner son
+# lentos legítimamente; el resto hereda el default global.
+_TOOL_TIMEOUTS: dict[str, float] = {
+    "bash_manager": 300,
+    "test_runner": 300,
+    "code_exec": 180,
+    "web_fetch": 60,
+    "web_search": 60,
+    "vision_analyze": 120,
+}
+
+
+def tool_default_timeout(tool_name: str) -> float:
+    return _TOOL_TIMEOUTS.get(tool_name, TOOL_CALL_TIMEOUT_SECONDS)
 
 
 async def safe_tool_call(
@@ -44,32 +57,31 @@ async def safe_tool_call(
             "output": "❌ bash_manager requires 'command' parameter",
         }
 
-    effective_timeout = timeout if timeout is not None else TOOL_CALL_TIMEOUT
+    effective_timeout = timeout if timeout is not None else tool_default_timeout(tool_name)
     start = time.monotonic()
     try:
 
         async def _execute():
+            # ruta ÚNICA vía orquestador — los proxies MCP están
+            # registrados (saneado + alias colon + nativo), así que reciben
+            # hooks/budget/permisos como cualquier otra tool.
             if tool_name.startswith("mcp:"):
                 from core.mcp.client import get_mcp_client_for_tool
 
-                client = get_mcp_client_for_tool(tool_name)
-                if client is None:
+                if get_mcp_client_for_tool(tool_name) is None:
                     return {
                         "success": False,
                         "error": "mcp_client_not_found",
                         "output": f"MCP client not found for tool: {tool_name}",
                     }
-                else:
-                    return await client.call_tool(tool_name, parameters)
-            else:
-                return await tool_orchestrator.execute_tool(
-                    tool_name,
-                    parameters,
-                    role=role,
-                    workspace=workspace,
-                    session_id=session_id,
-                    skip_budget=skip_budget,
-                )
+            return await tool_orchestrator.execute_tool(
+                tool_name,
+                parameters,
+                role=role,
+                workspace=workspace,
+                session_id=session_id,
+                skip_budget=skip_budget,
+            )
 
         result = await asyncio.wait_for(_execute(), timeout=effective_timeout)
     except TimeoutError:
@@ -78,6 +90,9 @@ async def safe_tool_call(
         return {
             "success": False,
             "error": "tool_timeout",
+            # códigos string estables (el mecanismo real de reintentos es RetryLedger)
+            "code": "TOOL_TIMEOUT",
+            "tag": "Tool.Timeout",
             "output": f"\u274c Tool '{tool_name}' timed out after {effective_timeout}s",
         }
     except Exception:

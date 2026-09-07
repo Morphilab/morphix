@@ -23,6 +23,11 @@ class PathResolver:
     """Provee rutas canónicas para todos los subsistemas."""
 
     @staticmethod
+    def project_root() -> Path:
+        """Raíz del repo — reemplaza los Path(__file__).parent... hardcodeados."""
+        return _BASE
+
+    @staticmethod
     def memory_base() -> Path:
         return MEMORY_BASE
 
@@ -32,10 +37,29 @@ class PathResolver:
 
     @staticmethod
     def code_projects_dir(workspace: str, project_root: str | None = None) -> Path:
-        base = MEMORY_BASE / workspace
-        if project_root:
-            base = base / project_root
-        return base
+        return PathResolver.project_dir(workspace, project_root)
+
+    @staticmethod
+    def project_dir(workspace: str, project_root: str | None) -> Path:
+        """Ruta CANÓNICA de proyecto.
+
+        - Sin root o '.' → raíz del workspace (compat legacy).
+        - Ruta absoluta → se respeta tal cual.
+        - Ruta relativa → normaliza el prefijo code_projects/.
+
+        Todos los subsistemas que localicen archivos de proyecto deben usar
+        ESTA función (antes, aggregator/decomposer/collaborative unían el
+        root crudo mientras file_manager normalizaba → conformance falsas).
+        """
+        if not project_root or str(project_root).strip() in (".", "./"):
+            return MEMORY_BASE / workspace
+        root = Path(str(project_root))
+        if root.is_absolute():
+            return root
+        normalized = PathResolver.normalize_project_root(root.as_posix())
+        if normalized is None:  # pragma: no cover — normalize nunca retorna None aquí
+            return MEMORY_BASE / workspace
+        return MEMORY_BASE / workspace / normalized
 
     @staticmethod
     def workspaces_base() -> Path:
@@ -78,8 +102,42 @@ class PathResolver:
         return TEMPLATES_DIR / "hooks"
 
     @staticmethod
+    def workspace_knowledge_dir(workspace: str) -> Path:
+        """PKB: base de conocimiento del workspace (docs .md curados)."""
+        return WORKSPACES_BASE / workspace / "knowledge"
+
+    @staticmethod
+    def template_workspace_workflows_dir(workspace: str) -> Path:
+        return _BASE / "templates" / "workspaces" / workspace / "workflows"
+
+    @staticmethod
     def templates_workflows_dir() -> Path:
         return TEMPLATES_DIR / "workflows"
+
+    @staticmethod
+    def workspace_skills_dir(workspace: str) -> Path:
+        """Skills procedimentales del workspace (superpowers-style)."""
+        return PathResolver.workspace_dir(workspace) / "skills"
+
+    @staticmethod
+    def viewer_script() -> Path:
+        """Script del visor standalone (md/pdf/html) invocado como proceso."""
+        return _BASE / "viewer" / "viewer.py"
+
+    @staticmethod
+    def workspace_bots_dir(workspace: str) -> Path:
+        """Plantillas de bots del workspace (fuente de verdad YAML→DB)."""
+        return PathResolver.workspace_dir(workspace) / "bots"
+
+    @staticmethod
+    def templates_bots_dir() -> Path:
+        """Catálogo global de plantillas de bots (templates/bots/*.yaml)."""
+        return TEMPLATES_DIR / "bots"
+
+    @staticmethod
+    def templates_skills_dir() -> Path:
+        """Skills procedimentales globales (templates/skills/<n>/SKILL.md)."""
+        return TEMPLATES_DIR / "skills"
 
     @staticmethod
     def charts_dir() -> Path:

@@ -7,9 +7,9 @@ import pytest
 from core.health import (
     HealthReport,
     check_database,
+    check_embeddings,
     check_filesystem,
     check_llm,
-    check_redis,
     check_workspace,
 )
 
@@ -89,14 +89,14 @@ class TestHealthChecks:
 
         assert r.checks["LLM"]["ok"] is True
 
-    @pytest.mark.asyncio
-    async def test_check_redis_default_skipped(self):
+    def test_check_embeddings_lazy_no_es_fallo(self):
+        """En un proceso one-shot el modelo no ha cargado (lazy) — NO es
+        un fallo del sistema, es el estado esperado fuera de la app."""
         r = HealthReport()
-        with patch("core.config.settings") as mock_settings:
-            mock_settings.redis_url = "redis://localhost:6379/0"
-            await check_redis(r)
-
-        assert r.checks["Redis"]["ok"] is True
+        check_embeddings(r)
+        check = r.checks["Embeddings"]
+        assert check["ok"] is True
+        assert "lazy" in check["detail"] or "ready" in check["detail"]
 
     def test_check_filesystem(self, tmp_path, monkeypatch):
         r = HealthReport()
@@ -136,28 +136,6 @@ async def test_check_database_disposes_engine_on_connect_failure():
         await check_database(report)
 
     engine.dispose.assert_awaited_once()
-    report.add.assert_called_once()
-    assert report.add.call_args.args[1] is False
-
-
-@pytest.mark.asyncio
-async def test_check_redis_closes_client_on_ping_failure():
-    """Si ping falla, el cliente Redis debe cerrarse (sin leak)."""
-    from unittest.mock import AsyncMock, MagicMock
-
-    from core.health import check_redis
-
-    client = AsyncMock()
-    client.ping = AsyncMock(side_effect=RuntimeError("ping failed"))
-    with (
-        patch("redis.asyncio.from_url", return_value=client),
-        patch("core.config.settings") as mock_settings,
-    ):
-        mock_settings.redis_url = "redis://localhost:6379/1"
-        report = MagicMock()
-        await check_redis(report)
-
-    client.aclose.assert_awaited_once()
     report.add.assert_called_once()
     assert report.add.call_args.args[1] is False
 

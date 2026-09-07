@@ -75,6 +75,38 @@ def _resolves_to_private_ip(hostname: str) -> bool:
     return False
 
 
+def _resolve_first_ip(hostname: str) -> str | None:
+    """Resuelve UNA vez y retorna la primera IP (fail-closed None).
+
+    El fetch posterior se ancla a esta IP (Host/SNI preservados) para cerrar
+    la ventana DNS-rebinding entre el chequeo y la petición."""
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except (socket.gaierror, OSError):
+        return None
+    for info in infos:
+        addr = info[4][0]
+        ip = ipaddress.ip_address(addr)
+        if not any(ip in net for net in _PRIVATE_NETWORKS):
+            return str(ip)
+    return None
+
+
+def _pinned_url(url: str, ip: str) -> str:
+    """Reescribe la URL apuntando a la IP literal (puerto y path intactos)."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host_part = f"[{ip}]" if ":" in ip else ip
+    netloc = host_part
+    if parsed.port:
+        netloc = f"{host_part}:{parsed.port}"
+    return parsed._replace(netloc=netloc).geturl()
+
+
+_MAX_BODY_BYTES = 2 * 1024 * 1024  # cap ANTES de decodificar
+
+
 def _is_private_url(url: str) -> bool:
     """Verifica si la URL apunta a una IP privada/internal (SSRF protection).
 
@@ -107,16 +139,32 @@ async def _web_fetch_tool(url: str, **kwargs) -> str:
     if not url.startswith(("http://", "https://")):
         return "❌ URL inválida: debe comenzar con http:// o https://"
 
+    from urllib.parse import urlparse
+
     if await asyncio.to_thread(_is_private_url, url):
         return "❌ Acceso denegado: no se permiten URLs a redes internas/privadas."
 
+    hostname = urlparse(url).hostname or ""
+    pinned_ip = await asyncio.to_thread(_resolve_first_ip, hostname)
+    if pinned_ip is None:
+        return "❌ Acceso denegado: resolución DNS fallida o solo IPs privadas."
+
+    headers_base = {"User-Agent": "Morphix/1.0", "Host": hostname}
+
+    def _pin(u: str) -> str:
+        return _pinned_url(u, pinned_ip)
+
+    async def _get_pinned(client, target: str):
+        """GET a la IP anclada preservando Host; SNI si el httpx lo soporta."""
+        kwargs = {"headers": dict(headers_base), "follow_redirects": False}
+        try:
+            return await client.get(_pin(target), extensions={"sni_hostname": hostname}, **kwargs)
+        except TypeError:  # httpx sin soporte de sni_hostname en extensions
+            return await client.get(_pin(target), **kwargs)
+
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
-            resp = await client.get(
-                url,
-                headers={"User-Agent": "Morphix/1.0"},
-                follow_redirects=False,
-            )
+            resp = await _get_pinned(client, url)
             if resp.status_code in (301, 302, 303, 307, 308):
                 for _ in range(5):  # max 5 redirects
                     redirect_url = resp.headers.get("location", "")
@@ -124,11 +172,11 @@ async def _web_fetch_tool(url: str, **kwargs) -> str:
                         break
                     if await asyncio.to_thread(_is_private_url, redirect_url):
                         return "❌ Acceso denegado: redirección a red interna/privada."
-                    resp = await client.get(
-                        redirect_url,
-                        headers={"User-Agent": "Morphix/1.0"},
-                        follow_redirects=False,
-                    )
+                    r_host = urlparse(redirect_url).hostname or ""
+                    r_ip = await asyncio.to_thread(_resolve_first_ip, r_host)
+                    if r_ip is None:
+                        return "❌ Acceso denegado: redirección a host irresoluble/privado."
+                    resp = await _get_pinned(client, redirect_url)
                     if resp.status_code not in (301, 302, 303, 307, 308):
                         break
                 else:
@@ -140,7 +188,17 @@ async def _web_fetch_tool(url: str, **kwargs) -> str:
             if "text/html" not in content_type and "text/plain" not in content_type:
                 return f"❌ Tipo de contenido no soportado: {content_type}"
 
-            text = resp.text
+            # leer por chunks con cap duro ANTES de decodificar — un body
+            # gigante ya no se materializa completo en memoria.
+            raw = bytearray()
+            body_truncated = False
+            async for chunk in resp.aiter_bytes(65536):
+                raw.extend(chunk)
+                if len(raw) > _MAX_BODY_BYTES:
+                    raw = raw[:_MAX_BODY_BYTES]
+                    body_truncated = True
+                    break
+            text = bytes(raw).decode(resp.encoding or "utf-8", errors="replace")
 
             # Basic HTML cleanup
             text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
@@ -152,6 +210,8 @@ async def _web_fetch_tool(url: str, **kwargs) -> str:
             if len(text) > max_len:
                 text = text[:max_len] + f"\n\n... (truncado a {max_len} caracteres)"
 
+            if body_truncated:
+                text += "\n\n... (body truncado a 2MB antes de decodificar)"
             log_operation("web_fetch", url[:200], success=True)
             return f"📄 {url}\n\n{text}"
 

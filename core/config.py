@@ -75,7 +75,26 @@ class Settings(BaseSettings):
         validation_alias="MAX_CONTEXT_TOKENS",
         description="Tokens máximos de contexto del modelo",
     )
-    redis_url: str = Field(default="redis://localhost:6379/0", validation_alias="REDIS_URL")
+    prompt_cache_preserve_prefix: bool = Field(
+        default=True,
+        validation_alias="PROMPT_CACHE_PRESERVE_PREFIX",
+        description=(
+            "Compresión cache-first: preserva el prefijo cacheable del transcript "
+            "(system + primeras vueltas) para maximizar prompt-cache del proveedor"
+        ),
+    )
+    llm_retry_durable: bool = Field(
+        default=True,
+        validation_alias="LLM_RETRY_DURABLE",
+        description=(
+            "Contador de reintentos LLM persistido en disco (sobrevive crashes y "
+            "evita crash-loops con fallos deterministas)"
+        ),
+    )
+
+    # Sin `redis_url`: no hay caché Redis — CacheManager es telemetría de
+    # prompt-cache, no una caché. Si algún día se cablea una caché real,
+    # vuelve aquí con su funcionalidad.
 
     # Default agent names
     default_agent: str = Field(
@@ -104,7 +123,7 @@ class Settings(BaseSettings):
                 "model": "deepseek-v4-flash",
                 "temperature": 0.3,
                 # Mínimo 1024: con 512 el reasoning agota el presupuesto y la
-                # respuesta llega vacía (starvation, evidencia 2026-08-14).
+                # respuesta llega vacía (starvation).
                 # El reasoning se contiene vía retry B3 y no reenviando
                 # reasoning_content.
                 "max_tokens": 1024,
@@ -138,6 +157,18 @@ class Settings(BaseSettings):
                 "max_tokens": 1024,
                 "tool_calling": True,
             },
+            # Visión: análisis one-shot de imágenes
+            # vía tool vision_analyze. tool_calling False: sin tools; los
+            # modelos -exp pueden ir detrás en texto/tool-calling y así el
+            # rol nunca sustituye al default.
+            "vision": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash-vision-exp",
+                "ollama_model": "qwen2.5vl:7b",
+                "temperature": 0.3,
+                "max_tokens": 2048,
+                "tool_calling": False,
+            },
         },
         description=(
             "Model configuration by role. Configure in code (core/config.py). "
@@ -151,12 +182,10 @@ class Settings(BaseSettings):
     # Capacidades conocidas por modelo (tool calling). Los modelos no
     # listados se asumen capaces (default optimista) — la degradación
     # real se detecta dinámicamente vía telemetría de repairs.
-    #
     # SOLO se documentan entradas verificadas con soporte nativo (tools:
-    # True). NO añadir entradas tools:False sin una verificación post-fix:
-    # la evidencia histórica de "modelos sin tools" (gpt-oss:20b-cloud,
-    # minimax-m3:cloud) era el bug json.loads(dict) del parser, y los docs
-    # oficiales de Ollama confirman tool calling nativo en gpt-oss:20b-cloud.
+    # True). NO añadir entradas tools:False sin una verificación previa:
+    # un síntoma de "modelo sin tools" suele ser un bug del parser, no
+    # una falta real de tool calling (verificar docs del proveedor).
     model_capabilities: dict[str, dict[str, bool]] = Field(
         default_factory=lambda: {
             "qwen2.5-coder:7b": {"tools": True},
@@ -219,13 +248,47 @@ class Settings(BaseSettings):
     auto_fix_level: int = Field(default=2, validation_alias="AUTO_FIX_LEVEL")
     context_compression: bool = Field(default=True, validation_alias="CONTEXT_COMPRESSION")
     undercover_mode: bool = Field(default=True, validation_alias="UNDERCOVER_MODE")
-    daemon_mode: bool = Field(default=True, validation_alias="DAEMON_MODE")
+    # daemon_mode: SOLO gobierna el heartbeat Kairos
+    # (core/bootstrap.py). La aprobación de acciones peligrosas ya NO deriva
+    # de este flag — deriva de la PRESENCIA de un host que registre el
+    # callback (GUI) — fail-closed si no hay host. Default False: una
+    # GUI fresca jamás debe arrancar sin aprobaciones.
+    daemon_mode: bool = Field(default=False, validation_alias="DAEMON_MODE")
     self_heal_interval: int = Field(default=120, validation_alias="SELF_HEAL_INTERVAL")
     verbose_logging: bool = Field(default=False, validation_alias="VERBOSE_LOGGING")
     max_subtasks: int = Field(default=8, validation_alias="MAX_SUBTASKS")
     max_agent_iterations: int = Field(default=8, validation_alias="MAX_AGENT_ITERATIONS")
     tools_enabled: bool = Field(default=True, validation_alias="TOOLS_ENABLED")
     allow_code_execution: bool = Field(default=True, validation_alias="ALLOW_CODE_EXECUTION")
+    # RLIMIT_AS activo por defecto. El guard VmSize del executor lo omite
+    # si la VA del proceso ya excede el cap (límite inútil/dañino ahí).
+    sandbox_memory_mb: int = Field(default=512, validation_alias="SANDBOX_MEMORY_MB")
+    mcp_max_line_bytes: int = Field(default=4_194_304, validation_alias="MCP_MAX_LINE_BYTES")
+    mcp_request_timeout: float = Field(default=120.0, validation_alias="MCP_REQUEST_TIMEOUT")
+    mcp_init_timeout: float = Field(default=15.0, validation_alias="MCP_INIT_TIMEOUT")
+    embed_normalize: bool = Field(default=True, validation_alias="EMBED_NORMALIZE")
+    # vigencia del "Always Allow" de aprobaciones (segundos).
+    approval_always_allow_ttl: float = Field(
+        default=1800.0, validation_alias="APPROVAL_ALWAYS_ALLOW_TTL"
+    )
+    # Configurabilidad del subsistema de embeddings.
+    embed_backend: str = Field(default="local", validation_alias="EMBED_BACKEND")
+    embed_ollama_model: str = Field(
+        default="nomic-embed-text", validation_alias="EMBED_OLLAMA_MODEL"
+    )
+    embed_openai_model: str = Field(
+        default="text-embedding-3-small", validation_alias="EMBED_OPENAI_MODEL"
+    )
+    embed_model: str = Field(
+        default="intfloat/multilingual-e5-large", validation_alias="EMBED_MODEL"
+    )
+    embed_device: str = Field(default="auto", validation_alias="EMBED_DEVICE")
+    embed_batch_size: int = Field(default=32, validation_alias="EMBED_BATCH_SIZE")
+    embed_preload: bool = Field(default=False, validation_alias="EMBED_PRELOAD")
+    embed_index_policy: str = Field(default="auto_rebuild", validation_alias="EMBED_INDEX_POLICY")
+    auto_provision_workspaces: bool = Field(
+        default=False, validation_alias="AUTO_PROVISION_WORKSPACES"
+    )
     tool_max_retries: int = Field(default=3, validation_alias="TOOL_MAX_RETRIES")
     tool_backoff_base: float = Field(default=1.5, validation_alias="TOOL_BACKOFF_BASE")
     tool_max_tokens_per_workflow: int = Field(
@@ -238,6 +301,8 @@ class Settings(BaseSettings):
     default_workflow: str = Field(default="development", validation_alias="DEFAULT_WORKFLOW")
     hooks_enabled: bool = Field(default=True, validation_alias="HOOKS_ENABLED")
     active_workspace: str = Field(default="main", validation_alias="ACTIVE_WORKSPACE")
+    # máximo de sesiones Maestro simultáneas (a demanda).
+    maestro_max_sessions: int = Field(default=4, validation_alias="MAESTRO_MAX_SESSIONS")
     tool_calling_global: bool = Field(
         default=True,
         validation_alias="TOOL_CALLING",

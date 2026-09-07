@@ -8,41 +8,11 @@ Messages are one JSON object per line (no pretty-print, no embedded newlines).
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
-
-
-@dataclass
-class JSONRPCRequest:
-    jsonrpc: str = "2.0"
-    id: int | str = 0
-    method: str = ""
-    params: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class JSONRPCNotification:
-    jsonrpc: str = "2.0"
-    method: str = ""
-    params: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class JSONRPCResponse:
-    jsonrpc: str = "2.0"
-    id: int | str = 0
-    result: Any = None
-
-
-@dataclass
-class JSONRPCError:
-    jsonrpc: str = "2.0"
-    id: int | str | None = None
-    error: dict[str, Any] = field(default_factory=dict)
 
 
 async def read_message(stream: asyncio.StreamReader) -> dict[str, Any]:
@@ -103,3 +73,13 @@ def is_response(msg: dict) -> bool:
 
 def get_id(msg: dict) -> int | str | None:
     return msg.get("id")
+
+
+def validate_request_id(msg: dict) -> dict | None:
+    """Error -32600 si el request trae id ausente/null (JSON-RPC lo prohíbe).
+
+    Retorna None para requests válidos. Evita responder con id 0 fabricado.
+    """
+    if msg.get("id") is None:
+        return build_error(None, -32600, "Invalid Request: missing id")
+    return None

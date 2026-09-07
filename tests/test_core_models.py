@@ -32,6 +32,36 @@ class TestMessage:
         assert msg.conversation_id == 1
 
 
+class TestMessageEmbedding:
+    """Columna Message.embedding (bytes float32 LE, nullable)."""
+
+    def test_message_model_has_embedding_column(self):
+        from core.models import Message
+
+        cols = {c.name for c in Message.__table__.columns}
+        assert "embedding" in cols
+
+    def test_embedding_column_nullable_binary(self):
+        from core.models import Message
+
+        col = Message.__table__.columns["embedding"]
+        assert col.nullable is True
+        assert "BLOB" in str(col.type).upper() or "LARGEBINARY" in str(col.type).upper()
+
+    def test_embedding_defaults_to_none(self):
+        from core.models import Message
+
+        msg = Message(conversation_id=1, role="user", content="h")
+        assert msg.embedding is None
+
+    def test_metadata_create_all_includes_embedding(self):
+        """Paridad startup_db(): create_tables_in_schema usa SQLModel.metadata.create_all."""
+        from sqlmodel import SQLModel
+
+        cols = {c.name for c in SQLModel.metadata.tables["message"].columns}
+        assert "embedding" in cols
+
+
 class TestWorkflow:
     def test_status_default(self):
         wf = Workflow(query="test", subtasks="[]")

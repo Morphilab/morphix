@@ -4,7 +4,7 @@ steps:
   - order: 1
     tool: "lsp_manager"
     action: "ruff_check"
-    params: {path: "ruta/directorio/"}
+    params: {file: "ruta/directorio/"}
     note: "Detectá problemas de linting (F, E, W)"
   - order: 2
     tool: "diff_editor"
@@ -14,7 +14,7 @@ steps:
   - order: 3
     tool: "lsp_manager"
     action: "ruff_check"
-    params: {path: "ruta/directorio/"}
+    params: {file: "ruta/directorio/"}
     note: "Verificá que todo esté limpio"
   - order: 4
     tool: "test_runner"

@@ -1,4 +1,4 @@
-"""Test Runner — ejecuta tests con pytest en el sandbox (Fase 4)."""
+"""Test Runner — ejecuta tests con pytest en el sandbox."""
 
 import asyncio
 import logging

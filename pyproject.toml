@@ -14,7 +14,6 @@ repository = "https://github.com/morphilab/morphix"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "sqlmodel",
-    "redis",
     "python-dotenv",
     "pydantic-settings",
     "sentence-transformers",
@@ -42,9 +41,12 @@ dependencies = [
 ]
 [project.scripts]
 morphix-mcp = "core.mcp.server:run_mcp_server"
+morphix-workflow = "orchestration.dsl.cli:main"
 
 [tool.poetry]
-package-mode = false   # ← Esta línea es la solución
+# Sin package-mode los [project.scripts] de arriba no se instalan en el venv:
+# invocar vía `poetry run python -m ...` (core.mcp.server, orchestration.dsl.cli).
+package-mode = false
 
 
 [tool.poetry.group.dev.dependencies]
@@ -93,12 +95,14 @@ strict = false
 ignore_missing_imports = true
 disallow_untyped_defs = false
 disallow_untyped_calls = false
-files = ["core/", "llm/", "agents/", "tools/", "orchestration/", "desktop/"]
+files = ["core/", "llm/", "agents/", "tools/", "orchestration/", "desktop/", "viewer/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=core --cov=llm --cov=agents --cov=tools --cov=orchestration --cov=desktop --cov-report=term-missing"
+# El ratchet per-file de cobertura (tests/test_coverage_ratchet.py) requiere
+# el reporte json: el addopts de abajo lo genera en TODA corrida (incluida CI).
+addopts = "--cov=core --cov=llm --cov=agents --cov=tools --cov=orchestration --cov=desktop --cov-report=term-missing --cov-report=json:coverage.json -o faulthandler_timeout=120"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

@@ -57,8 +57,8 @@ def load_mcp_servers(workspace: str | None = None) -> list[MCPServerConfig]:
 
     servers: dict[str, MCPServerConfig] = {}
 
-    # Global config
-    global_file = Path(__file__).parent.parent.parent / "mcp_servers.json"
+    # Global config (ruta canónica vía path_resolver, no hardcodeada)
+    global_file = paths.project_root() / "mcp_servers.json"
     for cfg in _load_file(global_file):
         servers[cfg.name] = cfg
 

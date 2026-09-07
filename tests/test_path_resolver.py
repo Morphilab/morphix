@@ -20,6 +20,7 @@ class TestPathResolverSimple:
     def test_code_projects_dir_no_project(self):
         p = PathResolver.code_projects_dir("main")
         assert isinstance(p, Path)
+        # sin project_root → raíz del workspace (compat legacy)
         assert p.name == "main"
 
     def test_code_projects_dir_with_project(self):

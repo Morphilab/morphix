@@ -73,12 +73,19 @@ async def _execute_specialized_agent(
 
         # ── 4. Prepare messages with token-aware compression ──
         from core.config import settings as app_settings
-        from core.context_manager import ContextManager
 
         budget = int(app_settings.max_context_tokens * 0.6)
-        messages = ContextManager.compress_history(history, max_tokens=budget)
+        # Cache-first: preserva el prefijo cacheable del transcript
+        from core.cache_manager import cache_manager
+
+        messages = cache_manager.cache_friendly_compress(history, max_tokens=budget)
         if not messages:
             messages = history.copy()
+        # compress_history puede cortar un assistant-con-tool_calls
+        # dejando un role:"tool" huérfano → HTTP 400 del provider.
+        from llm.tool_calls import sanitize_tool_message_pairs
+
+        messages = sanitize_tool_message_pairs(messages)
         messages = undercover.inject_identity_prompt(messages)
 
         # Check for frustration patterns and inject calming prompt
@@ -125,7 +132,7 @@ async def _execute_specialized_agent(
         else:
             role = profile.get("model_role", "agent")
             response = await models.call(messages=messages, role=role, temperature=temp)
-            initial_result = response.choices[0].message.content.strip()
+            initial_result = (response.choices[0].message.content or "").strip()
 
         # ── 6. Self-reflection (controlled by feature flag) ──
         final_result = initial_result

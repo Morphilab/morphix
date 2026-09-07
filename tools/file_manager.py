@@ -11,6 +11,7 @@ File Manager - Versión Profesional y Robusta
 import asyncio
 import logging
 import re
+import threading
 
 from core.config import settings
 from core.path_resolver import paths
@@ -18,6 +19,56 @@ from core.path_resolver import paths
 logger = logging.getLogger(__name__)
 
 SAFE_BASE = paths.memory_base()
+
+# registro de escrituras por (root, path) → writers activos.
+# Detecta que DOS workflows concurrentes escriban el mismo archivo en el mismo
+# proyecto (aviso, no bloqueo). Keyed por root para evitar falsos positivos
+# entre proyectos distintos.
+_writer_registry: dict[tuple[str, str], set[int]] = {}
+_writer_lock = threading.Lock()
+_WRITER_REGISTRY_MAX = 4000
+
+
+def _current_writer_id() -> int:
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return id(task) if task is not None else id(threading.current_thread())
+
+
+def record_file_write(root: str, path: str) -> bool:
+    """Registra que el run actual escribió (root, path).
+
+    Retorna True si OTRO run CONCURRENTE (aún activo) ya había escrito ese
+    mismo archivo — señal de colisión cross-workflow en el mismo proyecto.
+    Keyed por root para evitar falsos positivos entre proyectos distintos.
+    El mismo run re-escribiendo no genera colisión.
+    """
+    from tools.orchestrator import get_file_write_run
+
+    writer = get_file_write_run()
+    if writer is None:
+        writer = _current_writer_id()
+    from core.workspaces import is_run_active
+
+    key = (str(root), str(path))
+    with _writer_lock:
+        writers = _writer_registry.get(key)
+        if writers is None:
+            if len(_writer_registry) >= _WRITER_REGISTRY_MAX:
+                _writer_registry.clear()
+            writers = set()
+            _writer_registry[key] = writers
+        collision = any(w != writer and is_run_active(w) for w in writers)
+        writers.add(writer)
+        return collision
+
+
+def clear_file_write_registry() -> None:
+    """Limpia el registro de escrituras (tests / reinicio de sesión)."""
+    with _writer_lock:
+        _writer_registry.clear()
 
 
 class FileManager:
@@ -45,7 +96,8 @@ class FileManager:
         if not path:
             return "❌ Error: se requiere parámetro 'path' o 'file_path'"
 
-        base = SAFE_BASE / workspace
+        # call-time — immune a recargas del módulo (dualidad SAFE_BASE)
+        base = paths.memory_base() / workspace
 
         # project_root intelligence with prefix normalization
         if project_root:
@@ -86,7 +138,10 @@ class FileManager:
                     "Si la tarea es crearlo, usa action='write' con el contenido. "
                     "Si esperabas que existiera, verifica el nombre exacto."
                 )
-            return await asyncio.to_thread(full_path.read_text, encoding="utf-8")
+            content = await asyncio.to_thread(full_path.read_text, encoding="utf-8")
+            from core.output_bounds import TOOL_OUTPUT_MAX_BYTES, bound_output
+
+            return bound_output(content, TOOL_OUTPUT_MAX_BYTES, tail_bytes=1_000).text
 
         elif action == "write":
             # Save backup for undo before overwriting
@@ -104,6 +159,11 @@ class FileManager:
 
             await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
             logger.info(f"✅ Archivo escrito: {full_path}")
+            if record_file_write(str(full_project), path):
+                logger.warning("⚠️ Colisión de archivo en '%s': escrito por otra sesión", path)
+                return (
+                    f"⚠️ [colisión] '{path}' escrito por otra sesión activa — verifica coherencia."
+                )
             return f"Archivo '{path}' escrito correctamente."
 
         elif action == "append":
@@ -117,6 +177,9 @@ class FileManager:
                     f.write(content)
 
             await asyncio.to_thread(_do_append)
+            if record_file_write(str(full_project), path):
+                logger.warning("⚠️ Colisión de archivo en '%s': append por otra sesión", path)
+                return f"⚠️ [colisión] '{path}' modificado por otra sesión activa — verifica coherencia."
             return f"Contenido añadido a '{path}'."
 
         elif action in ("delete", "remove"):
@@ -153,7 +216,7 @@ async def file_manager_tool(action: str = "", **kwargs) -> str:
             from core.path_resolver import paths
 
             workspace = kwargs.get("workspace", settings.active_workspace)
-            proj_dir = paths.memory_dir(workspace) / project_root
+            proj_dir = paths.project_dir(workspace, project_root)  # M27
             if proj_dir.exists():
                 files = [str(p.relative_to(proj_dir)) for p in proj_dir.rglob("*") if p.is_file()]
                 if files:

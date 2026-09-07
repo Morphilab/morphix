@@ -104,6 +104,17 @@ async def init_backend(
             on_progress(f"Error workspace: {e}")
         return False
 
+    # provisioning de workspaces declarados en templates/workspaces.yaml
+    # (no-fatal — un fallo aquí nunca bloquea el arranque).
+    try:
+        from core.workspaces import Workspaces
+
+        provisioned = Workspaces.provision_template_workspaces()
+        if provisioned:
+            logger.info(f"Workspaces provisionados desde templates: {provisioned}")
+    except Exception as e:
+        logger.warning(f"Provisioning de workspaces falló (no fatal): {e}")
+
     try:
         from core.hook_loader import load_global_hooks
 
@@ -116,6 +127,11 @@ async def init_backend(
 
 
 async def start_daemons(on_offline_changed: Callable[[bool], Any] | None = None) -> None:
+    # precarga opcional del modelo de embeddings (no fatal).
+    from core.embedding_provider import preload_if_configured
+
+    preload_if_configured()
+
     """Arranca tareas de fondo: Kairos Daemon y OfflineManager.
     on_offline_changed: callback opcional async para notificar cambios de estado offline.
     """
@@ -150,6 +166,16 @@ async def start_daemons(on_offline_changed: Callable[[bool], Any] | None = None)
 
     _daemon_tasks.append(asyncio.create_task(_periodic_offline_check()))
     logger.info("OfflineManager iniciado")
+
+
+def register_daemon(coro) -> None:
+    """Registra una tarea de fondo propia de un subsistema (wake loops, etc.).
+
+    Vive en el MISMO pool que los daemons nativos: stop_daemons() la cancela
+    en shutdown limpio. Debe llamarse DESPUÉS de start_daemons().
+    """
+    _daemon_tasks.append(asyncio.create_task(coro))
+    logger.info("daemon registrado: %r", coro)
 
 
 async def stop_daemons() -> None:

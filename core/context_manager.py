@@ -14,6 +14,28 @@ class ContextManager:
         return settings.max_context_tokens
 
     @classmethod
+    def _content_to_text(cls, content) -> str:
+        """Visión: normaliza content a texto para estimación/summary.
+
+        str → tal cual; list de bloques → textos concatenados + '[image]'
+        por cada image_url (NUNCA el b64); otro tipo → str(content)."""
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(str(block.get("text", "")))
+                elif isinstance(block, dict) and block.get("type") == "image_url":
+                    parts.append("[image]")
+                else:
+                    parts.append(str(block))
+            return "\n".join(parts)
+        return str(content)
+
+    @classmethod
     def estimate_tokens(cls, messages: list[dict]) -> int:
         """Estima el número de tokens en una lista de mensajes."""
         total: float = 0.0
@@ -21,7 +43,7 @@ class ContextManager:
             content = msg.get("content", "")
             if content is None:
                 content = ""
-            total += len(str(content)) / cls.CHARS_PER_TOKEN
+            total += len(cls._content_to_text(content)) / cls.CHARS_PER_TOKEN
             # Add per-message overhead (~4 tokens)
             total += 4
         return int(total)
@@ -111,5 +133,7 @@ class ContextManager:
             content = msg.get("content", "")
             if content:
                 role = msg.get("role", "?")
-                parts.append(f"[{role}]: {cls.summarize_for_context(str(content), 200)}")
+                parts.append(
+                    f"[{role}]: {cls.summarize_for_context(cls._content_to_text(content), 200)}"
+                )
         return "\n".join(parts)
