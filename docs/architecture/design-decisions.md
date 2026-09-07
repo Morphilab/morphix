@@ -17,27 +17,26 @@ This document records *why* key architectural choices were made — the rational
 
 **Implementation**: `core/database.py:114` — every async session executes `SET search_path TO {current_schema}` before yielding.
 
-## 4+ Workflow Routes (Not One-Size-Fits-All)
+## 3 Workflow Routes + DSL (Not One-Size-Fits-All)
 
-**Decision**: `WorkflowOrchestrator.run_full_workflow()` dispatches to one of six routes based on message format and active workflow template, rather than running full orchestration for every message.
+**Decision**: `WorkflowOrchestrator.run_full_workflow()` dispatches to one of three routes based on message format and the active workflow document, rather than running a heavy pipeline for every message.
 
 **Why**:
 
-- **Latency**: A `git commit` command doesn't need task analysis, decomposition, agent routing, and result aggregation. The direct-tool route (Route 1) executes in milliseconds.
-- **Resource efficiency**: Full orchestration involves multiple LLM calls (analyzer, decomposer, router, agents, supervisor, aggregator). Avoiding these for simple tasks saves API costs and reduces latency by ~90%.
-- **Appropriate complexity**: A casual question ("What does Python's `zip` do?") fits a simple conversation. A multi-file refactoring needs DAG-based coordinated execution with phase tracking and blackboard sharing.
-- **Template-driven customization**: Users can define their own workflow templates (`coordinated.yaml`, `development.yaml`, `collaborative.yaml`) with custom agent pools, tool allowlists, and execution strategies. TDD is a hardcoded route (no YAML template).
+- **Latency**: A `git commit` command doesn't need decomposition, agent loops, and result aggregation. The direct-tool route executes in milliseconds.
+- **Resource efficiency**: A full workflow involves multiple LLM calls (decompose, agents, aggregate). Avoiding these for simple tasks saves API costs and reduces latency.
+- **Appropriate complexity**: A casual question ("What does Python's `zip` do?") fits a simple agent response. A multi-file refactoring needs the DSL engine's loops, parallel branches and gates.
+- **Deterministic flow control**: The DSL keeps flow control out of the LLM — "el modelo elige, el motor acota". Model decisions are bounded (`decide` enum + fallback, `until.agent` expect + fallback); everything else is engine-driven.
 
-**The routes** (ordered by precedence in `orchestration/workflows/orchestrator.py:324`):
+**The routes** (ordered by precedence in `orchestration/workflows/orchestrator.py`):
 
 | Priority | Route | Trigger |
 |----------|-------|---------|
 | 1 | Direct Tool | Message matches `tool_name: action, key=val` and tool exists in registry |
-| 2 | TDD Loop | `active_workflow == "tdd"` |
-| 3 | Collaborative | `template.type == "collaborative"` |
-| 4 | Coordinated | `template.type == "coordinated"` |
-| 5 | Development | `template.type == "development"` (skips TaskAnalyzer) |
-| 6 | Default | `TaskAnalyzer` decides: simple conversation or full orchestration |
+| 2 | Bot canonical chat | Conversation owned by a bot (`canonical_owner_of`) — runs via `bots_runner`, no templates |
+| 3 | DSL engine | Active workflow document has `version: 1` — compile → validate → engine |
+
+A document without `version: 1` (legacy format, retired) or a missing document is rejected with an actionable error. All product presets (development, tdd, collaborative, coordinated, bdd, sdd, reflexion, domain_tdd, edd) are DSL presets in `templates/workflows/`.
 
 ## ReAct Agent Loop (Reasoning + Acting)
 
@@ -85,16 +84,16 @@ This document records *why* key architectural choices were made — the rational
 
 **Limitations**: The safety net is Python-specific. Non-Python files (`.gitignore`, `README.md`, etc.) are not analyzed.
 
-## 3-Column Cockpit with Resizable Splitter (Sprint 25)
+## 2-Column Cockpit with Resizable Splitter
 
-**Decision**: The Maestro tab uses a **3-column layout** with a `QSplitter`: left (execution panel: progress bar + subtask list), center (chat), right (detail tabs: Agentes, Diagrama, Log, Bash).
+**Decision**: The Maestro tab uses a **2-column layout** with a `QSplitter`: left (chat, flexible), right (unified activity panel: collapsible Ejecución/Subtareas/Archivos sections plus a `QTabWidget` with Diagrama, Log and Bash tabs).
 
 **Why**:
 
-- **Resizable, not static**: `QSplitter` lets users adjust column widths while keeping default proportions. The center column naturally takes remaining space.
-- **No layout thrashing**: Column proportions are stable during workflow execution — subtask status changes don't resize chat or detail panels.
-- **Subtask dashboard**: Left panel shows a `QProgressBar` + subtask list with status icons (✅🔵❌⏳). Driven by `subtask_list` key in `emit_stats` payloads.
-- **Split status/diagram**: Sprint 26 split the status log and Mermaid diagram into two separate `QTextBrowser` widgets in a `QSplitter` — prevents status messages from overwriting diagram content and vice versa.
+- **Resizable, not static**: `QSplitter` lets users adjust column widths while keeping chat dominant.
+- **No layout thrashing**: Column proportions are stable during workflow execution.
+- **Subtask dashboard**: The activity panel shows a `QProgressBar` + subtask list with status icons (✅🔵❌⏳), driven by the `subtask_list` key in `emit_stats` payloads.
+- **Local diagram**: The phase diagram (`PhaseCards`) is derived locally from each `stats_update` — there is no diagram event or Mermaid renderer in the orchestration layer.
 - **Framework choice**: PySide6 (Qt for Python) was chosen over Flet/Flutter/Electron for native desktop performance, mature widget library, and deep customization options.
 
 ## Context Compression at 90%

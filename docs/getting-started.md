@@ -5,9 +5,8 @@
     ## Prerequisites
 
     - **Python 3.12** (required; `<3.14`)
-    - **PostgreSQL** — install and create a database
+    - **PostgreSQL** (required) — install and create a database
     - **Poetry** — [install via pipx](https://python-poetry.org/docs/#installation)
-    - **Redis** (optional, for caching)
     - **Ollama** (optional, for offline mode)
 
     ## Install
@@ -64,17 +63,38 @@
         ```
         Create a Flask API with a /health endpoint
         ```
-    4. **Watch the workflow** — Morphix analyzes your task, decomposes it into subtasks, routes them to agents, executes tools, and aggregates the results.
+    4. **Watch the workflow** — The active workflow (a YAML document run by the deterministic DSL engine) decomposes your task into subtasks, executes them with the allowed agents and tools, and aggregates the results.
     5. **Review and edit** — Use the Editor tab to view and modify generated files. The History tab stores all past conversations.
 
     ## Available Workflows
 
+    Workflows are YAML presets (docs with `version: 1`) executed by the built-in DSL engine. The nine bundled presets:
+
     | Workflow | Best for |
     |----------|----------|
-    | **Development** | General coding tasks — create, modify, refactor |
-    | **Coordinated** | Multi-agent DAG — design → implement → verify phases |
-    | **Collaborative** | Debate-style — multiple agents review and improve |
-    | **TDD** | Test-driven development — write tests, implement, verify |
+    | **Development** | General coding tasks — decompose → execute → aggregate |
+    | **Coordinated** | Multi-agent execution — subtasks run in parallel (up to 5) |
+    | **Collaborative** | Debate-style — multi-round panel with moderator consensus |
+    | **TDD** | Test-driven loop — iterate until all tests pass |
+    | **BDD** | Gherkin stories → failing test per story → minimal implementation |
+    | **SDD** | Spec-first — spec, review gate, traced implementation |
+    | **EDD** | Eval-driven — numeric metrics decide when the loop ends |
+    | **Domain TDD** | Domain model → scenarios → mini TDD cycle per scenario |
+    | **Reflexion** | Generator–critic loop — generate, evaluate, refine |
+
+    All presets except **Collaborative** require a project to be selected.
+
+    ## Other Entrypoints
+
+    ```bash
+    # MCP server (exposes the 24 tools over stdio)
+    poetry run python -m core.mcp.server
+
+    # Workflow DSL CLI
+    poetry run python -m orchestration.dsl.cli new my-flow --type=development  # scaffold a workflow YAML
+    poetry run python -m orchestration.dsl.cli validate tdd  # validate a preset (add --conformance for a dry-run)
+    poetry run python -m orchestration.dsl.cli list          # list available workflows
+    ```
 
     ## Direct Tool Commands
 
@@ -115,9 +135,8 @@
     ## Requisitos previos
 
     - **Python 3.12** (obligatorio; `<3.14`)
-    - **PostgreSQL** — instalar y crear una base de datos
+    - **PostgreSQL** (obligatorio) — instalar y crear una base de datos
     - **Poetry** — [instalar vía pipx](https://python-poetry.org/docs/#installation)
-    - **Redis** (opcional, para caché)
     - **Ollama** (opcional, para modo offline)
 
     ## Instalación
@@ -174,17 +193,26 @@
         ```
         Crea una API Flask con un endpoint /health
         ```
-    4. **Observa el workflow** — Morphix analiza tu tarea, la descompone en subtareas, las asigna a agentes, ejecuta herramientas y agrega los resultados.
+    4. **Observa el workflow** — El workflow activo (un documento YAML ejecutado por el motor DSL determinista) descompone tu tarea en subtareas, las ejecuta con los agentes y herramientas permitidos, y agrega los resultados.
     5. **Revisa y edita** — Usa la pestaña Editor para ver y modificar archivos generados. La pestaña Historial guarda todas las conversaciones pasadas.
 
     ## Workflows disponibles
 
+    Los workflows son presets YAML (documentos con `version: 1`) ejecutados por el motor DSL integrado. Los nueve presets incluidos:
+
     | Workflow | Ideal para |
     |----------|------------|
-    | **Development** | Tareas generales de código — crear, modificar, refactorizar |
-    | **Coordinated** | DAG multi-agente — fases de diseño → implementación → verificación |
-    | **Collaborative** | Estilo debate — múltiples agentes revisan y mejoran |
-    | **TDD** | Desarrollo guiado por tests — escribir tests, implementar, verificar |
+    | **Development** | Tareas generales de código — descomponer → ejecutar → agregar |
+    | **Coordinated** | Ejecución multi-agente — subtareas en paralelo (hasta 5) |
+    | **Collaborative** | Estilo debate — panel de varias rondas con consenso del moderador |
+    | **TDD** | Bucle guiado por tests — iterar hasta que todos pasen |
+    | **BDD** | Historias Gherkin → test fallido por historia → implementación mínima |
+    | **SDD** | Spec-first — especificación, gate de revisión, implementación trazada |
+    | **EDD** | Eval-driven — métricas numéricas deciden el fin del bucle |
+    | **Domain TDD** | Modelo de dominio → escenarios → mini ciclo TDD por escenario |
+    | **Reflexion** | Bucle generador–crítico — generar, evaluar, refinar |
+
+    Todos los presets salvo **Collaborative** requieren un proyecto seleccionado.
 
     ## Comandos directos de herramienta
 

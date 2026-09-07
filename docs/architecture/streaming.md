@@ -300,7 +300,7 @@ Tool calls are already fully assembled by the SDK:
 # response.choices[0].message.tool_calls is a list of complete tool calls
 ```
 
-This path is simpler but provides no progressive feedback. It's used as a **fallback** when streaming fails, and for internal LLM calls where streaming adds no value (e.g., `TaskAnalyzer` classification).
+This path is simpler but provides no progressive feedback. It's used as a **fallback** when streaming fails, and for internal LLM calls where streaming adds no value (e.g., decomposition, `decide`/`evaluate` bounded-choice steps, fact extraction).
 
 ## Notification Flow: StreamChunk to GUI Callback
 

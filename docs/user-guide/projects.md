@@ -4,7 +4,7 @@
 
 A **workspace** in Morphix is an isolated environment with its own:
 
-- **PostgreSQL schema** — Separate database tables for conversations, messages, workflows, users, and blackboard entries
+- **PostgreSQL schema** — Separate database tables for conversations, messages, workflows, users, and paused sessions
 - **Agents** — Custom agent profiles (loaded from `workspaces/<name>/agents/`)
 - **Workflows** — Custom workflow templates (loaded from `workspaces/<name>/workflows/`)
 - **Tools** — Custom Python tools (loaded from `workspaces/<name>/tools/`)
@@ -90,15 +90,17 @@ The default `main` workspace comes with no pre-loaded code projects. Create your
 
 ## How Projects Relate to Workflows
 
+Workflows operate on the selected project's directory (`code_projects/<name>/`). Every bundled preset except `collaborative` **requires** a project — launching without one fails fast with an actionable error instead of writing files somewhere unexpected.
+
 | Workflow | Project behavior |
 |----------|-----------------|
-| **Development** | Optional. Agents can create files directly in the project root. Without a project, files are written to the workspace memory directory. |
-| **Coordinated** | Optional. Phase-aware execution uses project context for file operations. Without a project, blackboard context is the only coordination mechanism. |
-| **Collaborative** | Optional. If set, agents receive the project's structure and dependencies as debate context. Without a project, the debate is purely based on the question. |
-| **TDD** | Recommended. Test discovery uses the project root. Without a project, green-field mode always triggers (no test files found). |
+| **Development** | Required. Subtasks read/write files in the project root; tests and git run against it. |
+| **Coordinated** | Required. Parallel subtasks all operate on the project directory. |
+| **Collaborative** | Optional. If set, agents can read the project to ground the debate; without one, the debate is based purely on the question. |
+| **TDD** | Required. `test_runner` executes pytest with the project as root. |
 
 !!! tip "Always set a project for code work"
-    For Development, Coordinated, and TDD workflows, having a project selected ensures:
+    Having a project selected ensures:
     - Files are created in an organized location
     - Tests can be discovered and run
     - Git operations target the right repository
@@ -114,8 +116,7 @@ Each workspace has its own PostgreSQL schema with these tables:
 | `messages` | Individual messages with role, content, token count |
 | `workflows` | Workflow execution records |
 | `users` | Workspace-specific user data |
-| `paused_sessions` | Saved state for clarification pauses |
-| `blackboard_entries` | Persisted blackboard context for coordinated workflows |
+| `paused_sessions` | Saved state for clarification/gate pauses (survive restarts) |
 
 This means:
 - Conversations in `workspace_a` never leak into `workspace_b`

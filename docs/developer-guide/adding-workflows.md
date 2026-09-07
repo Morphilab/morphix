@@ -1,144 +1,137 @@
 # Adding Workflows
 
-This guide walks you through creating a new workflow strategy. We'll create a `code_review` workflow that orchestrates a reviewer agent followed by a developer to fix issues.
+A workflow in Morphix is a **DSL preset**: a YAML document with `version: 1` interpreted by the deterministic engine in `orchestration/dsl/`. There is no per-workflow Python code to write — the YAML declares agents, tools, and steps; the engine handles retries, gates, loops, parallel branches, pauses, and aggregation.
 
-## Step 1: Create the workflow YAML template
+Design rule: **"el modelo elige, el motor acota"** — flow control NEVER depends on free-form LLM output. Model decisions are bounded by declared contracts with deterministic fallbacks (`decide` options + fallback, `until.agent` expect + fallback).
 
-Create `templates/workflows/code_review.yaml`:
+This guide walks through creating a `code_review` workflow: a reviewer agent scans the code, a developer fixes issues, and the cycle repeats until the reviewer approves.
 
-```yaml
-name: code_review
-type: development
-description: "Focused code review workflow — scan, report issues, apply fixes"
-decomposition: flat
-execution: sequential
-max_parallel: 1
-retry_on_failure: true
-retry_max: 1
-max_agent_iterations: 6
-agents:
-  allowed:
-    - reviewer
-    - developer
-  default_simple: reviewer
-stages:
-  task_analysis: true
-  task_decomposition: true
-  supervisor_review: true
-  result_aggregation: true
-  finalization: true
-tools:
-  allowed:
-    - file_manager
-    - lsp_manager
-    - code_search
-    - web_search
-    - bash_manager
-    - test_runner
-    - diff_editor
-project:
-  required: true
+## Step 1: Generate a skeleton
+
+```bash
+poetry run python -m orchestration.dsl.cli new code_review --type=development
 ```
 
-### YAML field reference
+Skeleton types: `development`, `tdd`, `collaborative`, `coordinated`. The command writes a valid, ready-to-edit YAML. You can also start from any product preset in `templates/workflows/` (development, tdd, collaborative, coordinated, bdd, sdd, reflexion, domain_tdd, edd) as a reference.
+
+## Step 2: Edit the preset
+
+A `code_review` preset (simplified from the `tdd` preset):
+
+```yaml
+version: 1
+name: code_review
+description: "Review → fix loop until the reviewer approves"
+agents:
+  allowed: ["reviewer", "developer"]
+tools:
+  allowed: ["file_manager", "lsp_manager", "code_search", "diff_editor", "test_runner"]
+project:
+  required: true
+skills: true
+steps:
+  - id: ciclo
+    kind: loop
+    max_iter: 4
+    until:
+      type: agent
+      question: >-
+        ¿El review de $last_output aprueba el código? Responde EXACTAMENTE
+        una opción: approved | changes_needed
+      expect: "approved|changes_needed"
+      fallback: fail
+    body:
+      - id: revisar
+        kind: agent
+        agent: reviewer
+        goal: >-
+          Revisa el código del proyecto para: $query. Resultado de la
+          iteración previa: $last_output. Lista issues por severidad.
+        gate: true
+      - id: corregir
+        kind: agent
+        agent: developer
+        goal: >-
+          Corrige los issues del último review: $last_gate. Continúa desde
+          $last_output — no repitas trabajo ya hecho.
+        retry_max: 1
+        timeout: 300
+  - id: resumen
+    kind: aggregate
+    strategy: result
+```
+
+### Root field reference
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | `str` | Unique workflow identifier |
-| `type` | `str` | Workflow type: `development`, `coordinated`, `collaborative`, `tdd` |
-| `description` | `str` | Human-readable description for the Dashboard |
-| `decomposition` | `str` | How tasks are split: `flat` (sequential list), `dag` (directed acyclic graph) |
-| `execution` | `str` | How subtasks run: `sequential`, `parallel_levels`, `parallel_rounds` |
-| `max_parallel` | `int` | Maximum concurrent subtasks for parallel execution |
-| `retry_on_failure` | `bool` | Whether to retry failed subtasks |
-| `retry_max` | `int` | Maximum retry attempts per subtask |
-| `max_agent_iterations` | `int` | Maximum tool-calling iterations per agent loop |
-| `agents.allowed` | `list[str]` | Agent names allowed in this workflow |
-| `agents.default_simple` | `str` | Default agent for simple conversation mode |
-| `stages` | `dict` | Which pipeline stages are enabled |
-| `tools.allowed` | `list[str]` | Tool names allowed for all agents in this workflow |
-| `project.required` | `bool` | Whether a project must be selected |
+| `version` | `1` | **Required.** Documents without it are rejected (legacy format is retired) |
+| `name` | `str` | Preset identifier |
+| `description` | `str` | Human-readable description |
+| `inputs` / `outputs` | `list[str]` | I/O contract — required for the preset to be included by others via `kind: workflow` |
+| `defaults` | `dict` | Default values for `inputs` |
+| `agents.allowed` | `list[str]` | Agent names allowed (deny-by-default) |
+| `tools.allowed` | `list[str]` | Tool names allowed for all agent calls in this workflow |
+| `project.required` | `bool` | Whether a project must be selected before running |
+| `skills` | `bool` | Enable procedural skills injection for agent calls |
+| `commit_after` | `list[str]` | Step ids after which the engine commits (only with completed subtasks + files written) |
+| `steps` | `list` | The program — at least one step |
 
-### Workflow types and their routing
+### Step kinds
 
-| Type | Router behavior |
-|------|----------------|
-| `development` | Decompose into sequential subtasks, agent routing, full orchestration |
-| `coordinated` | Multi-agent DAG with parallel execution, shared blackboard, confidence aggregation |
-| `collaborative` | Debate-style multi-agent rounds with panel evaluation |
-| `tdd` | Autonomous test-driven development loop |
+| Kind | Purpose |
+|------|---------|
+| `agent` | Run an agent with a `goal`; `retry_max` (0-3), `timeout` (≥10s), `model_role`, `outputs` (vars to export), `gate` (regex or `true` → sets `$last_gate`) |
+| `tool` | Call a tool with `args`; `outputs` maps state vars to result keys |
+| `decompose` | Break `$query` into subtasks (`strategy: flat \| dag`, `output` var name) |
+| `parallel` | Run `branches` (each a step list with optional `depends_on`), `max_parallel` 1-8 |
+| `loop` | `max_iter` (1-20), `over` a list var (exposes `$item`, `$iter`, `$max_iter`), `until` early exit, `init_vars`, `parallel` body per item |
+| `decide` | Model picks from `options`; invalid/ambiguous answer → `fallback` (must be one of the options); `branches` per option |
+| `checkpoint` | Pause for human approval — persisted as `PausedSession`, survives restarts |
+| `workflow` | Include another preset as a subroutine (`inputs` map, `outputs`) |
+| `aggregate` | Final synthesis: `strategy: result \| confidence \| moderator` (+ `agent` for moderator) |
+| `plugin` | Registered plugin primitive (`params`, declarative `outputs`) |
 
-## Step 2: Implement the Python execution class (if needed)
+Every step accepts `id` (unique, lowercase), `when` (conditional execution: `if_blockers`, `query_contains:X`, or a `$var`), and `on_error` (`abort` | `continue`).
 
-The `development` type uses the built-in `_run_full_orchestration()` path — no custom Python class needed. For workflow types that need custom logic, create a module in `orchestration/workflows/`.
+### Variables
 
-For example, `collaborative` has `orchestration/workflows/collaborative.py` with a `CollaborativeOrchestrator` class:
+Steps interpolate `$var` from the engine state: `$query`, `$item`, `$iter`, `$max_iter`, `$last_gate`, `$last_output`, plus anything exported via `outputs` or `init_vars`. An undefined variable fails loud at runtime — the engine never silently interpolates empty strings.
 
-```python
-class CollaborativeOrchestrator:
-    @staticmethod
-    async def run(
-        query: str,
-        template: dict,
-        events: WorkflowEvents,
-        history: list,
-        project_root: str | None,
-        workspace: str,
-        force_agent: str | None,
-        workflow_allowed_tools: list | None,
-        start_time: float,
-    ) -> str:
-        # Custom collaborative execution logic
-        ...
-```
+## Step 3: Place the preset
 
-## Step 3: Register the route in WorkflowOrchestrator
+Preset resolution order (`FileSystemCatalog`):
 
-Open `orchestration/workflows/orchestrator.py` and add your routing in `_dispatch_route()`. The routing follows this precedence:
+1. `workspaces/<ws>/workflows/code_review.yaml` — workspace override
+2. `templates/workspaces/<ws>/workflows/` — product workspaces
+3. `templates/workflows/` — global catalog
 
-1. **TDD loop** — when `active_wf == "tdd"`
-2. **Collaborative** — when `template.get("type") == "collaborative"`
-3. **Coordinated** — when `template.get("type") == "coordinated"`
-4. **Development** — when `template.get("type") == "development"`
-5. **Default** — analyze task and decide simple conversation vs full orchestration
+For a personal preset, put it in your workspace directory. For a shipped preset, put it in `templates/workflows/`.
 
-For a new workflow type like `code_review` that uses the existing development executor:
-
-```python
-# In _dispatch_route() — add before the default fallback:
-if template.get("type") == "code_review":
-    # Treat like development but with reviewer-specific task analysis
-    return await WorkflowOrchestrator._run_full_orchestration(
-        query,
-        conversation_history,
-        await TaskAnalyzer.analyze_task(query, is_follow_up=ctx.is_follow_up),
-        ctx,
-        events,
-        project_root,
-        workspaces.current,
-        allowed_agents,
-        workflow_allowed_tools,
-        start_time,
-    )
-```
-
-!!! tip
-    Most custom workflows can reuse the `development` executor path. The template YAML controls agent selection, tool filtering, and decomposition behavior. Only create a custom Python orchestrator for fundamentally different execution models (like the debate rounds in collaborative).
-
-## Step 4: Copy templates to workspace
+## Step 4: Validate
 
 ```bash
-cp templates/workflows/code_review.yaml workspaces/main/workflows/code_review.yaml
-cp templates/agents/reviewer.yaml workspaces/main/agents/reviewer.yaml
+# Structural + semantic validation (no LLM, no DB)
+poetry run python -m orchestration.dsl.cli validate code_review
+
+# Validation + executable conformance: runs the preset against the REAL engine
+# with signature-identical fake handlers (an until/tool-step missing required
+# args fails exactly as it would in production)
+poetry run python -m orchestration.dsl.cli validate code_review --conformance
 ```
 
-## Step 5: Add template consistency test
+The validator catches: unknown agents/tools, undefined `$var` references, duplicate step ids (recursively), `decide` branches not covering options, invalid `when` expressions, and I/O contract violations of `workflow` includes.
 
-Create or update `tests/test_template_consistency.py`:
+!!! warning "Structure validation alone is not enough"
+    A preset can compile, validate, and still be broken at runtime (e.g., an `until.tool` without the required `args` of the target tool dies in TypeError after max retries). Always run `--conformance` for presets you intend to ship.
+
+## Step 5: Add a guard test
+
+Product presets are exercised by `tests/test_dsl_conformance.py` — add yours to its preset list (or add a template-consistency check in `tests/test_template_consistency.py`):
 
 ```python
-def test_code_review_workflow_agents_exist():
-    """Every agent referenced by code_review workflow must exist."""
+def test_code_review_agents_exist():
+    """Every agent referenced by code_review must exist."""
     from core.path_resolver import paths
     import yaml
 
@@ -155,14 +148,14 @@ def test_code_review_workflow_agents_exist():
         )
 ```
 
-## Step 6: Verify in the GUI
+## Step 6: Verify
 
 1. Launch the GUI: `poetry run python run.py`
-2. In the Dashboard tab, select the `code_review` workflow from the dropdown.
-3. Pick a project and type a review task (e.g., "Review the security of my authentication module").
-4. The workflow should decompose the task, route subtasks to reviewer/developer agents, and aggregate results.
+2. Select `code_review` as the active workflow (top bar of the Maestro tab / Dashboard).
+3. Pick a project and type a review task.
+4. The run log shows each DSL step (`agente ▸ step` names); checkpoint steps surface an approval prompt; `⏹` stops and persists the partial conversation.
 
-## Complete Workflow Execution Flow
+## Execution Flow
 
 ```
 User input
@@ -171,28 +164,33 @@ User input
 WorkflowOrchestrator.run_full_workflow()
     │
     ├─ Direct tool command? ───► _parse_direct_tool_command() ─► execute tool
+    ├─ Bot-owned conversation? ─► bots_dispatch.dispatch_canonical_turn()
     │
     ▼
-_dispatch_route()
+_dispatch_route() — loads the raw document
     │
-    ├─ active_wf == "tdd" ───► _run_tdd_loop()
-    ├─ type == "collaborative" ─► CollaborativeOrchestrator.run()
-    ├─ type == "coordinated" ─► _run_coordinated() (DAG + phases)
-    ├─ type == "development" ─► _run_full_orchestration()
-    └─ default ─► TaskAnalyzer.analyze_task()
-                    │
-                    ├─ simple? ─► _run_simple_conversation()
-                    └─ complex? ─► _run_full_orchestration()
+    ├─ No document ────────────► actionable error (hint: cli new)
+    ├─ Legacy doc (no version) ─► actionable rejection
+    └─ version: 1 ─────────────► _run_dsl_workflow()
+                                    │
+                                    ▼
+                        compile_workflow() → validate_workflow()
+                                    │
+                                    ▼
+                        WorkflowEngine.run() + ProductionRuntime
+                                    │
+                        ├─ paused ──► PausedSession origin="dsl" ──► resume at exact step
+                        └─ completed ─► aggregate + finalize_workflow()
 ```
 
 ## Checklist
 
-- [ ] YAML template has `name`, `type`, `agents.allowed`, `tools.allowed`, `stages`
-- [ ] All referenced agents exist in `templates/agents/` or `workspaces/<name>/agents/`
-- [ ] All referenced tools exist in `tools/specs.py` `TOOL_DEFINITIONS`
-- [ ] Custom Python orchestrator (if needed) implements `async run(...) -> str`
-- [ ] Route added in `_dispatch_route()` if using a new workflow type
-- [ ] Template copied to `workspaces/<name>/workflows/`
-- [ ] Template consistency test added
-- [ ] Workflow appears in Dashboard dropdown
+- [ ] YAML has `version: 1`
+- [ ] All referenced agents exist in `templates/agents/` or `workspaces/<name>/agents/` and are in `agents.allowed`
+- [ ] All referenced tools exist in `tools/specs.py` `TOOL_DEFINITIONS` and are in `tools.allowed`
+- [ ] Loops without `over` consume loop feedback in the goal (`$last_output`/`$iter`) — the structural guard `structural_feedback_errors` enforces this
+- [ ] `until.tool`/`tool` steps declare all required `args` of the target tool
+- [ ] `cli validate` passes, and `cli validate --conformance` runs the preset against the real engine
+- [ ] Preset placed in the right catalog level (workspace vs `templates/workflows/`)
+- [ ] Guard/conformance test added
 - [ ] Run `ruff check . && black --check . && mypy && pytest`

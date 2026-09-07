@@ -52,7 +52,6 @@ class Settings(BaseSettings):
     # Infrastructure
     ollama_base_url: str          # OLLAMA_BASE_URL (default: http://localhost:11434)
     database_url: str             # DATABASE_URL
-    redis_url: str                # REDIS_URL
     ollama_model: str             # OLLAMA_MODEL (default: phi3:mini)
     llm_timeout: int              # LLM_TIMEOUT (default: 60)
     deepseek_strict_mode: bool    # DEEPSEEK_STRICT_MODE
@@ -125,9 +124,10 @@ Probes:
 |-------|----------|--------|
 | **Database** | `check_database()` | `SELECT 1` on async engine |
 | **LLM** | `check_llm()` | HTTP GET to provider API endpoint |
-| **Redis** | `check_redis()` | `PING` if configured |
-| **Filesystem** | `check_filesystem()` | MEMORY_BASE and TEMPLATES_DIR existence |
+| **Memory Dir** | `check_filesystem()` | `MEMORY_BASE` existence |
+| **Templates** | `check_filesystem()` | `TEMPLATES_DIR` existence + YAML file count |
 | **Workspace** | `check_workspace()` | Active workflow integrity |
+| **Embeddings** | `check_embeddings()` | Provider state — fails only on a real `load_error`; a lazy (not-yet-loaded) model is a neutral OK |
 
 Usage: `poetry run python -m core.health`
 
@@ -195,7 +195,7 @@ Returns `None` if `tiktoken` is not installed.
 
 ### Cache Manager (`cache_manager.py`)
 
-> Multi-provider prompt cache abstraction with per-workspace stats.
+> Prompt-cache telemetry — it is NOT a cache and does not store anything.
 
 ```python
 CacheManager (singleton)
@@ -204,7 +204,7 @@ CacheManager (singleton)
     stabilize_messages(messages)         # Keep prefix intact for DeepSeek disk caching
 ```
 
-Monitors `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` from provider response `usage` fields. Future-ready for Anthropic ephemeral caching and OpenAI automatic caching.
+Monitors `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` from provider response `usage` fields — observability of the provider-side prompt cache, not a cache of its own.
 
 ### Context Manager (`context_manager.py`)
 
@@ -347,21 +347,6 @@ class Metrics (singleton):
     get_report() → dict
 ```
 
-### LRU Cache (`lru_cache.py`)
-
-> Thread-safe, TTL-based LRU cache for LLM response caching.
-
-```python
-LRUCache(max_size=500, ttl=300)
-    get(key) → Any | None
-    set(key, value)
-    invalidate(key)
-    clear()
-    size → int
-```
-
-Used by `TaskAnalyzer` and `AgentRouter` to cache decomposition and routing results.
-
 ### Utils (`utils.py`)
 
 ```python
@@ -388,7 +373,22 @@ class User(SQLModel, table=True):
     id: int, username: str, password_hash: str
 
 class PausedSession(SQLModel, table=True):
-    # Persisted state for clarification-request pauses
+    # Persisted state for clarification-request pauses (origin: dsl | bot, paused_state snapshot)
+
+class BlackboardEntry(SQLModel, table=True):
+    # Shared key-value storage for coordinated workflows
+
+class Bot(SQLModel, table=True):
+    # Bot roster projection (identity lives in templates/bots/<slug>.yaml)
+
+class Routine(SQLModel, table=True):
+    # Scheduled prompts (interval/cron/oneshot, deliver: history | bot-chat)
+
+class PendingTurn(SQLModel, table=True):
+    # Async turn queue consumed by the wake daemon
+
+class GroupRoom / GroupMessage / BotMetaHistory:
+    # Group rooms and shared logs, bot meta history
 ```
 
 ### Hooks Registry (`hooks_registry.py`)
@@ -475,8 +475,11 @@ mcp/protocol.py   # JSON-RPC 2.0 framing, read/write helpers
 See [Security Model](../security-model.md) for full details.
 
 ```
-sandbox/restricted_executor.py   # RestrictedExecutor with SAFE_MODULES allowlist
+sandbox/runner.py               # Confined child process — executes untrusted code, never imports core/*
+sandbox/restricted_executor.py  # Supervisor: spawns the child with an allowlisted env, stdin code, JSON envelope out
 ```
+
+The exec of untrusted code runs in a **confined subprocess** (`core/sandbox/runner.py`), not in the host process: `RLIMIT_AS` is applied child-scoped, the timeout is a SIGKILL to the child, and backpressure limits the number of concurrent children.
 
 ### `hooks/` — Hook Implementations
 

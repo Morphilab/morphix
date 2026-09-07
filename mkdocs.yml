@@ -89,6 +89,7 @@ nav:
           - Collaborative: user-guide/workflows/collaborative-workflow.md
           - TDD: user-guide/workflows/tdd-workflow.md
       - Agents: user-guide/agents.md
+      - Bot Mode: bot-mode.md
       - Tools: user-guide/tools.md
       - Projects & Workspaces: user-guide/projects.md
       - Export: user-guide/export.md
@@ -125,5 +126,4 @@ nav:
       - Tools: api-reference/tools.md
       - Orchestration: api-reference/orchestration.md
       - Desktop: api-reference/desktop.md
-  - Changelog: changelog.md
   - Testing Manual: MANUAL_DE_PRUEBAS.md

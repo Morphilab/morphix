@@ -48,7 +48,7 @@ keywords:
   - security
   - performance
 priority: 60
-model_role: analysis
+model_role: reasoning
 last_memory_key: null
 ```
 
@@ -106,8 +106,8 @@ cp templates/workflows/development.yaml workspaces/main/workflows/development.ya
 The agent is registered globally via `agents_registry` and will appear:
 
 1. In the GUI agent picker dropdown (Maestro tab top bar).
-2. In the supervisor's agent selection logic.
-3. In the router (`orchestration/router.py`) for task-to-agent matching.
+2. In every workflow whose `agents.allowed` includes it — DSL steps reference agents by name (`agent: reviewer`).
+3. As a valid target for `force_agent` from the Dashboard/agent cards.
 
 To check registration programmatically:
 
@@ -142,7 +142,7 @@ agents/loader.py: load_workspace_agents()
 agents_registry.register_workspace_agent("reviewer", func, profile)
         │
         ▼
-GUI agent picker + router + supervisor
+GUI agent picker + workflow `agents.allowed`
 ```
 
 ## Testing Your Agent

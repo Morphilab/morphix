@@ -1,6 +1,6 @@
 # Tools Layer
 
-The `tools/` layer provides the complete tool system — OpenAI function-calling specs, dynamic registration from `.py` files, orchestration with hook interception and token budgets, and 12 tool implementations.
+The `tools/` layer provides the complete tool system — OpenAI function-calling specs, dynamic registration from `.py` files, orchestration with hook interception and token budgets, and 24 tools with full specs (+ `ask_clarification`, interception-only).
 
 ## Module Inventory
 
@@ -16,7 +16,7 @@ class ToolDefinition:
 
     def to_openai_spec(strict: bool = False) -> dict
 
-TOOL_DEFINITIONS: dict[str, ToolDefinition]  # 11 tools with full parameter schemas
+TOOL_DEFINITIONS: dict[str, ToolDefinition]  # 24 tools with full parameter schemas
 
 def build_tool_definitions(allowed_tools: list[str] | None = None) -> list[dict]
 def build_tool_instructions(allowed_tools, project_root, plan_mode=True) -> str
@@ -26,7 +26,7 @@ def tool_matches_allowlist(tool_name: str, allowlist: list[str]) -> bool
 
 - **`ToolDefinition`**: A dataclass holding the name, description, parameter schema, and optional explicit `required` list. Its `to_openai_spec()` method produces a JSON Schema dict compatible with OpenAI's function-calling API.
 - **Strict mode**: When `settings.deepseek_strict_mode` is `True`, specs add `"strict": true` and `"additionalProperties": false` for DeepSeek compatibility. MCP-prefixed tools are excluded from strict mode since their schemas are generated externally.
-- **`TOOL_DEFINITIONS`**: Dictionary of 11 tools with full parameter type definitions, enums, and descriptions.
+- **`TOOL_DEFINITIONS`**: Dictionary of 24 tools with full parameter type definitions, enums, and descriptions.
 - **`expand_allowed_tools()`**: Bridges agent profiles (which may use short names like `"browser"`) with MCP-registered tool names (`"mcp_browser_browser_navigate"`). Supports exact match, prefix match, and sanitized MCP prefix expansion.
 - **Legacy support**: `build_tool_instructions()` generates text-based tool instructions for Ollama/fallback modes where native function-calling is unavailable.
 
@@ -54,12 +54,11 @@ tools_registry = ToolsRegistry()
 class ToolOrchestrator:
     MAX_RETRIES = settings.tool_max_retries            # default: 3
     BACKOFF_BASE = settings.tool_backoff_base          # default: 1.5
-    MAX_TOKENS_PER_WORKFLOW = settings.tool_max_tokens_per_workflow  # default: 8000
+    MAX_TOKENS_PER_WORKFLOW = settings.tool_max_tokens_per_workflow  # default: 80000
     ENABLE_TOKEN_BUDGET = settings.tool_enable_token_budget
 
     DANGEROUS_ACTIONS: set[str] = {
-        "bash_manager", "code_exec", "file_manager.delete",
-        "git_manager.commit", "git_manager.push",
+        "bash_manager", "code_exec", "file_manager.delete", "diff_editor.apply",
     }
 
     on_approval_required: Callable[[str, dict], Awaitable[bool]] | None
@@ -129,21 +128,31 @@ def unload_workspace_tools()
 - **`load_workspace_tools()`**: Imports `.py` files from `workspaces/<name>/tools/`, registering workspace-specific tools.
 - **`unload_workspace_tools()`**: Removes workspace tools from both the registry and `sys.modules`, preparing for a clean workspace switch.
 
-## 12 Tool Implementations
+## Tool Implementations
+
+24 registered tools have full specs in `TOOL_DEFINITIONS`; `ask_clarification` is interception-only (no spec).
 
 | Registered Name | Source File | Key Actions / Purpose |
 |----------------|-------------|----------------------|
 | `file_manager` | `file_manager.py` | `write`, `read`, `append`, `delete` — File CRUD within the project workspace |
-| `bash_manager` | `bash_manager.py` | Shell command execution with security sandbox (requires `command` parameter) |
+| `bash_manager` | `bash_manager.py` | Shell command execution with security blocklist (requires `command` parameter) |
 | `git_manager` | `git_manager.py` | `init`, `add`, `commit`, `log`, `diff` — Git repository management |
 | `test_runner` | `test_runner.py` | Pytest execution with pass/fail/error counts and output capture |
 | `lsp_manager` | `lsp_manager.py` | `definition`, `hover`, `diagnostics`, `references`, `ruff_check` — Jedi-based code analysis |
-| `code_exec` | `code_execution.py` | Sandboxed Python execution (RestrictedPython: math, numpy, matplotlib; blocks I/O) |
+| `code_exec` | `code_execution.py` | Sandboxed Python execution in a confined subprocess (RestrictedPython: math, numpy, matplotlib; blocks I/O) |
 | `diff_editor` | `diff_editor.py` | `apply`, `create` — Surgical unified diff editing without rewriting entire files |
 | `web_search` | `web_search.py` | Google Custom Search with configurable result count |
 | `web_fetch` | `web_fetch.py` | URL content fetching and text extraction |
 | `code_search` | `code_search.py` | Regex-based recursive search across project files with glob filtering |
 | `pdf_read` | `pdf_reader.py` | PDF text extraction from project files |
+| `memory_inspector` | `memory_inspector.py` | `list`/`read`/`search`/`delete` over FAISS memory entries |
+| `load_skill` | `skill_loader.py` | Loads procedural skills (`templates/skills/<n>/SKILL.md`, workspace override) on demand |
+| `file_view` | `file_viewer.py` | Opens a file in the standalone viewer — fire-and-forget; content never returns to the agent |
+| `project_docs` | `project_docs.py` | Read-only access to the Project Knowledge Base (`list`/`read`/`search`/`inject`) |
+| `vision_analyze` | `vision_analyze.py` | Image analysis via the dedicated `vision` model role; always returns text |
+| `goal_create` / `goal_get` / `goal_update` / `goal_round` | `goal_todo.py` | Structured goal lifecycle (create, query, update, round summary) |
+| `todo_write` / `todo_get` | `goal_todo.py` | Task-list management for plan-mode work |
+| `plan_mode` / `exit_plan_mode` | `goal_todo.py` | Enter/leave plan mode (proposal before execution) |
 | `ask_clarification` | `ask_clarification.py` | Pauses workflow to ask user a question (interception-only; not in `TOOL_DEFINITIONS`) |
 
 > **Naming note**: Registered names differ from file names for two tools: `code_execution.py` → `code_exec`, `pdf_reader.py` → `pdf_read`. The registered name is the key used in `TOOL_DEFINITIONS` and by agents.
@@ -167,7 +176,7 @@ Kits are loaded by `_load_tool_kits()` in the agent loop and injected into the s
 
 ### Tool Skills (`tools/skills/`)
 
-8 YAML-based per-tool skill definitions:
+9 YAML-based per-tool skill definitions:
 
 | Skill File | Tool | Content |
 |------------|------|---------|
@@ -179,6 +188,7 @@ Kits are loaded by `_load_tool_kits()` in the agent loop and injected into the s
 | `lsp_manager.yaml` | lsp_manager | Code navigation, diagnostics usage |
 | `code_search.yaml` | code_search | Search pattern examples, result interpretation |
 | `diff_editor.yaml` | diff_editor | Surgical editing guidance, diff format conventions |
+| `memory_inspector.yaml` | memory_inspector | Memory search/read guidance |
 
 Skills are loaded by `_load_tool_skills()` and injected into the system prompt. Each skill defines: `when_to_use`, `when_not_to_use`, `examples`, and `tips`.
 

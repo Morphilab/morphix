@@ -12,5 +12,5 @@ Each page documents a layer's public API: classes, functions, methods, and their
 | [LLM](llm.md) | 5 modules | AI controller, provider, parser, prompts, offline |
 | [Agents](agents.md) | 6 modules | Registry, loader, profiles, execution, service, audit |
 | [Tools](tools.md) | 17 modules | Specs, orchestrator, wrapper + 12 tool implementations |
-| [Orchestration](orchestration.md) | 27 modules | Analyzer, decomposer, router, workflows, executor |
-| [Desktop](desktop.md) | 16 modules | GUI tabs, services, widgets |
+| [Orchestration](orchestration.md) | 27 modules | DSL engine (schema, compiler, validator, engine), agent loop, decomposer, bots dispatch, orchestrator |
+| [Desktop](desktop.md) | 25 modules | GUI tabs, services, widgets |

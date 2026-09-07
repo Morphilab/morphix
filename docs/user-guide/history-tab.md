@@ -61,7 +61,7 @@ Click **Continuar** to:
 1. Load all messages from the conversation into the Maestro tab
 2. Switch to the Maestro tab automatically
 3. The conversation ID is set, so the next message continues the same database conversation
-4. Full context is preserved — the decomposer and TaskAnalyzer receive `is_follow_up: true`, adapting subtasks for modification rather than creation
+4. Full context is preserved — follow-up messages carry an `is_follow_up` flag so the decomposition adapts to modification rather than creation
 
 ## Exporting Conversations
 
@@ -79,10 +79,14 @@ Exports are project-scoped — they read files from the project's directory on d
 
 Click **Eliminar** to permanently delete a conversation. This removes it from the database. The action is immediate — there is no confirmation dialog. After deletion, the list automatically refreshes.
 
-## Filters (Coming in Future Version)
+## Search and Filters
 
-The v1 History tab shows all conversations. Future versions will add filters for:
+The list panel has a search field (`⌕ Buscar`) supporting:
 
-- By date range
-- By workspace
-- By workflow type
+- **Plain text** — matches conversation titles/content
+- **`date:YYYY-MM-DD`** — filter by date
+- **`tag:x`** — filter by tag
+
+Typing waits for a 300 ms debounce and then refreshes the list automatically; pressing **Enter** searches immediately.
+
+If a conversation is currently open in a Maestro session and you delete it here, that session is notified and clears its reference to the deleted conversation.

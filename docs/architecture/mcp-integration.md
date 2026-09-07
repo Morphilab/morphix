@@ -49,10 +49,11 @@ The MCP server exposes Morphix's tool suite to external MCP clients (opencode, C
 ### Starting the server
 
 ```bash
-poetry run morphix-mcp
-# or
 poetry run python -m core.mcp.server
 ```
+
+!!! note "No console-script entrypoint"
+    `pyproject.toml` uses `package-mode = false`, so Poetry does not install the `[project.scripts]` entrypoints — `poetry run morphix-mcp` does not exist. Always invoke the module form above.
 
 ### Lifecycle
 

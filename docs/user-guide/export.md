@@ -48,7 +48,7 @@ Structured export with full metadata:
 
 ### PDF (`.pdf`)
 
-Formatted PDF with headers, monospace code blocks, and page breaks between major sections. Uses `fpdf2` for generation.
+Formatted PDF with headers, monospace code blocks, and page breaks between major sections. Uses ReportLab for generation.
 
 ### HTML (`.html`)
 
@@ -128,9 +128,8 @@ When no project is selected, files are resolved relative to the workspace memory
 
 1. Open the **History** tab
 2. Select a conversation from the list
-3. Click the **Descargar** (Download) button in the top bar
-4. Select your format: `md`, `json`, `pdf`, or `html`
-5. Choose a save location
+3. Choose the format in the combo (`md`, `json`, or `pdf`)
+4. Click **Exportar** — the file is written to the `exports/` directory and the status shows the full path
 
 ### From the Maestro Tab
 
@@ -161,11 +160,12 @@ Serializes the full conversation object with `json.dumps(indent=2, ensure_ascii=
 
 ### PDF Export
 
-Uses `fpdf2` (`FPDF` class) with:
-- A4 page size, 10mm margins
-- Helvetica font with monospace fallback for code
-- Auto page breaks at 20mm from bottom
-- `multi_cell()` for wrapping long text
+Uses ReportLab (Platypus) with:
+
+- `SimpleDocTemplate` with letter page size
+- `Paragraph` and `Spacer` flowables for wrapping and section separation
+- Monospace style for code blocks
+- Automatic page breaks
 
 ### HTML Export
 

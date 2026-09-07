@@ -115,6 +115,10 @@ Each schema contains these tables:
 | `User` | User profiles and preferences |
 | `PausedSession` | Persisted state for clarification requests (question, paused loop state) |
 | `BlackboardEntry` | Shared key-value storage for coordinated workflows (`blackboard_entries` table) |
+| `Bot` / `BotMetaHistory` | Bot roster projection and meta history (identity lives in `templates/bots/<slug>.yaml`) |
+| `GroupRoom` / `GroupMessage` | Group rooms and their shared message log |
+| `Routine` | Scheduled prompts (interval/cron/oneshot, delivery mode, failure count) |
+| `PendingTurn` | Async bot turn queue consumed by the wake daemon |
 
 ### Bootstrap from Templates
 

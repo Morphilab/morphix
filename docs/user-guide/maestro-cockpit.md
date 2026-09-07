@@ -1,6 +1,6 @@
 # Maestro Cockpit
 
-The Maestro tab is the orchestration cockpit — where you interact with Morphix, send tasks, and watch multi-agent workflows execute in real time.
+The Maestro tab is the orchestration cockpit — where you interact with Morphix, send tasks, and watch multi-agent workflows execute in real time. It is a **multi-session container**: click **＋** (Nueva sesión) in the tab bar to open additional sessions (up to `MAESTRO_MAX_SESSIONS`, default 4). Each session keeps its own conversation, project, workflow, and pause state.
 
 ## Layout: 2-Column with Resizable Splitter
 
@@ -61,7 +61,7 @@ Collapsible (auto-expands when the workflow emits real steps). Lists each subtas
 
 ### Archivos creados Section
 
-Collapsible (auto-expands when files are written). Shows files created or modified during the current workflow. Double-click a file to open it in the Editor tab.
+Collapsible (auto-expands when files are written). Shows files created or modified during the current workflow. **Double-click a file to open it in the standalone viewer** (Markdown, HTML and PDF are rendered; anything else shows as text) — the content is for your eyes only and is not re-sent to the agent.
 
 ## Left Column: Chat
 
@@ -106,7 +106,7 @@ Log entries include system messages, tool execution notifications, agent transit
 
 ### 3. Bash Tab
 
-Shows shell command output from the `bash_manager` tool. Uses a monospace font on a near-black background (`#0A0A0A`) with green text (`#22C55E`). Content is truncated to the last 5000 characters. Shows "(sin comandos ejecutados aún)" when empty. The tab is hidden when the active workflow's allowlist does not include `bash_manager` (e.g., collaborative).
+Shows shell command output from the `bash_manager` tool. Uses a monospace font on a near-black background (`#0A0A0A`) with green text (`#22C55E`). Content is truncated to the last 5000 characters. Shows "(sin comandos ejecutados aún)" when empty. The tab is **always visible**; when the active workflow's allowlist does not include `bash_manager` (e.g., collaborative), the tab is disabled with an explanatory tooltip.
 
 ## Chat Mode vs Orchestrate Mode
 
@@ -120,29 +120,28 @@ Shows shell command output from the `bash_manager` tool. Uses a monospace font o
 
 ### Orchestrate Mode (`⚙️ Orquestar`)
 
-- Full multi-agent workflow orchestration
-- The system chooses the best agent for each subtask
+- Runs the **active workflow** — a YAML preset executed by the deterministic DSL engine
+- The workflow's steps, loops, gates and tool allowlist are declared in its YAML; the engine validates every model decision ("the model chooses, the engine bounds")
 - Agent combo is filtered to agents allowed by the active workflow
-- Requires a project to be selected (except for collaborative workflows)
-- Dispatches to one of 4 workflow routes depending on the active workflow:
-    1. **Direct tool command** — if message matches `tool_name: action, key=val` format
-    2. **TDD loop** — if the active workflow is "tdd"
-    3. **Full orchestration** — development/coordinated workflows decompose tasks, route to agents, supervise, and aggregate
-    4. **Simple conversation** — if `TaskAnalyzer` determines orchestration isn't needed
+- Requires a project to be selected (every preset except `collaborative`)
+- Dispatch order:
+    1. **Direct tool command** — if the message matches `tool_name: action, key=val` format and the tool is registered
+    2. **Bot canonical chat** — if the conversation belongs to a bot, its own runner answers (no workflow templates involved)
+    3. **DSL workflow** — otherwise the active preset runs: compile → validate → engine (e.g. development: decompose → execute → aggregate)
 
 !!! tip "Which mode should I use?"
     Use **Chat** for quick questions, code review, or single-agent tasks. Use **Orchestrate** for multi-step development tasks (build a feature, refactor code, run tests). Orchestrate mode decomposes your task into subtasks and assigns each to the best agent.
 
-## Clarification Requests (Sprint 21)
+## Clarification Requests
 
-When an agent needs more information during a workflow, it can pause and ask you a question:
+When an agent needs more information during a workflow — or the workflow declares a human **gate** — the run pauses:
 
 1. A system message appears in chat asking the clarification
-2. The workflow pauses — state is saved to a `PausedSession` in the database
-3. Type your answer in the input field and press Send
-4. The workflow resumes from the pause point, injecting your answer as context
+2. The workflow pauses — state is saved to a `PausedSession` in the database (a banner appears over the input)
+3. Type your answer in the input field and press Send — or click **⏸ Abandonar pausa** to discard the pause
+4. The workflow resumes from the exact pause point, injecting your answer as context
 
-Clarification requests survive application restarts. If you close Morphix during a pause, the session is restored on next launch.
+Clarification requests survive application restarts. If you close Morphix during a pause, the session is restored on next launch (also when you re-open the conversation from History).
 
 !!! note "How clarification works"
     The `ask_clarification` tool is intercepted directly in the agent loop (`orchestration/loop.py`) rather than via function-calling. It bypasses the normal tool execution path and emits a pause signal to the orchestrator.

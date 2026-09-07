@@ -106,9 +106,9 @@ Logs sensitive operations (bash commands, file deletions, git force pushes) to `
 
 | Agent | Type | Model Role | Tools Allowed | Best For |
 |-------|------|------------|---------------|----------|
-| **developer** | development | `agent` | file_manager, git_manager, bash_manager, lsp_manager, code_exec, test_runner, diff_editor | Writing code, implementing features, fixing bugs, refactoring |
-| **analista** | analysis | `reasoning` | file_manager, lsp_manager, code_search, web_search | Code review, architecture analysis, risk evaluation (read-only) |
-| **architect** | analysis | `reasoning` | file_manager, lsp_manager, code_search, web_search | System design, module boundaries, pattern selection, implementation plans (read-only) |
+| **developer** | development | `agent` | file_manager, git_manager, bash_manager, lsp_manager, code_exec, test_runner, diff_editor, file_view, goal_create, goal_get, goal_update, goal_round, todo_write, todo_get | Writing code, implementing features, fixing bugs, refactoring |
+| **analista** | analysis | `reasoning` | file_manager, lsp_manager, code_search, web_search, web_fetch | Code review, architecture analysis, risk evaluation (read-only) |
+| **architect** | analysis | `reasoning` | file_manager, lsp_manager, code_search, web_search, file_view, plan_mode, exit_plan_mode | System design, module boundaries, pattern selection, implementation plans (read-only) |
 | **moderador** | moderator | `reasoning` | _(none)_ | Facilitating multi-agent debate, building consensus, synthesizing conclusions |
 | **conversacional** | conversational | `agent` | _(none)_ | Small talk, greetings, profile questions, casual conversation |
 
@@ -135,15 +135,14 @@ graph LR
     F --> G[Self-reflection optional]
     G --> H[Memory persistence]
     H --> I[Anti-distillation filter]
-    I --> J[AgentRouter.select_best_agent]
+    I --> J[Response to caller]
 ```
 
 1. **Template loaded** — YAML profiles from `templates/agents/` are copied to `workspaces/<name>/agents/` on first workspace switch
 2. **Registered** — Each agent YAML is parsed and registered via `register_workspace_agent()`; global agents are auto-registered from `AGENT_PROFILES` at module import
 3. **Lookup priority** — Workspace agents override global agents with the same name; `get_agent()` and `get_profile()` check workspace first
 4. **Execution** — `_execute_specialized_agent()` handles the full lifecycle: context injection, compression, frustration detection, LLM call, self-reflection, memory write
-5. **Routing** — `AgentRouter.select_best_agent()` uses cached LLM calls to pick the best agent per subtask
-6. **Supervision** — `WorkflowSupervisor.review_and_correct()` verifies agent assignments against keyword matching (controlled by `AUTO_FIX_LEVEL`)
+5. **Selection** — Which agent runs is decided deterministically: workflow DSL steps declare `agent:` explicitly, the decomposer assigns per subtask, and the GUI picker sets `force_agent`. The retired legacy router/supervisor modules no longer participate
 
 ## Workspace Agent Isolation
 

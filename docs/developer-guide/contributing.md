@@ -7,7 +7,6 @@ This guide covers how to set up a development environment, follow code conventio
 - **Python 3.12** (required; `<3.14`). Use [pyenv](https://github.com/pyenv/pyenv) or your system package manager.
 - **PostgreSQL** — required. Install and create a database.
 - **Poetry** — for dependency management. [Install via pipx](https://python-poetry.org/docs/#installation).
-- **Redis** (optional) — for caching.
 - **Ollama** (optional) — for offline mode.
 
 ## Setup
@@ -58,7 +57,7 @@ poetry run alembic upgrade head
 poetry run python -c "from core.config import settings; print(settings.database_url)"
 poetry run ruff check .
 poetry run black --check .
-poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/
+poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/
 poetry run pytest
 ```
 
@@ -84,7 +83,7 @@ poetry run pre-commit run --all-files
 | `check-added-large-files` | Prevents committing large files |
 | `black` | Formats Python code |
 | `ruff --fix` | Lints and auto-fixes Python code |
-| `mypy` | Type-checks `core/ llm/ agents/ tools/ orchestration/ desktop/` |
+| `mypy` | Type-checks `core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/` |
 
 Pre-commit auto-fixes formatting and linting issues. Mypy and structural checks must pass before the commit proceeds.
 
@@ -100,7 +99,7 @@ poetry run ruff check .
 poetry run black --check .
 
 # 3. Type check (0 errors required)
-poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/
+poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/
 
 # 4. Run all tests
 poetry run pytest
@@ -137,7 +136,7 @@ memory_base = Path("memory")
 - **Mocking:** `unittest.mock.AsyncMock` and `MagicMock` for async mocks.
 - **No shared fixtures in `conftest.py`.** Define mocks inline in each test module.
 - **Use `ToolsRegistry()` for tests**, not the global `tools_registry`.
-- Coverage runs on `core/`, `llm/`, `agents/`, `tools/`, `orchestration/`.
+- Coverage runs on `core/`, `llm/`, `agents/`, `tools/`, `orchestration/`, `desktop/` (configured in `pyproject.toml` addopts — it also emits `coverage.json` for the per-file coverage ratchet).
 
 See [Testing Guide](testing-guide.md) for detailed examples.
 
@@ -146,7 +145,7 @@ See [Testing Guide](testing-guide.md) for detailed examples.
 Mypy runs on all source directories with **0 errors allowed, 0 exclusions**:
 
 ```bash
-poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/
+poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/
 ```
 
 ### Imports
@@ -201,8 +200,8 @@ Before opening a pull request:
 
 - [ ] `ruff check .` passes with no errors
 - [ ] `black --check .` passes (no files would be reformatted)
-- [ ] `mypy core/ llm/ agents/ tools/ orchestration/ desktop/` passes with 0 errors
-- [ ] `pytest` passes all tests (675+ tests)
+- [ ] `mypy core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/` passes with 0 errors
+- [ ] `pytest` passes all tests (1900+ test functions; recompute with `git grep -hE "def test_" -- 'tests/*.py' | wc -l`)
 - [ ] New code has corresponding tests
 - [ ] No hardcoded paths — use `core.path_resolver.paths`
 - [ ] No shared fixtures in `conftest.py` — mocks are inline per module

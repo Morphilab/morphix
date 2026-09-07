@@ -1,6 +1,6 @@
 # Morphix
 
-**AI-powered coding assistant with multi-agent orchestration.** Desktop GUI backed by PostgreSQL. Optional Redis cache and Ollama offline mode. Also serves as an MCP server.
+**AI-powered coding assistant with multi-agent orchestration.** Desktop GUI backed by PostgreSQL. Optional Ollama offline mode. Also serves as an MCP server.
 
 [Get Started](getting-started.md){ .md-button .md-button--primary }
 [User Guide](user-guide/index.md){ .md-button }
@@ -9,29 +9,29 @@
 
 ## What is Morphix?
 
-Morphix is a desktop application that helps you write, test, and refactor code using AI. Unlike single-model chatbots, Morphix orchestrates **multiple specialized agents** working together through structured workflows — from simple conversations to full multi-agent orchestration with DAG-based parallel execution.
+Morphix is a desktop application that helps you write, test, and refactor code using AI. Unlike single-model chatbots, Morphix orchestrates **multiple specialized agents** through a deterministic workflow engine (DSL) — from simple conversations to multi-agent parallel execution. The guiding principle: **the model chooses, the engine bounds** — the LLM decides within limits the engine validates and enforces.
 
 ## Key Features
 
 | Feature | Description |
 |---------|-------------|
-| **Multi-Agent Orchestration** | Developer, analyst, architect, and moderator agents collaborate on tasks |
-| **4 Workflow Strategies** | Development, Coordinated (DAG), Collaborative (debate), TDD |
-| **12 Built-in Tools** | File manager, git, bash, LSP, code execution, search, and more |
-| **Safety First** | Sandboxed code execution, circuit breakers, rate limiting, anti-distillation |
+| **Multi-Agent Orchestration** | Developer, analista, architect, and moderador agents collaborate on tasks |
+| **9 Workflow Presets (DSL)** | development, tdd, bdd, sdd, edd, domain_tdd, reflexion, collaborative, coordinated — YAML workflows (`version: 1`) run by a deterministic engine |
+| **24 Built-in Tools** | File manager, git, bash, LSP, sandboxed code execution, test runner, PDF, vision, project docs, goals/plans, and more |
+| **Safety First** | Sandboxed code execution in a confined subprocess, tool approval gates, credential redaction, untrusted-content marking |
 | **Workspace Isolation** | PostgreSQL schemas separate projects completely |
-| **Desktop GUI** | PySide6 interface with real-time streaming, file editor, and dashboard |
-| **MCP Protocol** | Connect external tools or expose Morphix as an MCP server |
-| **Memory System** | FAISS vector search with autoDream self-healing |
+| **Desktop GUI** | PySide6 interface with multi-session cockpit, real-time streaming, file editor, standalone viewer, and Bot Mode |
+| **MCP Protocol** | Connect external MCP tools or expose Morphix's 24 tools as an MCP server |
+| **Memory System** | FAISS vector search with self-healing consolidation |
 
 ## Architecture at a Glance
 
 ```mermaid
 graph TD
-    GUI[Desktop GUI - PySide6] --> WO[WorkflowOrchestrator]
+    GUI[Desktop GUI - PySide6] --> WO[Workflow Orchestrator - DSL Engine]
     WO --> AL[Agent Loop - ReAct]
     AL --> TO[ToolOrchestrator]
-    TO --> T[12 Tools]
+    TO --> T[24 Tools]
     AL --> LLM[LLM - DeepSeek/OpenAI/Ollama]
 ```
 
@@ -39,11 +39,11 @@ graph TD
 
 | Metric | Value |
 |--------|-------|
-| Python | 3.12, ~19,700 lines |
-| Tests | 680 test functions, 76 modules |
-| Commits | ~230 across 26 sprints |
+| Python | 3.12, ~39,000 lines (excluding tests) |
+| Tests | 1,937 test functions across 219 modules |
+| Commits | ~900 |
 | Type checking | mypy — 0 errors, 0 exclusions |
-| Coverage | core, llm, agents, tools, orchestration |
+| Coverage | core, llm, agents, tools, orchestration (per-file ratchet) |
 | Pre-commit | black, ruff, mypy, YAML, whitespace |
 
 ## Documentation Tracks

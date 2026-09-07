@@ -38,54 +38,42 @@ Additional configuration displayed:
 
 Lists all registered tools with their names and descriptions:
 
-- Title shows total count: "🔧 12 herramientas:"
+- Title shows the total count: "🔧 24 herramientas:"
 - Each tool is listed with its registered name and a description excerpt (first 80 characters)
 - The descriptions come from `TOOL_DEFINITIONS` in `tools/specs.py`
 
-Registered tools include:
-
-| Tool | Purpose |
-|------|---------|
-| `file_manager` | Read, write, append, delete files |
-| `bash_manager` | Execute shell commands |
-| `git_manager` | Git operations (init, add, commit, log, diff) |
-| `test_runner` | Run test suites |
-| `lsp_manager` | Language server protocol (definitions, diagnostics, hover) |
-| `code_exec` | Execute Python in a RestrictedPython sandbox |
-| `diff_editor` | Create and apply unified diffs |
-| `web_search` | Search the web (Google CSE) |
-| `web_fetch` | Fetch and extract page content |
-| `code_search` | Pattern search across the codebase |
-| `pdf_read` | Extract text from PDF files |
-| `ask_clarification` | Pause workflow and ask user a question |
-
-!!! note "ask_clarification is special"
-    `ask_clarification` does not appear in `TOOL_DEFINITIONS` because it's intercepted directly in the agent loop rather than invoked via LLM function-calling.
+Morphix registers **24 tools** — file management, git, bash, LSP, sandboxed code execution, test runner, diff editor, file viewer, memory inspector, project docs, vision, web search/fetch, code search, skill loader, the goal/todo family, and plan mode. `ask_clarification` is not listed because it is intercepted in the agent loop rather than invoked via LLM function-calling. See the [Tools reference](tools.md) for the full table.
 
 ## Sistema Tab
 
-Live system resource monitor that updates every 3 seconds:
+Live system resource monitor for CPU and memory.
 
-### CPU Usage
+### On-Demand Monitoring
 
-A progress bar showing current CPU utilization (percentage). Uses `psutil.cpu_percent()`.
+The monitor **starts stopped** — nothing polls until you ask for it:
 
-### Memory Usage
+- Click **▶ Actualizar** to start: it takes a first reading immediately and then refreshes periodically.
+- The button changes to **⏹ Detener** — click it to stop the monitor.
+- Leaving the Config tab (hide) also stops the monitor automatically.
 
-A progress bar showing current RAM utilization (percentage). Uses `psutil.virtual_memory().percent`.
+### Readings
 
-Both bars use the accent color (`#1066ae`) for the filled portion. The monitor refreshes automatically every 3 seconds via a QTimer.
+- **CPU Usage** — progress bar with current CPU utilization (`psutil.cpu_percent()`).
+- **Memory Usage** — progress bar with current RAM utilization (`psutil.virtual_memory().percent`).
+
+Both bars use the accent color (`#1066ae`) for the filled portion.
 
 !!! tip "Monitoring during workflows"
-    Keep the Sistema tab open during heavy workflows to watch CPU and memory usage in real time. This helps identify when the system is under load from indexing, LLM processing, or tool execution.
+    Start the monitor (▶) during heavy workflows to watch CPU and memory usage in real time. It stops on its own when you switch tabs, so it never polls in the background for nothing.
 
-## Connection Status (Status Bar)
+## Connection Status
 
-While not in the Config tab itself, the main window's status bar provides connection status indicators:
+The main window's **sidebar footer** shows the workspace selector next to a status dot:
 
-- **Database**: Green when connected to PostgreSQL. If the connection fails, workflows cannot execute.
-- **LLM**: Green when online (DeepSeek/OpenAI reachable). Amber when in offline mode (Ollama only).
-- **Redis**: Optional — if configured, shown as connected/disconnected.
+- **● green** — online (DeepSeek/OpenAI reachable).
+- **● amber** — offline mode (Ollama only).
+
+Toggle offline mode from the Dashboard or the Maestro top bar.
 
 ## Key Configuration Files
 

@@ -9,9 +9,9 @@ Morphix follows a **layered architecture** with strict boundaries between subsys
 | **Core** | `core/` | Business logic single source of truth. Database engine, config, memory (FAISS), security (undercover mode, encryption), path resolution, workspace management, context compression. No UI dependencies. |
 | **LLM** | `llm/` | LLM abstraction. `ModelsController` (retries, backoff, circuit breaker), `LLMProvider` (OpenAI/DeepSeek/Grok ↔ Ollama routing), parser (JSON extraction), prompts, offline mode. Exposes `StreamChunk` dataclass for unified streaming. |
 | **Agents** | `agents/` | Agent system. Registry (global + per-workspace), YAML profile loader, base execution, `AgentsService`, audit trails. Agent profiles declare tools, system prompts, and model preferences. |
-| **Tools** | `tools/` | Tool implementations. Dynamic `.py` file loading (global + per-workspace), decorator-based registration, `ToolOrchestrator` (token budgets), specs (function-calling schemas), 12 registered tools. |
-| **Orchestration** | `orchestration/` | Workflow brains. `WorkflowOrchestrator` (4+ routes), agent loop (ReAct), `TaskAnalyzer`, `Decomposer`, `AgentRouter`, `Supervisor`, `ResultAggregator`, `Finalizer`. Sub-package `workflows/` holds collaborative, coordinated, TDD, and blackboard variants. |
-| **Desktop** | `desktop/` | PySide6 GUI. Services layer (`desktop/services/`) for config, dashboard, analytics, history. Widgets: `ChatBlock`, `MaestroTab`. Stateless — all state lives in `orchestration/`. |
+| **Tools** | `tools/` | Tool implementations. Dynamic `.py` file loading (global + per-workspace), decorator-based registration, `ToolOrchestrator` (token budgets), specs (function-calling schemas), 24 registered tools (+ `ask_clarification`, interception-only). |
+| **Orchestration** | `orchestration/` | Workflow brains. `WorkflowOrchestrator` (3 routes: direct tool, bot canonical chat, DSL engine), agent loop (ReAct), `decomposer`, `ResultAggregator`, `Finalizer`, bots dispatch/runner. Sub-package `dsl/` holds the deterministic workflow engine (schema, compiler, validator, engine, runtime adapter, conformance). |
+| **Desktop** | `desktop/` | PySide6 GUI. Services layer (`desktop/services/`) for config, dashboard, history, workflow runner, export, projects, memoria, bots, git, viewer. Widgets: `ChatBlock`, `PhaseCards`, `StatChips`. Stateless — all state lives in `orchestration/`. |
 
 ## How a Task Flows
 
@@ -20,35 +20,28 @@ graph TD
     A[User Message] --> B[run_full_workflow]
     B --> C{Direct tool cmd?}
     C -->|yes| D[Direct Tool Route]
-    C -->|no| E{Active workflow?}
-    E -->|tdd| F[TDD Loop]
-    E -->|collaborative| G[CollaborativeOrchestrator]
-    E -->|coordinated| H[MultiAgentCoordinator]
-    E -->|development| I[Full Orchestration]
-    E -->|default| J[TaskAnalyzer]
-    J -->|simple| K[Simple Conversation]
-    J -->|complex| I
+    C -->|no| E{Bot-owned conversation?}
+    E -->|yes| F[Bot Canonical Chat - bots_runner]
+    E -->|no| G{Doc has version: 1?}
+    G -->|yes| H[DSL Engine]
+    G -->|no| X[Actionable rejection]
     D --> M[User Response]
     F --> M
-    G --> M
     H --> M
-    I --> M
-    K --> M
+    X --> M
 ```
 
 1. **`WorkflowOrchestrator.run_full_workflow()`** receives a `Session` (context + events) and performs security checks via `undercover.check_query()`.
 
 2. **Direct tool detection**: If the message matches `tool_name: action, key=val` format and the tool exists in the registry, it takes the fast path — one tool call, immediate response.
 
-3. **Template dispatch** (`_dispatch_route()`): Evaluates the active workflow template and dispatches to one of:
+3. **Route dispatch** (`_dispatch_route()`): resolves the active workflow document and dispatches to one of:
 
     | Route | Trigger | Description |
     |-------|---------|-------------|
-    | TDD Loop | `active_workflow == "tdd"` | Autonomous test-driven development cycle — write test, run, fix, repeat |
-    | Collaborative | `template.type == "collaborative"` | Panel of agents contribute in parallel rounds |
-    | Coordinated | `template.type == "coordinated"` | Phase-aware DAG execution with shared blackboard |
-    | Development | `template.type == "development"` | Full orchestration: decompose → route → execute → supervise → aggregate |
-    | Default | No matching template | `TaskAnalyzer` decides: simple conversation or full orchestration |
+    | Bot canonical chat | Conversation owned by a bot (`canonical_owner_of`) | Runs the turn via `bots_runner` with the bot's identity, memory and toolset — no workflow templates |
+    | DSL engine | Document has `version: 1` | compile → validate → `WorkflowEngine` with `ProductionRuntime`; deterministic flow control with bounded model decisions |
+    | Legacy format | Document without `version: 1` | Actionable rejection — the legacy system was retired; hint points to `python -m orchestration.dsl.cli new` |
 
 4. **Agent Loop (ReAct)**: The core execution unit. Each agent follows *Reasoning → Action → Observation → Adjust*. The loop calls `execute_agent_loop()` in `orchestration/loop.py`, which:
     - Builds tool definitions and instructions from `tools/specs.py`
@@ -60,7 +53,7 @@ graph TD
 
 5. **Tool Orchestrator**: `ToolOrchestrator` in `tools/orchestrator.py` manages token budgets per tool and coordinates approval requirements (`on_approval_required` callback).
 
-6. **Supervisor → Aggregator → Finalizer**: After all subtasks execute, the `WorkflowSupervisor` reviews agent assignments, `ResultAggregator` synthesizes results into a coherent response, and `finalize_workflow()` persists the conversation and scorecard.
+6. **Aggregator → Finalizer**: After subtasks execute, `ResultAggregator` synthesizes results into a coherent response (deterministic per-subtask evaluation, disk reads of written files), and `finalize_workflow()` persists the conversation and scorecard.
 
 ## Why This Architecture
 
@@ -82,4 +75,4 @@ Tools live as standalone `.py` files in `tools/` (global) and `workspaces/<name>
 
 ### Multiple Execution Strategies
 
-Not every task needs full orchestration. A simple question gets a direct agent response. A `git commit` gets the fast direct-tool path. A complex multi-file feature gets decomposed into subtasks, routed to specialized agents, supervised, and aggregated. The routing layer adapts the execution strategy to the task complexity.
+Not every task needs a full workflow. A simple question gets a direct agent response. A `git commit` gets the fast direct-tool path. A complex multi-file feature runs through a DSL preset that decomposes it, executes subtasks (sequentially, in parallel branches, or in loops), and aggregates the results. The DSL engine adapts the execution strategy to the task.

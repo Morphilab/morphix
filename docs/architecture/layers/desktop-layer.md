@@ -8,12 +8,12 @@ The `desktop/` layer is the PySide6 GUI — the user-facing interface for Morphi
 
 ```python
 class MainWindow(QMainWindow):
-    # Tab wiring: dashboard, maestro, editor, analytics, history, config
+    # Tab wiring: dashboard, maestro, historial, editor, config, analytics, memoria, bots
     # project_changed signal integration
     # Window management, dark theme
 ```
 
-- **Sidebar navigation**: Left sidebar (200px `QListWidget`) with icons navigates between 6 panels via `QStackedWidget`
+- **Sidebar navigation**: Left sidebar `QListWidget` with icons navigates between 8 panels via `QStackedWidget` (sidebar items and stack pages are aligned by index — a page without a sidebar item would be unreachable)
 - **Dark theme**: Applies a custom `DARK_PALETTE` (deep blacks and blues: `#0F0F0F`, `#1A1A1A`, `#1066ae`)
 - **Login dialog**: `LoginDialog(QDialog)` — master password entry with SHA-256 hash verification; prevents access without authentication
 - **Status bar**: `QStatusBar` with agent/workspace/project info
@@ -31,12 +31,12 @@ The primary interaction tab — a 2-column layout with a resizable splitter (202
 
 **Features:**
 
-- **Agent picker**: `QComboBox` for manual agent selection; falls back to `AgentRouter` when "Auto" is selected
+- **Agent picker**: `QComboBox` for manual agent selection; "Auto" (value `None`) lets the execution path pick its default/fallback agent
 - **Mode switching**: Chat mode (simple conversation) vs Orquestar mode (full orchestration) — toggled by button
 - **Top bar**: Compact single row (estado · modo · proyecto · agente) + action buttons (clear, export, stop) with tooltips + active-workflow label
 - **Streaming**: Real-time streaming into chat blocks via the `on_stream_chunk` event; debounced rendering (~70ms)
 - **Subtask list**: Driven by the `subtask_list` key in `emit_stats` payloads; updates after each subtask completes
-- **Stat chips**: All 5 workflows emit the same normalized stats contract (`WorkflowEmitter`) — elapsed/tokens/agent/status/phase chips never show stale placeholders
+- **Stat chips**: All execution paths emit the same normalized stats contract (`WorkflowEmitter`) — elapsed/tokens/agent/status/phase chips never show stale placeholders
 - **Status banner**: Errors and clarification pauses render as a colored banner above the input (system messages stay in the Log)
 - **Clarification handling**: Renders the agent's question as a special message; user's answer injected back into the paused loop
 - **Conversation continuity**: Follow-up messages in existing conversations load full context including agent/tool messages
@@ -64,16 +64,28 @@ The primary interaction tab — a 2-column layout with a resizable splitter (202
 
 ### Analytics Tab (`analytics_tab.py`)
 
-- **Usage charts**: Token consumption over time, tool call frequency, agent usage distribution
-- **Metrics**: Powered by `core.metrics` system — renders historical data
-- **Time range**: Filterable by day, week, month
+- **Real-time metrics**: Form with uptime, total tokens, workflows, success rate, LLM/tool calls, rate-limited counters — powered by `core.metrics`
+- **Rate limiter status**: minute/hour usage vs limits
+- **Consumption-based refresh**: the refresh timer is born STOPPED — `▶ Actualizar` / `⏹ Detener` toggle with an immediate first read; `hideEvent` auto-stops the timer; indicator `● en vivo` / `○ detenido · últ. HH:MM:SS`
+
+### Memoria Tab (`memoria_tab.py`)
+
+- **Memory browser**: list → detail → delete for memory entries, via `desktop/services/memoria_service.py` (Qt-free wrapper over the memory inspection handlers)
+- **Delete always confirms**: the service requires `confirm_delete=True`; the human confirmation lives in a `QMessageBox` in the GUI
+- **Refresh button** (`⟳`) and auto-refresh on `workspace_changed`
+
+### Bots Tab (`bots_tab.py`)
+
+- **Container with 3 sub-tabs** (`QTabWidget`): `RosterPane` (bot roster), `RoutinesPane` (scheduled routines with create/edit dialog and semantic colors), `GroupsPane` (group rooms with a shared log `QTextBrowser`)
+- **Bot CRUD via YAML**: create/edit/clone write the workspace bot YAML (`workspaces/<ws>/bots/<slug>.yaml`) and sync; delete removes row + template
+- **Conversation links**: `open_conversation` signal surfaces bot chats in the Maestro tab; panels reload on `workspace_changed`
 
 ### Config Tab (`config_tab.py`)
 
-- **Environment variable editor**: Reads from `.env`, allows editing and saving
-- **Connection status**: PostgreSQL, Redis, Ollama connectivity indicators (green/red dots)
-- **API key management**: Masked display with edit capability
-- **Settings display**: Shows computed settings from `core.config.Settings`
+- **3 sub-tabs** (`QTabWidget` interno):
+    - **Modelos**: read-only view of `settings.model_roles` (provider/model/temperature per role), Ollama config and LLM timeout
+    - **Herramientas**: inventory of `TOOL_DEFINITIONS` (name + description per registered tool)
+    - **Sistema**: CPU/RAM monitor with a consumption-based toggle (`▶ Actualizar` / `⏹ Detener`, born stopped, `hideEvent` auto-stop)
 
 ### History Tab (`history_tab.py`)
 
@@ -104,10 +116,17 @@ Business logic separated from UI for each tab:
 
 | Service | File | Responsibility |
 |---------|------|----------------|
-| **Config Service** | `config_service.py` | Environment variable CRUD, connection testing, settings validation |
+| **Bots Service** | `bots_service.py` | Bot roster queries for GUI dialogs (slugs, roster data) |
+| **Config Service** | `config_service.py` | Offline-mode toggle, application restart, GUI theme |
+| **Conversation Export** | `conversation_export.py` | Export formatting to md/json/pdf/html (testable without Qt) |
 | **Dashboard Service** | `dashboard_service.py` | Agent/workflow card data, stats aggregation, quick-start logic |
-| **Analytics Service** | `analytics_service.py` | Metrics retrieval, chart data preparation, time-range filtering |
-| **History Service** | `history_service.py` | Conversation CRUD, export formatting (md/json/pdf/html), search/filter |
+| **File Viewer Service** | `file_viewer_service.py` | Standalone viewer launching (double-click on created files, `view-file://` links) |
+| **Git Service** | `git_service.py` | Git operations for the GUI (clone projects into `code_projects`) |
+| **History Service** | `history_service.py` | Conversation CRUD, rich search/filtering, export delegation |
+| **Memoria Service** | `memoria_service.py` | Qt-free wrapper over memory handlers; deletion requires `confirm_delete=True` |
+| **Project Service** | `project_service.py` | Project selection/import logic (testable without Qt) |
+| **Workflow Runner** | `workflow_runner.py` | Executes `run_full_workflow` from the GUI with cancellation and persistence callbacks |
+| **Workflow View** | `workflow_view.py` | Workflow detail/template rendering for the GUI |
 
 The service layer ensures the UI files remain thin presentation logic — all data access, formatting, and business rules live in services.
 
@@ -126,7 +145,7 @@ The service layer ensures the UI files remain thin presentation logic — all da
 - **Browser reference caching**: Reuses rendered components for performance
 - **Role headers**: Bold colored labels ("You" in accent blue, "Morphix" in success green) at top of each message block
 - **Full-width design**: No bubble styling — transparent background, full-width blocks for dense conversation display
-- **Timestamp**: UTC time displayed beside the role header
+- **Timestamp**: Local time (HH:MM) displayed beside the role header
 
 ### Debate Section (`debate_section.py`)
 

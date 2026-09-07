@@ -1,14 +1,14 @@
 # GUI Overview
 
-Morphix's desktop interface is a PySide6 application with a fixed tab layout. This page describes the main window, all 6 tabs, and basic navigation patterns.
+Morphix's desktop interface is a PySide6 application with a fixed sidebar/tab layout. This page describes the main window, all 8 tabs, and basic navigation patterns.
 
 ## Main Window
 
 The main window has a minimum size of 1200x750 pixels and uses a dark theme by default. It consists of:
 
 - **Menu bar** — "Archivo" (File) with Ctrl+Q to quit, and "Ayuda" (Help) with About and Keyboard Shortcuts dialogs
-- **Tab bar** — 6 fixed tabs across the top (not user-draggable or reorderable)
-- **Status bar** — Shows current workspace name ("Workspace: main") and status messages
+- **Sidebar** — 8 fixed entries (Dashboard, Maestro, Historial, Editor, Config, Analytics, Memoria, Bots); at the bottom, the **workspace selector** with an online/offline status dot
+- **Status bar** — Shows status messages (workspace switches, export paths, errors)
 
 ### Keyboard Shortcuts
 
@@ -22,7 +22,7 @@ The main window has a minimum size of 1200x750 pixels and uses a dark theme by d
 
 On launch, Morphix shows a login dialog requiring the master password (configured via `PASSWORD_HASH` in `.env`). This uses bcrypt for verification. After successful login, the backend initialises and loads the real tabs.
 
-## The 6 Tabs
+## The 8 Tabs
 
 ### 1. Dashboard
 The landing page. Shows workspace selector, system status (Online/Offline), workflow cards, and agent cards. Use this to pick a workflow, select an agent, or switch workspaces.
@@ -45,22 +45,28 @@ Lists all saved conversations across workspaces. Select a conversation to see it
 [Read the History guide →](history-tab.md)
 
 ### 5. Config
-Shows current configuration: model roles (DeepSeek / Ollama), registered tools, and a live CPU + memory monitor that updates every 3 seconds.
+Shows current configuration: model roles (DeepSeek / Ollama), the 24 registered tools, and an on-demand CPU + memory monitor (starts stopped; ▶ Actualizar / ⏹ Detener).
 
 [Read the Config guide →](config-tab.md)
 
 ### 6. Analytics
-Real-time metrics dashboard. Token usage, workflow completion stats, LLM call count, tool call count, and rate limiter quotas (per-minute and per-hour). Refreshes every 5 seconds.
+Metrics dashboard: token usage, workflow completion stats, LLM call count, tool call count, and rate limiter quotas (per-minute and per-hour). Refresh is **on-demand**: press ▶ Actualizar to go live, ⏹ Detener to stop; it auto-stops when you leave the tab.
 
 [Read the Analytics guide →](analytics-tab.md)
 
+### 7. Memoria
+Browse the workspace's persistent memory: list stored entries, read their content, and delete entries (with confirmation). Refresh with ⟳; it follows workspace switches.
+
+### 8. Bots
+Bot Mode: manage the roster of bots (create/edit/clone via YAML), their eternal chats, routines (scheduled prompts), and group rooms. See the [Bot Mode](../bot-mode.md) page.
+
 ## Navigation Between Tabs
 
-Tabs are always visible at the top of the window. Click any tab to switch. Some interactions navigate automatically:
+Tabs are always visible in the left sidebar. Click any entry to switch. Some interactions navigate automatically:
 
-- **Dashboard → Maestro**: Clicking a workflow or agent card switches to the Maestro tab and activates the selected workflow or agent
+- **Dashboard → Maestro**: Clicking a workflow card or the launcher switches to the Maestro tab and activates the selected workflow or agent
 - **History → Maestro**: Clicking "Continuar" on a conversation loads it into Maestro and switches there
-- **Project changes**: When you create or select a project in Maestro, the Editor tab automatically refreshes to show that project's file tree
+- **Project changes**: When you create or select a project, the Editor tab automatically refreshes to show that project's file tree
 
 ## Online vs Offline Mode
 
@@ -78,4 +84,4 @@ Toggle offline mode using the button in either tab. Offline mode disables extern
 
 ## Dark Mode
 
-Dark mode is enabled by default (`DARK_MODE=true` in `.env`). You can toggle it from the Dashboard's "Tema" button. The change takes effect after restarting the application.
+Dark mode is enabled by default (`DARK_MODE=true` in `.env`). The theme is fixed at startup — there is no runtime theme switcher.

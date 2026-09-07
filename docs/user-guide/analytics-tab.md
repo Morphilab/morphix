@@ -1,6 +1,6 @@
 # Analytics Tab
 
-The Analytics tab displays real-time metrics about Morphix's performance, resource usage, and API consumption. All metrics refresh every 5 seconds.
+The Analytics tab displays metrics about Morphix's performance, resource usage, and API consumption. Refresh is **on-demand** — nothing polls until you start it.
 
 ## Layout
 
@@ -61,9 +61,16 @@ Multiply **Total tokens** by your provider's per-token rate to estimate API cost
 - OpenAI: varies by model (GPT-4o, GPT-4o-mini, etc.)
 - Ollama: **free** (runs locally on your hardware)
 
-## Auto-Refresh
+## Refresh Control (On-Demand)
 
-The Analytics tab refreshes every 5 seconds via a QTimer. There is no manual refresh button — the data updates automatically. The refresh calls `core.metrics.to_dict()` and `core.rate_limiter.get_rate_limiter()` to get current values.
+The Analytics tab does **not** poll in the background by default:
+
+- On open, all metrics show "—".
+- Click **▶ Actualizar** to go live: a first reading is taken immediately and values refresh periodically while active. The indicator shows **● en vivo**.
+- Click **⏹ Detener** to stop; the indicator shows **○ detenido · últ. HH:MM:SS** with the time of the last reading.
+- Leaving the tab (hide) also stops the refresh automatically.
+
+The refresh calls `core.metrics.to_dict()` and `core.rate_limiter.get_rate_limiter()` to get current values.
 
 ## Related Monitoring
 

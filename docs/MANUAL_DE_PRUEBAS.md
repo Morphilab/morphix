@@ -2,14 +2,14 @@
 
 === ":flag_gb: Exhaustive Manual Testing Guide"
 
-    Covers the **12 tools**, **5 agents**, **5 workflows**, the **4 execution routes**,
-    all **flows/functionality**, the **GUI** (new cockpit), **safety nets**, and the
+    Covers the **24 tools** (plus the interception-only `ask_clarification`), **5 agents**, the **9 DSL workflow presets**, the **3 execution routes**,
+    all **flows/functionality**, the **GUI** (multi-session cockpit), **safety nets**, and the
     **automated suite**.
 
 === ":flag_es: Guía de pruebas manuales **exhaustiva**"
 
-    Cubre los **12 tools**, **5 agentes**, **5 workflows**, las **4 rutas de ejecución**,
-    todos los **flujos/funcionalidades**, la **GUI** (cockpit nuevo), las **redes de
+    Cubre los **24 tools** (más el `ask_clarification` por intercepción), **5 agentes**, los **9 presets DSL de workflow**, las **3 rutas de ejecución**,
+    todos los **flujos/funcionalidades**, la **GUI** (cockpit multi-sesión), las **redes de
     seguridad** y la **suite automatizada**.
 
 ---
@@ -40,17 +40,17 @@
 
 === ":flag_gb: Coverage Matrix (quick checklist)"
 
-    **Tools (12):** `[ ]` file_manager `[ ]` bash_manager `[ ]` git_manager `[ ]` test_runner `[ ]` lsp_manager `[ ]` code_exec `[ ]` diff_editor `[ ]` web_search🟡 `[ ]` web_fetch `[ ]` code_search `[ ]` pdf_read `[ ]` ask_clarification
+    **Tools (24):** `[ ]` file_manager `[ ]` bash_manager `[ ]` git_manager `[ ]` test_runner `[ ]` lsp_manager `[ ]` code_exec `[ ]` diff_editor `[ ]` file_view `[ ]` web_search🟡 `[ ]` web_fetch `[ ]` code_search `[ ]` pdf_read `[ ]` vision_analyze `[ ]` memory_inspector `[ ]` project_docs `[ ]` load_skill `[ ]` goal_create `[ ]` goal_get `[ ]` goal_update `[ ]` goal_round `[ ]` todo_write `[ ]` todo_get `[ ]` plan_mode `[ ]` exit_plan_mode · ask_clarification (interception)
 
     **Agents (5):** `[ ]` developer `[ ]` analista `[ ]` architect `[ ]` conversacional `[ ]` moderador
 
-    **Workflows (4):** `[ ]` development `[ ]` coordinated `[ ]` collaborative `[ ]` tdd
+    **Workflows (9 presets DSL):** `[ ]` development `[ ]` coordinated `[ ]` collaborative `[ ]` tdd `[ ]` bdd `[ ]` sdd `[ ]` edd `[ ]` domain_tdd `[ ]` reflexion
 
-    **Routes (4):** `[ ]` direct tool `[ ]` simple conversation `[ ]` full orchestration `[ ]` TDD
+    **Routes (3):** `[ ]` direct tool `[ ]` DSL workflow `[ ]` bot canonical chat
 
     **Features:** `[ ]` clarification `[ ]` continuity `[ ]` project (create/import/pre‑load) `[ ]` export (md/json/pdf/html) `[ ]` history `[ ]` PDF `[ ]` offline🟡 `[ ]` MCP🟡 `[ ]` memory/profile
 
-    **GUI:** `[ ]` Maestro cockpit `[ ]` Dashboard `[ ]` History `[ ]` Config `[ ]` Analytics
+    **GUI:** `[ ]` Maestro cockpit (multi-sesión) `[ ]` Dashboard `[ ]` History `[ ]` Editor `[ ]` Config `[ ]` Analytics `[ ]` Memoria `[ ]` Bots
 
     **Security:** `[ ]` undercover `[ ]` bash sanitization `[ ]` sandbox `[ ]` rate limiter🟡 `[ ]` circuit breaker🟡
 
@@ -58,17 +58,17 @@
 
 === ":flag_es: Matriz de cobertura (checklist rápido)"
 
-    **Tools (12):** `[ ]` file_manager `[ ]` bash_manager `[ ]` git_manager `[ ]` test_runner `[ ]` lsp_manager `[ ]` code_exec `[ ]` diff_editor `[ ]` web_search🟡 `[ ]` web_fetch `[ ]` code_search `[ ]` pdf_read `[ ]` ask_clarification
+    **Tools (24):** `[ ]` file_manager `[ ]` bash_manager `[ ]` git_manager `[ ]` test_runner `[ ]` lsp_manager `[ ]` code_exec `[ ]` diff_editor `[ ]` file_view `[ ]` web_search🟡 `[ ]` web_fetch `[ ]` code_search `[ ]` pdf_read `[ ]` vision_analyze `[ ]` memory_inspector `[ ]` project_docs `[ ]` load_skill `[ ]` goal_create `[ ]` goal_get `[ ]` goal_update `[ ]` goal_round `[ ]` todo_write `[ ]` todo_get `[ ]` plan_mode `[ ]` exit_plan_mode · ask_clarification (intercepción)
 
     **Agentes (5):** `[ ]` developer `[ ]` analista `[ ]` architect `[ ]` conversacional `[ ]` moderador
 
-    **Workflows (4):** `[ ]` development `[ ]` coordinated `[ ]` collaborative `[ ]` tdd
+    **Workflows (9 presets DSL):** `[ ]` development `[ ]` coordinated `[ ]` collaborative `[ ]` tdd `[ ]` bdd `[ ]` sdd `[ ]` edd `[ ]` domain_tdd `[ ]` reflexion
 
-    **Rutas (4):** `[ ]` tool directa `[ ]` conversación simple `[ ]` orquestación completa `[ ]` TDD
+    **Rutas (3):** `[ ]` tool directa `[ ]` workflow DSL `[ ]` chat canónico de bot
 
     **Features:** `[ ]` clarification `[ ]` continuidad `[ ]` proyecto (crear/importar/pre‑cargar) `[ ]` export (md/json/pdf/html) `[ ]` history `[ ]` PDF `[ ]` offline🟡 `[ ]` MCP🟡 `[ ]` memoria/perfil
 
-    **GUI:** `[ ]` cockpit Maestro `[ ]` Dashboard `[ ]` History `[ ]` Config `[ ]` Analytics
+    **GUI:** `[ ]` cockpit Maestro (multi-sesión) `[ ]` Dashboard `[ ]` History `[ ]` Editor `[ ]` Config `[ ]` Analytics `[ ]` Memoria `[ ]` Bots
 
     **Seguridad:** `[ ]` undercover `[ ]` bash sanitization `[ ]` sandbox `[ ]` rate limiter🟡 `[ ]` circuit breaker🟡
 
@@ -129,7 +129,7 @@
     ```bash
     poetry run python -c "import asyncio; from core.health import run_health_check; r = asyncio.run(run_health_check()); print(r.format())"
     ```
-    > Expected: rows for **Database, LLM, Redis, Memory Dir, Templates, Workspace** (Redis may show DEGRADED if unavailable; everything else OK).
+    > Expected: rows for **Database, LLM, Memory Dir, Templates, Workspace, Embeddings** (all should report OK when PostgreSQL is up; Embeddings may show a neutral "lazy" status until first use).
 
     **Login:** the GUI opens a `LoginDialog`. Use the configured password (`PASSWORD_HASH`) or, in dev without a hash, follow the dialog instructions.
 
@@ -138,7 +138,7 @@
     ```bash
     poetry run python -c "import asyncio; from core.health import run_health_check; r = asyncio.run(run_health_check()); print(r.format())"
     ```
-    > Esperado: filas **Database, LLM, Redis, Memory Dir, Templates, Workspace** (Redis puede salir DEGRADED si no hay Redis; el resto OK).
+    > Esperado: filas **Database, LLM, Memory Dir, Templates, Workspace, Embeddings** (todo OK con PostgreSQL levantado; Embeddings puede mostrar un estado neutro "lazy" hasta el primer uso).
 
     **Login:** la GUI abre un `LoginDialog`. Usa la contraseña configurada (`PASSWORD_HASH`) o, en dev sin hash, sigue las instrucciones del diálogo.
 
@@ -167,16 +167,18 @@
 | ID | Objective / Objetivo | Steps / Command / Pasos / Comando | Expected / Esperado |
 |----|----------------------|-----------------------------------|---------------------|
 | S0.1 | System health / Salud del sistema | Run the CLI health check (above) / Ejecuta el health check CLI (arriba) | 6 rows; Database/LLM/Workspace = OK / 6 filas; Database/LLM/Workspace = OK |
-| S0.2 | GUI startup / Arranque GUI | `poetry run python run.py` | Opens login → window with tabs Dashboard/Maestro/Historial/Integraciones/Config/Analytics / Abre login → ventana con tabs Dashboard/Maestro/Historial/Integraciones/Config/Analytics |
+| S0.2 | GUI startup / Arranque GUI | `poetry run python run.py` | Opens login → window with sidebar tabs Dashboard/Maestro/Historial/Editor/Config/Analytics/Memoria/Bots / Abre login → ventana con tabs Dashboard/Maestro/Historial/Editor/Config/Analytics/Memoria/Bots |
 | S0.3 | Online/Offline indicator / Indicador Online/Offline | Maestro top bar | Shows **Online** (green) if `OFFLINE_MODE=false` / Muestra **Online** (verde) si `OFFLINE_MODE=false` |
 | S0.4 | Toggle Offline / Toggle Offline | Click **Activate Offline** (top bar) / Pulsa **Activar Offline** (top bar) | Changes to **Offline** (amber) and button to *Deactivate Offline* / Cambia a **Offline** (ámbar) y el botón a *Desactivar Offline* |
 | S0.5 | Create project / Crear proyecto | ➕ New → `test_lab` / ➕ Nuevo → `test_lab` | Project combo = test_lab; Log confirms / Combo Proyecto = test_lab; Log confirma |
 
 ---
 
-## §1 — Tools (12)
+## §1 — Tools (24)
 
 > For tools with `project_root`, **select `test_lab`** first and test via **Chat → developer** (the agent receives `project_root` from context). **Direct commands** are included as quick smoke tests.
+>
+> The 12 cases below cover the classic toolset. The remaining registered tools are best exercised through the agent in Chat mode: `file_view` ("open app.py in the viewer"), `memory_inspector` ("list my stored memories"), `project_docs` ("search the project docs for conventions"), `vision_analyze` 🟡 ("describe the image chart.png" — needs the vision role), `load_skill` (implicit when a skill matches), the `goal_*`/`todo_*` family ("create a goal to ship v1" / "write a todo list for this refactor"), and `plan_mode`/`exit_plan_mode` ("plan the refactor before coding" with architect).
 
 ### T1.1 — file_manager 🟢
 - *Objective / Objetivo:* create/read/append/delete files / crear/leer/añadir/borrar archivos.
@@ -292,7 +294,7 @@
 
 ---
 
-## §3 — Workflows (5)
+## §3 — Workflows (9 presets DSL)
 
 > Orchestrate **requires a selected project** (except `collaborative`). Observe the **Execution** panel (Progress, Subtasks ✅🔵❌⏳, Created Files) and the **Detail** tab (Agents / Diagram / Log / Bash).
 
@@ -310,7 +312,7 @@
   ```
   Create a user REST API with: 1) model + schema, 2) CRUD endpoints, 3) tests. Do it by phases.
   ```
-- *Expected / Esperado:* decomposition **by phases** (design/implement/verify) or DAG; parallel execution; **Diagram** tab shows per-node status; blackboard shares context across phases. / descomposición **por fases** (design/implement/verify) o DAG; ejecución en paralelo; tab **Diagrama** muestra el estado por nodo; blackboard comparte contexto entre fases.
+- *Expected / Esperado:* decompose → subtasks executed in a **dynamic parallel loop** (`loop.parallel`, up to 5 concurrent via `parallel_max: 5`); the **Diagram** tab tracks per-subtask status; results are verified and aggregated at the end. / descomposición → subtareas ejecutadas en un **loop paralelo dinámico** (`loop.parallel`, hasta 5 concurrentes con `parallel_max: 5`); el tab **Diagrama** sigue el estado por subtarea; al final se verifica y agrega.
 
 ### W3.3 — collaborative 🟢 (no project required / no requiere proyecto)
 - **Steps / Pasos:** Dashboard → **collaborative** card.
@@ -320,24 +322,37 @@
   ```
 - *Expected / Esperado:* panel debate (3 rounds) among agents + **moderador** synthesizing consensus. Per-agent responses in **Agents** tab. / panel debate (3 rondas) entre agentes + **moderador** que sintetiza consenso. Respuestas por agente en tab **Agentes**.
 
-### W3.4 — tdd 🟢 (environment-based activation / activación por entorno)
-- **Steps / Pasos:** in `.env` set `DEFAULT_WORKFLOW=tdd`, restart GUI; project `test_lab`. *(No TDD card: activates when the active workflow is `tdd`.)*
+### W3.4 — tdd 🟢
+- **Steps / Pasos:** Dashboard → **tdd** card (enters Maestro/Orchestrate). Project `test_lab`.
 - **Prompt:**
   ```
   Implement an is_prime(n) function with TDD: first the tests, then the implementation until they pass.
   ```
-- *Expected / Esperado:* cycle writes tests → runs → fixes → repeats (max iterations). **TDD Loop** status in Execution. / ciclo escribe tests → ejecuta → corrige → repite (máx. iteraciones). Estado **TDD Loop** en Ejecución.
+- *Expected / Esperado:* loop (max 5 iterations) writes tests → runs them via `test_runner` → fixes → repeats until **all tests pass** (deterministic exit: parsed pytest counts, not LLM judgment). Status **Iteración N/5** in Ejecución. / bucle (máx. 5 iteraciones) escribe tests → los ejecuta con `test_runner` → corrige → repite hasta que **todos pasen** (salida determinista: conteos parseados de pytest, no juicio del LLM). Estado **Iteración N/5** en Ejecución.
+
+### W3.5 — bdd / sdd / edd / domain_tdd / reflexion 🟢 (same mechanics / misma mecánica)
+- **Steps / Pasos:** Dashboard → preset card. Project `test_lab` (all five require it).
+- **Prompts (one per preset):**
+  ```
+  bdd:        As a user I want to reset my password with a token that expires in 1h.
+  sdd:        Build a CSV importer with column validation and a dry-run mode.
+  edd:        Implement a rate limiter with at least 5 passing test cases.
+  domain_tdd: Model a library loan system with reservations and fines.
+  reflexion:  Write a function that merges two sorted lists, and polish it.
+  ```
+- *Expected / Esperado:* each preset runs its declared steps (e.g. bdd: Gherkin stories → failing test per story → minimal implementation → green loop; reflexion: generator → critic → loop until "APROBADO" or 3 iterations). Human **gates** pause the run with a clarifying question; answering resumes it. / cada preset corre sus pasos declarados (p.ej. bdd: historias Gherkin → test fallido por historia → implementación mínima → bucle a verde; reflexion: generador → crítico → bucle hasta "APROBADO" o 3 iteraciones). Los **gates** humanos pausan la ejecución con una pregunta; al responder, se reanuda.
 
 ---
 
 ## §4 — Execution Routes / Rutas de ejecución
 
+`run_full_workflow` dispatches to exactly three routes / `run_full_workflow` despacha exactamente a tres rutas:
+
 | ID | Route / Ruta | Trigger / Disparador | Expected / Esperado |
 |----|-------------|---------------------|---------------------|
-| R4.1 | Direct tool / Tool directa | `file_manager: read, path=app.py` (with `test_lab`) | Executes the tool without orchestration; "Completed (direct tool)". / Ejecuta el tool sin orquestación; “Completado (tool directa)”. |
-| R4.2 | Simple conversation / Conversación simple | **Chat** mode → `Hi, who are you?` | Direct response, no subtasks (TaskAnalyzer → no orchestration). / Respuesta directa, sin subtareas (TaskAnalyzer → no orquesta). |
-| R4.3 | Full orchestration / Orquestación completa | **Orchestrate** mode → creation task (W3.1) | Decompose→route→execute→aggregate. / Decompose→route→execute→aggregate. |
-| R4.4 | TDD / TDD | W3.4 | TDD loop. / Bucle TDD. |
+| R4.1 | Direct tool / Tool directa | `file_manager: read, path=app.py` (with `test_lab`) | Executes the tool without orchestration; "Completado (tool directa)". / Ejecuta el tool sin orquestación; “Completado (tool directa)”. |
+| R4.2 | DSL workflow / Workflow DSL | **Orchestrate** mode → any non-command task (W3.1) | The active preset compiles → validates → the engine runs its steps (decompose → execute → aggregate). / El preset activo compila → valida → el motor ejecuta sus pasos (descomponer → ejecutar → agregar). |
+| R4.3 | Bot canonical chat / Chat canónico de bot | **Bots** tab → open a bot's chat → send a message | The bot answers from its eternal conversation (`bots_runner`), with its own identity/tools — no workflow templates involved. / El bot responde desde su conversación eterna (`bots_runner`), con su identidad/tools — sin plantillas de workflow. |
 
 ---
 
@@ -377,9 +392,9 @@
 - *Expected / Esperado:* responds using the local model; **Offline** indicator. / responde usando el modelo local; indicador **Offline**.
 
 ### F5.8 — MCP server 🟡
-- In another terminal: `poetry run morphix-mcp`
+- In another terminal: `poetry run python -m core.mcp.server`
 - Connect an MCP client (or send a `tools/list` via stdio JSON‑RPC).
-- *Expected / Esperado:* exposes **11** function‑calling tools (from `TOOL_DEFINITIONS`; `ask_clarification` is not exposed via MCP). / expone **11** tools function‑calling (de `TOOL_DEFINITIONS`; `ask_clarification` no se expone por MCP).
+- *Expected / Esperado:* exposes the **24** function‑calling tools (from `TOOL_DEFINITIONS`; `ask_clarification` is not exposed via MCP). / expone las **24** tools function‑calling (de `TOOL_DEFINITIONS`; `ask_clarification` no se expone por MCP).
 
 ### F5.9 — Memory / Profile (autoDream) 🟢
 - **Chat → conversacional:** `Remember that my favorite language is Rust and I work in GMT-3 timezone.`
@@ -421,23 +436,23 @@
 poetry run ruff check .                                   # lint  → 0 issues
 poetry run black --check .                                # format → no changes
 poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/   # types → 0 errors
-poetry run pytest                                         # suite  → 675 pass / 1 flake*
+poetry run pytest                                         # suite → ~2,000 pass (1,937 test functions in 219 modules)
 poetry run pre-commit run --all-files                     # all hooks
 poetry run alembic upgrade head                           # migrations
 ```
 
 === ":flag_gb:"
 
-    \* **Known environmental flake:** `tests/test_workflow_orchestrator.py::test_development_route` may give `OSError: [Errno 22]` only under the full suite (pytest‑asyncio epoll fd churn). Passes in isolation; **not a product bug**:
+    The PostgreSQL e2e tests (`*_pg`) only run when `DATABASE_URL` is exported — pytest does **not** load `.env`:
     ```bash
-    poetry run pytest tests/test_workflow_orchestrator.py::test_development_route   # should pass
+    export DATABASE_URL=$(grep '^DATABASE_URL=' .env | cut -d= -f2-)
     ```
 
 === ":flag_es:"
 
-    \* **Flake ambiental conocido:** `tests/test_workflow_orchestrator.py::test_development_route` puede dar `OSError: [Errno 22]` solo bajo la suite completa (churn de epoll fd de pytest‑asyncio). Pasa en aislamiento; **no es un bug de producto**:
+    Los tests e2e de PostgreSQL (`*_pg`) solo corren si `DATABASE_URL` está exportado — pytest **no** carga `.env`:
     ```bash
-    poetry run pytest tests/test_workflow_orchestrator.py::test_development_route   # debe pasar
+    export DATABASE_URL=$(grep '^DATABASE_URL=' .env | cut -d= -f2-)
     ```
 
 ---
@@ -556,8 +571,9 @@ Caro,41,Quito
 | Workflows | W3.2 coordinated | ☐ | ☐ | |
 | Workflows | W3.3 collaborative | ☐ | ☐ | |
 | Workflows | W3.4 tdd | ☐ | ☐ | |
+| Workflows | W3.5 bdd/sdd/edd/domain_tdd/reflexion | ☐ | ☐ | |
 
-| Routes / Rutas | R4.1–R4.4 | ☐ | ☐ | |
+| Routes / Rutas | R4.1–R4.3 | ☐ | ☐ | |
 | Features | F5.1–F5.9 | ☐ | ☐ | |
 | GUI | G6.1–G6.8 | ☐ | ☐ | |
 | Security / Seguridad | S7.1–S7.5 | ☐ | ☐ | |

@@ -20,11 +20,10 @@ Create a REST API with FastAPI for a task management system. Include:
 **Agent:** developer (auto-selected)
 
 **Expected behavior:**
-1. TaskAnalyzer classifies as `ejecutor`, medium complexity
-2. Decomposer creates 4-5 subtasks: project setup, models, endpoints, validation, tests
-3. Developer creates `main.py`, `models.py`, `schemas.py`, `tests/test_api.py`
-4. Global verification runs LSP diagnostics
-5. Aggregator provides a summary of all created files
+1. The development preset decomposes the task into 4-5 subtasks: project setup, models, endpoints, validation, tests
+2. Developer creates `main.py`, `models.py`, `schemas.py`, `tests/test_api.py`
+3. Each subtask runs sequentially with retry and timeout protection
+4. Aggregator summarizes all created files
 
 **Tips:**
 - If you have a specific database URL, mention it in the prompt
@@ -178,7 +177,7 @@ Generate a description of the system architecture for an e-commerce platform wit
 - Next.js frontend (SSR + client-side)
 - FastAPI backend (REST + WebSocket for real-time inventory)
 - PostgreSQL for orders and users
-- Redis for cart sessions and rate limiting
+- An in-memory cache for cart sessions and rate limiting
 - RabbitMQ for async order processing
 - S3 for product images
 
@@ -399,10 +398,9 @@ Build a URL shortener service with TDD. Requirements:
 **Agent:** developer
 
 **Expected behavior:**
-1. Agent detects no test files → green-field mode
-2. Writes `test_shortener.py` with test cases for all requirements
-3. Writes `shortener.py` implementing encode/decode with hashlib
-4. Runs tests → all pass in iteration 1 (or 2 with fixes)
+1. Iteration 1: the developer agent writes `test_shortener.py` with test cases for all requirements, then `shortener.py` implementing encode/decode with hashlib
+2. The engine runs `test_runner` on the project after each iteration
+3. The loop ends as soon as all tests pass (deterministic check, max 5 iterations)
 
 **Tips:**
 - TDD works best when requirements are clear and testable
@@ -427,12 +425,11 @@ Build a microservice for user notifications with these components:
 **Agent:** developer + architect + analista
 
 **Expected behavior:**
-- Phase 1 (design): Architect designs the provider abstraction, queue architecture, and API structure
-- Phase 2 (implement): Developer creates models, providers (parallel), API, and retry logic
-- Phase 3 (verify): Analista reviews rate limiting implementation and tests
-- Blackboard shares model definitions between provider and API subtasks
+- The coordinated preset decomposes the request into subtasks and runs them in a parallel loop (up to 5 concurrent)
+- Design-oriented subtasks land first (provider abstraction, queue architecture, API structure)
+- Independent components (models, providers, endpoints, retry logic) are implemented concurrently
+- Results are verified and aggregated at the end
 
 **Tips:**
-- Coordinated shines when components have clear separation
-- Mention "factory pattern" or specific design patterns to guide the architect
-- The blackboard prevents duplicate model definitions across subtasks
+- Coordinated shines when components have clear separation and can be built independently
+- Mention "factory pattern" or specific design patterns to guide the implementation

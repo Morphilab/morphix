@@ -29,8 +29,8 @@ See [Contributing](contributing.md) for full setup instructions.
 - `core/` — Business logic, no UI dependencies. Database, config, memory, paths.
 - `llm/` — LLM abstraction: controller, provider (OpenAI/Ollama), parser, prompts.
 - `agents/` — Agent system: registry, loader, profiles, base execution.
-- `tools/` — Tool system: specs, registry, orchestrator, wrapper, loader + 11 tool implementations.
-- `orchestration/` — Workflow orchestration: context, events, loop, router, workflows.
+- `tools/` — Tool system: specs, registry, orchestrator, wrapper, loader + 24 registered tools.
+- `orchestration/` — Workflow orchestration: DSL engine (`dsl/`), context, loop, decomposer, aggregator, bots dispatch.
 - `desktop/` — PySide6 GUI + `desktop/services/` for GUI business logic.
 
 ### Workspaces = PostgreSQL schemas
@@ -52,6 +52,6 @@ Run the full check suite before submitting:
 ```bash
 poetry run ruff check .
 poetry run black --check .
-poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/
+poetry run mypy core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/
 poetry run pytest
 ```

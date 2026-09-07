@@ -11,22 +11,22 @@ graph TD
     C -->|blocked| Z[Security Rejection]
     C -->|allowed| D{Direct tool cmd?}
     D -->|yes| E[Direct Tool Route]
-    D -->|no| F[_dispatch_route]
-    F --> G[TaskAnalyzer]
-    G --> H{requires_full_orchestration?}
-    H -->|false| I[Simple Conversation]
-    H -->|true| J[Decomposer]
-    J --> K[AgentRouter]
-    K --> L[Agent Loop - ReAct]
-    L --> M[ToolOrchestrator]
-    M --> N[Tool Execution]
-    N --> L
-    L --> O[Supervisor]
-    O --> P[ResultAggregator]
-    P --> Q[Finalizer]
-    Q --> R[User Response]
-    I --> R
-    E --> R
+    D -->|no| F{Bot-owned conversation?}
+    F -->|yes| G[bots_runner - canonical turn]
+    F -->|no| H{Doc has version: 1?}
+    H -->|no| X[Actionable rejection]
+    H -->|yes| I[compile + validate]
+    I --> J[WorkflowEngine + ProductionRuntime]
+    J --> K[Agent Loop - ReAct]
+    K --> L[ToolOrchestrator]
+    L --> M[Tool Execution]
+    M --> K
+    J --> N[ResultAggregator]
+    N --> O[Finalizer]
+    O --> P[User Response]
+    E --> P
+    G --> P
+    X --> P
 ```
 
 ### 1. Entry: `run_full_workflow()`
@@ -58,56 +58,17 @@ if direct_tool:
 
 The tool name is validated against the registry to prevent false positives on natural language (e.g., `navega y analiza : URL` won't match because `navega` is not a registered tool).
 
-### 4. Task Analysis
+### 4. Route Dispatch (DSL)
 
-`TaskAnalyzer.analyze_task()` sends a structured prompt to the LLM (role=`fast`, temperature=0.0) asking it to classify the task:
-
-```json
-{
-    "primary_type": "simple_conversation|creativo|analista|ejecutor|...",
-    "complexity": "simple|medium|complex",
-    "is_direct_code_execution": true/false,
-    "requires_full_orchestration": true/false
-}
-```
-
-Results are cached in an LRU cache (max 500 entries, TTL 300s) to avoid redundant LLM calls for repeated queries.
-
-The `is_follow_up` flag injects context about the conversation being a continuation, which biases the analyzer toward lower complexity and modification-oriented classification:
-
-```python
-# orchestration/analyzer.py:29-35
-if is_follow_up:
-    follow_context = (
-        "\n⚠️ CONTEXTO: Esta es una conversación DE CONTINUACIÓN..."
-        "El usuario quiere MODIFICAR, EXTENDER o CORREGIR código ya existente."
-    )
-```
+`_dispatch_route()` resolves the active workflow document with `load_workflow_document()` (workspace override → product templates → global). A document with `version: 1` enters the DSL path; anything else (missing doc or legacy format) is rejected with an actionable error pointing at `python -m orchestration.dsl.cli new`. If the conversation is owned by a bot, the turn is dispatched via `bots_dispatch.dispatch_canonical_turn()` before any template is loaded.
 
 ### 5. Decomposition
 
-For complex tasks, `decompose_task()` (or `decompose_task_with_phases()` for coordinated workflows) breaks the task into 3–5 subtasks. Each subtask has a description and optionally a recommended agent type.
+DSL presets decompose explicitly with a `decompose` step (`strategy: flat | dag`) executed by the engine through `ProductionRuntime.decompose()`, which calls `decompose_task()` / `decompose_task_with_phases()` from `orchestration/decomposer.py`. For complex tasks this breaks the query into 2–5 subtasks; the resulting list lands in a state variable that a `loop over` iterates.
 
-### 6. Agent Routing + Supervision
+### 6. Agent Loop (ReAct)
 
-```python
-# orchestration/workflows/orchestrator.py:818-836
-for task in subtasks_list:
-    best_agent = await agent_router.select_best_agent(
-        desc, primary_type=primary_type, allowed_agents=allowed_agents
-    )
-    router_selections.append(best_agent)
-
-corrected_agents = await WorkflowSupervisor.review_and_correct(
-    task_analysis, router_selections, subtasks_list, allowed_agents
-)
-```
-
-The `AgentRouter` maps subtasks to the best agent. The `WorkflowSupervisor` then reviews and corrects these assignments, acting as a sanity check before execution.
-
-### 7. Agent Loop (ReAct)
-
-Each subtask executes via `execute_subtask_safe()` → `execute_agent_loop()`. The loop:
+Each agent step runs via `ProductionRuntime.call_agent()` → `execute_agent_loop()`. The loop:
 
 1. Builds the system prompt with tool definitions and instructions
 2. Calls the LLM (streaming preferred, non-streaming fallback)
@@ -129,9 +90,9 @@ while iteration < config.max_agent_iterations:
     iteration += 1
 ```
 
-### 8. Aggregation + Finalization
+### 7. Aggregation + Finalization
 
-`ResultAggregator.aggregate_results()` synthesizes all subtask results into a coherent response. `finalize_workflow()` persists the conversation to the database, generates a scorecard, and optionally auto-commits changes via Git.
+When the DSL document ends with an `aggregate` step, `ResultAggregator.aggregate_results()` synthesizes all subtask results into a coherent response (deterministic per-subtask success/partial/failure evaluation, conformance checks, disk reads of written files). `finalize_workflow()` persists the conversation to the database and generates a scorecard. DSL `commit_after` phases trigger git commits only after declared phases with completed subtasks and files written.
 
 ## Context Management
 

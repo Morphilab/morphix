@@ -8,10 +8,10 @@ Agents are loaded from YAML templates in `templates/agents/` (copied to `workspa
 
 - **System prompt**: Instructions, personality, constraints
 - **Tools**: Allowed tool list
-- **Keywords**: Used for routing (agent selection based on task description)
+- **Keywords**: Descriptive tags in the profile (informational — agents are no longer auto-assigned by keyword routing)
 - **Model role**: Which LLM role to use (`agent`, `reasoning`, `fast`)
 - **Temperature**: Response randomness (0.0 = deterministic, 1.0 = creative)
-- **Priority**: Routing priority (higher = preferred for ambiguous tasks)
+- **Priority**: Ordering hint from the profile (informational)
 
 ---
 
@@ -109,7 +109,7 @@ The **Moderador** agent is the neutral arbiter for the Collaborative workflow. I
 ### Constraints
 
 - No tools — pure reasoning agent
-- Lowest priority — never selected by the AgentRouter for code tasks
+- Never auto-selected — it is the synthesizer of the **collaborative** workflow
 
 ### Example Prompt
 
@@ -185,20 +185,18 @@ Provide component responsibilities, data flow, and an implementation plan.
 
 ---
 
-## Agent Routing
+## Which Agent Runs What
 
-When a task is decomposed, the `AgentRouter` selects the best agent for each subtask based on:
+There is no automatic agent routing. The agent for each step is **declared in the workflow YAML** (`agent:` field per step), constrained by the preset's `agents.allowed` list:
 
-1. **Keyword matching** — Each agent has a `keywords` list in its profile. The router matches these against the subtask description.
-2. **Priority** — Higher-priority agents are preferred when multiple match.
+| Preset | Agents allowed |
+|--------|----------------|
+| development, tdd, bdd, sdd, edd, reflexion | developer, analista |
+| domain_tdd | developer, analista, architect |
+| coordinated | developer, analista, moderador, architect |
+| collaborative | developer, analista, moderador |
 
-| Agent | Priority | Key keywords |
-|-------|:---:|------|
-| Developer | 70 | code, implement, create, build, deploy, refactor, fix, test, debug, api, endpoint |
-| Architect | 58 | architecture, design, structure, blueprint, plan, components, interfaces, patterns |
-| Analista | 55 | analyze, review, evaluate, architecture, risks, security, performance, diagnose |
-| Conversacional | 10 | hello, help, thanks, small talk, what can you do |
-| Moderador | 1 | consensus, moderate, debate, discuss (only used in Collaborative) |
+In **Chat mode** you pick the agent directly from the Maestro combo ("🤖 Auto" falls back to `conversacional`).
 
 !!! tip "Force an agent"
-    You can override auto-routing by selecting a specific agent in the Maestro agent dropdown. In Orchestrate mode, only agents allowed by the active workflow are shown. In Chat mode, all agents are available.
+    In Chat mode, all agents are available from the combo. In Orchestrate mode, only agents allowed by the active workflow are shown.

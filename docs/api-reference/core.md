@@ -18,7 +18,6 @@
 ::: core.git_operations
 ::: core.hooks_registry
 ::: core.hook_loader
-::: core.lru_cache
 ::: core.metrics
 ::: core.models
 ::: core.utils

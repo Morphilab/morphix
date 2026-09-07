@@ -172,16 +172,20 @@ def parse_json_from_llm(text: str, default: Any = None) → dict:
 
 This robust parser handles the reality that LLMs often wrap JSON in markdown fences, add explanatory text before/after, or include trailing commas. Used by `MemoryManager._parse_critique_response()`, the decomposer, and other LLM-calling components.
 
+### Tool Calls (`tool_calls.py`)
+
+Helpers for the tool-calling path: provider detection from raw tool calls, tool-call validity checks (`has_tool_association`, `is_valid_tool_call`), debug logging of raw arguments, and `model_supports_tool_calling()` (used by the agent loop to decide between native function-calling and text-based fallbacks).
+
 ### Prompts (`prompts.py`)
 
 > Centralized prompt templates for agents and workflows.
 
 ```python
-DECOMPOSE_TASK_PROMPT               # Standard task decomposition (3-5 subtasks)
-DECOMPOSE_TASK_WITH_PHASES_PROMPT   # Phase-organized decomposition for coordinated workflows
-ANALYZE_TASK_PROMPT                 # Task analysis for routing decisions
-SUPERVISE_PROMPT                    # Supervisor review of agent outputs
-AGGREGATE_PROMPT                    # Final aggregation of subtask results
+DECOMPOSE_TASK_PROMPT               # Standard task decomposition (2-5 subtasks)
+DECOMPOSE_TASK_WITH_PHASES_PROMPT   # Phase-organized decomposition
+ANTI_FRUSTRATION_PROMPT             # Calming prompt injected on frustration detection
+PLAN_VERIFY_PROMPT                  # Plan verification pass
+VERIFY_GLOBAL_PROMPT                # Global verification of workflow results
 ```
 
 Prompts use `{placeholder}` variables for runtime substitution (`{query}`, `{project_context}`, etc.). The prompt system ensures consistency across all LLM interactions — agent execution, workflow orchestration, and memory critique all use the same prompt source.
