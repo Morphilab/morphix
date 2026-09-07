@@ -1,0 +1,43 @@
+# edd.yaml — Eval-Driven Development (preset DSL v1)
+# Define casos de evaluación (como tests ejecutables) → loop con salida por
+# MÉTRICA numérica (until.metric parsea counts estructurados de test_runner).
+# Eval-suites externas se enchufan vía plugin/metric sobre la misma primitiva.
+version: 1
+name: edd
+description: "Eval-Driven Development — métricas numéricas gobiernan el loop"
+agents:
+  allowed: ["developer", "analista"]
+tools:
+  allowed: ["file_manager", "diff_editor", "test_runner", "git_manager"]
+project:
+  required: true
+skills: true
+steps:
+  - id: definir_evals
+    kind: agent
+    agent: analista
+    goal: "Define los casos de evaluación para: $query — escríbelos como tests ejecutables (≥5 casos)."
+    outputs: ["evals"]
+  - id: ciclo_eval
+    kind: loop
+    max_iter: 10
+    until:
+      type: metric
+      tool: test_runner
+      metric: passed_count
+      op: ">="
+      value: 5
+      args:
+        file_path: "."
+    body:
+      - id: implementar
+        kind: agent
+        agent: developer
+        goal: >-
+          Iteración $iter/$max_iter. Implementa/mejora la solución para pasar
+          los casos de evaluación: $evals. Resultado de la iteración previa:
+          $last_output — continúa desde ahí, no repitas trabajo.
+        retry_max: 2
+  - id: agregar
+    kind: aggregate
+    strategy: result

@@ -1,20 +1,32 @@
+# development.yaml — preset DSL del motor (v1)
+# Paridad con el orquestador legacy: decompose flat → secuencia con retry →
+# agregación determinista. Los orquestadores legacy quedan como referencia.
+version: 1
 name: development
-type: development
 description: "General software development workflow — analysis, implementation, review"
-decomposition: flat
-execution: sequential
-max_parallel: 1
-retry_on_failure: true
-retry_max: 2
 agents:
   allowed: ["developer", "analista"]
-stages:
-  task_analysis: true
-  task_decomposition: true
-  supervisor_review: true
-  result_aggregation: true
-  finalization: true
 tools:
-  allowed: ["file_manager", "git_manager", "bash_manager", "lsp_manager", "code_exec", "test_runner", "diff_editor", "web_search", "web_fetch", "code_search"]
+  allowed: ["file_manager", "git_manager", "bash_manager", "lsp_manager", "code_exec", "test_runner", "diff_editor", "web_search", "web_fetch", "code_search", "memory_inspector", "file_view", "goal_create", "goal_get", "goal_update", "goal_round", "todo_write", "todo_get", "plan_mode", "exit_plan_mode", "project_docs"]
 project:
-  required: false
+  required: true
+skills: true
+steps:
+  - id: descomponer
+    kind: decompose
+    strategy: flat
+    output: subtasks
+  - id: ejecutar_subtareas
+    kind: loop
+    max_iter: 10
+    over: subtasks
+    body:
+      - id: subtarea
+        kind: agent
+        agent: developer
+        goal: "Ejecuta esta subtarea del proyecto ($query): $item"
+        retry_max: 2
+        timeout: 300
+  - id: agregar
+    kind: aggregate
+    strategy: confidence

@@ -1,0 +1,54 @@
+# bdd.yaml — Behavior-Driven Development / ATDD (preset DSL v1)
+# Historias Gherkin → test fallido por historia → implementación mínima →
+# loop con salida DETERMINISTA (counts de test_runner).
+version: 1
+name: bdd
+description: "BDD/ATDD — de historias Gherkin a tests verdes"
+agents:
+  allowed: ["developer", "analista"]
+tools:
+  allowed: ["file_manager", "diff_editor", "test_runner", "git_manager"]
+project:
+  required: true
+skills: true
+# Contrato I/O (para includes como subrutina — p.ej. desde _FULL_TEMPLATE)
+inputs: [query]
+outputs: [historias]
+steps:
+  - id: historias
+    kind: agent
+    agent: analista
+    goal: "Extrae historias de usuario con criterios Gherkin para: $query"
+    outputs: ["historias"]
+  - id: parse_historias
+    kind: plugin
+    plugin: text_to_list
+    params:
+      var: historias
+      out: historias_lista
+    outputs: ["historias_lista"]
+  - id: ciclo_bdd
+    kind: loop
+    max_iter: 10
+    over: historias_lista
+    body:
+      - id: test_fallido
+        kind: agent
+        agent: developer
+        goal: "Escribe un test FALLIDO que codifica la historia: $item"
+        retry_max: 1
+      - id: implementar
+        kind: agent
+        agent: developer
+        goal: "Implementa lo mínimo para pasar el test de: $item"
+        retry_max: 1
+      - id: tests
+        kind: tool
+        tool: test_runner
+        args:
+          file_path: "."
+        outputs:
+          pasan: tests_all_pass
+  - id: resumen
+    kind: aggregate
+    strategy: result

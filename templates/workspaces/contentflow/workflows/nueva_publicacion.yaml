@@ -1,0 +1,37 @@
+# nueva_publicacion.yaml — preset DSL del motor (v1, transcripción del pipeline legacy)
+version: 1
+name: nueva_publicacion
+description: "Redactar una publicación LinkedIn nueva con 2 variantes y auto-revisión"
+agents:
+  allowed: ["redactor"]
+tools:
+  allowed: ["file_manager", "code_search", "bash_manager", "web_fetch"]
+skills: false
+project:
+  required: true
+steps:
+  - id: redaccion_variantes
+    kind: agent
+    agent: redactor
+    retry_max: 2
+    goal: >-
+      Redacta 2 variantes estructuralmente distintas según §2 (hook <150
+      chars, 2-4 evidencias, anti-arrogancia) y guárdalas como
+      borradores/YYYY-MM-DD-slug.md (una sola entrega, dos variantes dentro).
+      Verifica toda cifra contra la rama pública con git show antes de usarla.
+  - id: autorevision
+    kind: agent
+    agent: redactor
+    gate: true
+    goal: >-
+      Checklist anti-fórmula vs publicadas/+ejemplos/, auto-revisión mecánica
+      §15a-e y test anti-arrogancia. Reporta hallazgos [Bloqueante|No
+      bloqueante][sección][razón] al final. NO publiques nada.
+  - id: ajustes_entrega
+    kind: agent
+    agent: redactor
+    when: if_blockers
+    retry_max: 2
+    goal: >-
+      Corrige los bloqueantes detectados y re-entrega las variantes limpias.
+      Un commit-por-iteración sugerido al final.

@@ -1,0 +1,36 @@
+# tdd.yaml — preset DSL del motor (v1)
+# Ciclo TDD autónomo: agente corrige/implementa → tests → repite hasta verde.
+# Salida del loop DETERMINISTA: counts parseados de test_runner.
+version: 1
+name: tdd
+description: "Test-Driven Development loop — tests, implement, iterate until green"
+agents:
+  allowed: ["developer", "analista"]
+tools:
+  allowed: ["file_manager", "diff_editor", "test_runner", "git_manager"]
+project:
+  required: true
+skills: true
+steps:
+  - id: ciclo
+    kind: loop
+    max_iter: 5
+    until:
+      type: tool
+      tool: test_runner
+      check: tests_all_pass
+      args:
+        file_path: "."
+    body:
+      - id: implementar
+        kind: agent
+        agent: developer
+        goal: >-
+          Ciclo TDD ($iter/$max_iter) para: $query. Resultado de la iteración
+          previa: $last_output. Continúa desde ahí — NO repitas trabajo ya
+          hecho ni re-crees archivos que ya existen.
+        retry_max: 1
+        timeout: 300
+  - id: resumen
+    kind: aggregate
+    strategy: result

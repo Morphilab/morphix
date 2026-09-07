@@ -1,53 +1,37 @@
-# coordinated.yaml — Multi-Agent Coordinator Workflow
-#
-# Uses the MultiAgentCoordinator to decompose tasks into a DAG,
-# execute independent subtasks in parallel with shared blackboard,
-# and aggregate results with confidence evaluation.
-#
-type: coordinated
-description: "Multi-agent coordinator with DAG execution and shared blackboard"
-decomposition: dag
-execution: parallel_levels
-max_parallel: 5
-max_agent_iterations: 10
-retry_on_failure: true
-retry_max: 2
-phases_enabled: true
-max_phases: 5
-default_phases:
-  - name: design
-    agents: [architect, analista]
-    description: "Design and architecture planning"
-  - name: implement
-    agents: [developer]
-    description: "Code implementation"
-  - name: verify
-    agents: [analista, developer]
-    description: "Testing and verification"
+# coordinated.yaml — preset DSL del motor (v1)
+# DECOMPOSE → loop.parallel dinámico → verificar → aggregate.
+version: 1
+name: coordinated
+description: "Multi-agent coordinator — decompose, execute per subtask, aggregate with confidence"
 agents:
-  allowed:
-    - developer
-    - analista
-    - moderador
-    - architect
+  allowed: ["developer", "analista", "moderador", "architect"]
 tools:
-  allowed:
-    - file_manager
-    - git_manager
-    - bash_manager
-    - lsp_manager
-    - code_exec
-    - test_runner
-    - code_search
-    - diff_editor
-    - web_fetch
-    - web_search
+  allowed: ["file_manager", "git_manager", "bash_manager", "lsp_manager", "code_exec", "test_runner", "code_search", "diff_editor", "file_view", "web_fetch", "web_search", "goal_create", "goal_get", "goal_update", "goal_round", "todo_write", "todo_get", "plan_mode", "exit_plan_mode", "project_docs"]
 project:
-  required: false
-stages:
-  task_analysis: true
-  task_decomposition: true
-  agent_assignment: true
-  dag_execution: true
-  confidence_aggregation: true
-  finalization: true
+  required: true
+skills: true
+steps:
+  - id: planificar
+    kind: decompose
+    strategy: flat
+    output: subtasks
+  - id: ejecutar
+    kind: loop
+    max_iter: 10
+    over: subtasks
+    parallel: true
+    parallel_max: 5
+    body:
+      - id: subtarea
+        kind: agent
+        agent: developer
+        goal: "Subtarea del plan multi-agente ($query): $item"
+        retry_max: 2
+        timeout: 300
+  - id: verificar
+    kind: agent
+    agent: analista
+    goal: "Verifica la ejecución completa de: $query"
+  - id: agregar
+    kind: aggregate
+    strategy: confidence

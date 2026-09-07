@@ -1,0 +1,56 @@
+# mejorar_cv.yaml — preset DSL del motor (v1, transcripción del pipeline legacy)
+version: 1
+name: mejorar_cv
+description: "Mejora el CV base (ES+EN) con revisión, verificación y promoción aprobada"
+agents:
+  allowed: ["asesor", "revisor", "verificador", "empaquetador"]
+tools:
+  allowed: ["file_manager", "code_search", "bash_manager"]
+skills: false
+project:
+  required: true
+steps:
+  - id: analisis
+    kind: agent
+    agent: asesor
+    retry_max: 2
+    goal: >-
+      Analiza el CV base (+ usuario/observaciones_cv.md si existe — entrada
+      prioritaria) y produce analisis_cv.md con fortalezas, huecos y plan de
+      mejora. Evidencia citada por afirmación.
+  - id: redaccion
+    kind: agent
+    agent: asesor
+    retry_max: 2
+    goal: >-
+      Redacta <nombre>_CV_mejorado.md (ES) y <nombre>_CV_mejorado_en.md (EN)
+      con paridad estructural entre idiomas. Sin inventar experiencia.
+  - id: revision
+    kind: agent
+    agent: revisor
+    gate: true
+    goal: >-
+      Doble lente sobre las versiones mejoradas ES+EN. Formato
+      [Bloqueante|No bloqueante][archivo][razón]. NO editas archivos.
+  - id: integracion
+    kind: agent
+    agent: asesor
+    when: if_blockers
+    retry_max: 2
+    goal: >-
+      Aplica bloqueantes primero; conserva paridad ES/EN tras cada cambio.
+  - id: verificacion
+    kind: agent
+    agent: verificador
+    goal: >-
+      5 gates + coherencia ES/EN sobre las versiones mejoradas. Escribe SOLO
+      el veredicto; registra discrepancias en hallazgos.md (H-<NN>).
+  - id: promocion
+    kind: checkpoint
+    question: "¿Apruebas la promoción del CV mejorado? (los originales se renombran a *_original.md)"
+  - id: ejecutar_promocion
+    kind: agent
+    agent: empaquetador
+    goal: >-
+      Solo si el usuario aprobó: git mv originales → *_original.md y mv
+      mejorados → canónicos, EXACTAMENTE según el spec §4.1. Sin commits.

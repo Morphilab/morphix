@@ -1,30 +1,29 @@
+# collaborative.yaml — preset DSL del motor (v1)
+# Debate en rondas: cada panelista ve la opinión previa (secuencia
+# determinista por ronda); el moderador sintetiza al final.
+version: 1
 name: collaborative
-type: collaborative
 description: "Multi-agent panel debate to reach consensus on complex decisions"
-decomposition: panel
-execution: parallel_rounds
-max_parallel: 2
-rounds: 3
-round_timeout: 300
-retry_on_failure: false
-retry_max: 0
-moderator: "moderador"
-panel:
-  - "developer"
-  - "analista"
 agents:
   allowed: ["developer", "analista", "moderador"]
 tools:
-  allowed:
-    - "file_manager"
-    - "code_search"
-    - "web_search"
-    - "web_fetch"
-    - "lsp_manager"
+  allowed: ["file_manager", "code_search", "web_search", "web_fetch", "lsp_manager"]
 project:
   required: false
-stages:
-  panel_discussion: true
-  moderator_synthesis: true
-  result_aggregation: true
-  finalization: true
+steps:
+  - id: rondas
+    kind: loop
+    max_iter: 3
+    body:
+      - id: opinion_developer
+        kind: agent
+        agent: developer
+        goal: "Debate (ronda sobre): $query. Opina considerando: $last_output"
+      - id: opinion_analista
+        kind: agent
+        agent: analista
+        goal: "Debate (respuesta): $query. Réplica a: $last_output"
+  - id: sintesis
+    kind: aggregate
+    strategy: moderator
+    agent: moderador

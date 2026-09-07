@@ -1,0 +1,56 @@
+# domain_tdd.yaml — Domain-Driven TDD / Scenario-Driven (preset DSL v1)
+# Modelo de dominio → escenarios → mini-ciclo TDD POR escenario (incluye
+# use del plugin text_to_list para convertir texto del agente en lista).
+version: 1
+name: domain_tdd
+description: "Domain-Driven TDD — del modelo de dominio a tests por escenario"
+agents:
+  allowed: ["developer", "analista", "architect"]
+tools:
+  allowed: ["file_manager", "diff_editor", "test_runner", "git_manager", "code_search"]
+project:
+  required: true
+skills: true
+steps:
+  - id: modelo
+    kind: agent
+    agent: architect
+    goal: "Modela el dominio (entidades, invariantes, reglas) para: $query"
+    outputs: ["modelo"]
+  - id: escenarios_raw
+    kind: agent
+    agent: analista
+    goal: "Lista los escenarios de dominio críticos de: $query (uno por línea, con regla asociada del modelo: $modelo)"
+    outputs: ["escenarios_raw"]
+  - id: parse_escenarios
+    kind: plugin
+    plugin: text_to_list
+    params:
+      var: escenarios_raw
+      out: escenarios
+    outputs: ["escenarios"]
+  - id: ciclo_escenario
+    kind: loop
+    max_iter: 10
+    over: escenarios
+    body:
+      - id: test_escenario
+        kind: agent
+        agent: developer
+        goal: "Test fallido para el escenario: $item (regla del modelo: $modelo)"
+        retry_max: 1
+      - id: implementar_escenario
+        kind: agent
+        agent: developer
+        goal: "Implementa el comportamiento del escenario: $item"
+        retry_max: 1
+      - id: tests
+        kind: tool
+        tool: test_runner
+        args:
+          file_path: "."
+        outputs:
+          pasan: tests_all_pass
+  - id: agregar
+    kind: aggregate
+    strategy: confidence

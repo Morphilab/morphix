@@ -1,0 +1,58 @@
+# sdd.yaml — Spec-Driven Development / Spec-First (preset DSL v1)
+# Spec redactada → gate de revisión (if_blockers) → plan → implementación
+# → trazabilidad spec↔entregado con gate final.
+version: 1
+name: sdd
+description: "Spec-Driven Development — spec primero, implementación trazada"
+agents:
+  allowed: ["developer", "analista"]
+tools:
+  allowed: ["file_manager", "git_manager", "bash_manager", "test_runner", "diff_editor", "code_search"]
+project:
+  required: true
+skills: true
+steps:
+  - id: redactar_spec
+    kind: agent
+    agent: analista
+    goal: "Redacta una spec técnica detallada (alcance, contratos, criterios de aceptación) para: $query"
+    outputs: ["spec"]
+  - id: revisar_spec
+    kind: agent
+    agent: analista
+    gate: true
+    goal: "Revisa la spec contra la petición. Hallazgos [Bloqueante|No bloqueante][razón]. NO edites."
+  - id: corregir_spec
+    kind: agent
+    agent: analista
+    when: if_blockers
+    goal: "Corrige los hallazgos [Bloqueante] de la spec conservando el resto."
+    retry_max: 1
+  - id: plan
+    kind: decompose
+    strategy: flat
+    output: subtasks
+  - id: implementar
+    kind: loop
+    max_iter: 10
+    over: subtasks
+    body:
+      - id: subtarea
+        kind: agent
+        agent: developer
+        goal: "Implementa según la spec ($spec): $item"
+        retry_max: 2
+  - id: trazabilidad
+    kind: agent
+    agent: analista
+    gate: true
+    goal: "Traza criterio por criterio de la spec contra lo entregado. [Bloqueante] por brecha."
+  - id: cerrar_brechas
+    kind: agent
+    agent: developer
+    when: if_blockers
+    goal: "Cierra las brechas [Bloqueante] detectadas en trazabilidad."
+    retry_max: 1
+  - id: agregar
+    kind: aggregate
+    strategy: result

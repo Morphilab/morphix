@@ -1,0 +1,52 @@
+# postulacion.yaml — preset DSL del motor (v1, transcripción del pipeline legacy)
+version: 1
+name: postulacion
+description: "Adaptar CV base a una vacante y generar paquete de postulación"
+agents:
+  allowed: ["asesor", "revisor", "verificador", "empaquetador"]
+tools:
+  allowed: ["file_manager", "code_search", "bash_manager"]
+skills: false
+project:
+  required: true
+steps:
+  - id: analisis_redaccion
+    kind: agent
+    agent: asesor
+    retry_max: 2
+    goal: >-
+      Analiza la vacante (+extras del usuario); define el plan; escribe SOLO
+      los artefactos del alcance en vacantes/<titulo>/ con evidencia citada
+      por cada afirmación (archivo+línea de CV base/perfil.yaml); respeta
+      contacto.no_exponer; reporta idioma_vacante al final de tu respuesta.
+  - id: revision
+    kind: agent
+    agent: revisor
+    gate: true
+    goal: >-
+      Doble lente (reclutador + técnica) sobre los artefactos generados.
+      Hallazgos en formato [Bloqueante|No bloqueante][archivo][razón] con
+      evidencia. NO editas archivos.
+  - id: integracion
+    kind: agent
+    agent: asesor
+    when: if_blockers
+    retry_max: 2
+    goal: >-
+      Aplica PRIMERO los hallazgos [Bloqueante], luego los no bloqueantes de
+      mayor prioridad. Conserva honestidad fáctica: nada que no esté
+      respaldado por CV base o perfil.yaml.
+  - id: verificacion
+    kind: agent
+    agent: verificador
+    goal: >-
+      Ejecuta los 5 gates sobre el alcance final y escribe SOLO
+      vacantes/<titulo>/veredicto_verificacion.md con evidencia comando+
+      resultado por ítem. Registra discrepancias en hallazgos.md como H-<NN>.
+  - id: pdf
+    kind: agent
+    agent: empaquetador
+    when: "query_contains:pdf"
+    goal: >-
+      Genera el PDF de la versión en idioma_vacante y verifica con pdfinfo
+      que tiene máximo 2 páginas. Comillas dobles en todas las rutas.
