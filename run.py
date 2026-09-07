@@ -20,16 +20,35 @@ from core.path_resolver import paths
 
 _LOG_FILE = paths.log_file()
 _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+# morphix.log redacta credenciales en cada línea (patrones de agents.audit,
+# compilados flag-al-import). audit.jsonl ya lo hacía por su cuenta.
+from agents.audit import RedactingFormatter
+
 logging.basicConfig(
     level=_LOG_LEVEL,
     filename=str(_LOG_FILE),
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     force=True,
     encoding="utf-8",
 )
+_root = logging.getLogger()
+for _h in _root.handlers:
+    _h.setFormatter(RedactingFormatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
 
 logger = logging.getLogger(__name__)
 logger.info("=== Morphix Desktop iniciado ===")
+
+# ── Higiene DAEMON_MODE ──
+# daemon_mode=true en desktop solo gobierna el heartbeat Kairos; las
+# aprobaciones dependen del callback de host de la GUI, no de este flag.
+# Un desktop con daemon en true es casi siempre residuo de configuración.
+import os as _os
+
+if _os.getenv("DAEMON_MODE", "").strip().lower() in ("1", "true", "yes", "on"):
+    logger.warning(
+        "⚠️ DAEMON_MODE=true en desktop: solo gobierna el heartbeat Kairos. "
+        "Las aprobaciones dependen de la GUI (callback de host), no de este flag. "
+        "Si no sabes qué es, elimina DAEMON_MODE de .env."
+    )
 
 # ── Carga temprana de tools + hooks ──
 from core.hook_loader import load_global_hooks
@@ -74,6 +93,14 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Morphix")
     app.setOrganizationName("MorphiLab")
+
+    # Aplica el theme Orbital a nivel de app (palette + QSS base global)
+    from core.config import settings
+
+    if settings.dark_mode:
+        from desktop.theme import ThemeManager
+
+        ThemeManager.apply_to_app(app)
 
     # ── Integrate asyncio event loop with Qt ──
     loop = asyncio.new_event_loop()

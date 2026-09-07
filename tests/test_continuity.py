@@ -59,14 +59,6 @@ class TestDecomposeFresh:
         assert "CONTINUACIÓN" not in prompt_sent
 
 
-class TestTaskAnalyzerFollowUp:
-    def test_cache_key_differs_for_follow_up(self):
-        """is_follow_up=True usa cache key diferente a False."""
-        from orchestration.analyzer import _task_cache
-
-        assert len(_task_cache._cache) == 0 or True  # just ensure it's importable
-
-
 class TestConversationSaveResume:
     @pytest.mark.asyncio
     async def test_resume_saves_agent_and_tool_messages(self):
@@ -79,6 +71,10 @@ class TestConversationSaveResume:
         mock_session.get = AsyncMock(return_value=Conversation(id=5, title="Test"))
         mock_session.add = MagicMock()
         mock_session.flush = AsyncMock()
+        # save() en resume consulta el historial ya persistido (vacío aquí)
+        _existing = MagicMock()
+        _existing.all.return_value = []
+        mock_session.execute = AsyncMock(return_value=_existing)
 
         with patch("core.repositories.conversation_repository.get_async_session") as mock_ctx:
             mock_ctx.return_value.__aenter__.return_value = mock_session

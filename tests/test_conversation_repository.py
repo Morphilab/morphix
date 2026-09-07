@@ -21,7 +21,10 @@ def mock_session():
     session = MagicMock()
     session.get = AsyncMock()
     session.add = MagicMock()
-    session.execute = AsyncMock()
+    # save() en resume hace SELECT (role, content) — devolver vacío por defecto
+    _empty = MagicMock()
+    _empty.all.return_value = []
+    session.execute = AsyncMock(return_value=_empty)
     session.flush = AsyncMock()
     session.rollback = AsyncMock()
     session.commit = AsyncMock()
@@ -270,7 +273,7 @@ class TestCollectProjectFiles:
             (base / ".env").write_text("SECRET=1\n")
             result = _collect_project_files(base)
             assert "__pycache__" not in result
-            assert ".env" in result  # .env is included
+            assert ".env" not in result  # secretos nunca se exportan
 
     def test_default_dir_same_as_memory_min(self):
         """Verifica que con un dir vacío devuelve cadena vacía."""

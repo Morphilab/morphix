@@ -1,6 +1,8 @@
 # tests/test_tool_specs.py
 from unittest.mock import MagicMock
 
+import pytest
+
 from tools.specs import (
     TOOL_DEFINITIONS,
     ToolDefinition,
@@ -26,8 +28,8 @@ def test_tool_definition_to_openai_spec():
 
 
 def test_all_tools_have_definitions():
-    """Las 10 herramientas tienen ToolDefinition."""
-    assert len(TOOL_DEFINITIONS) == 11
+    """Las herramientas tienen ToolDefinition (14 core + 8 goal/todo/plan-mode)."""
+    assert len(TOOL_DEFINITIONS) == 24  # +file_view
     expected = {
         "file_manager",
         "git_manager",
@@ -40,6 +42,20 @@ def test_all_tools_have_definitions():
         "web_search",
         "web_fetch",
         "code_search",
+        "memory_inspector",
+        "load_skill",
+        "vision_analyze",
+        "project_docs",
+        # Absorción deepseek: goal/todo/plan-mode con CAS
+        "goal_create",
+        "goal_get",
+        "goal_update",
+        "goal_round",
+        "todo_write",
+        "todo_get",
+        "plan_mode",
+        "exit_plan_mode",
+        "file_view",
     }
     assert set(TOOL_DEFINITIONS.keys()) == expected
 
@@ -47,7 +63,7 @@ def test_all_tools_have_definitions():
 def test_build_tool_definitions_all():
     """build_tool_definitions sin filtro devuelve todas."""
     defs = build_tool_definitions()
-    assert len(defs) == 11
+    assert len(defs) == 24
     for d in defs:
         assert d["type"] == "function"
 
@@ -166,41 +182,35 @@ class TestExpandAllowedTools:
     def test_none_returns_none(self):
         assert expand_allowed_tools(None) is None
 
-    def test_exact_match_passes_through(self):
-        result = expand_allowed_tools(["file_manager"])
-        assert "file_manager" in result
-
-    def test_prefix_expands_to_matching_keys(self):
-        """Prefix like 'bash_' should match 'bash_manager'."""
-        # 'bash_ma' is a prefix of 'bash_manager'
-        if any(k.startswith("bash_") for k in TOOL_DEFINITIONS):
-            result = expand_allowed_tools(["bash_"])
-            assert any("bash_manager" in r for r in result)
-
-    def test_unknown_entry_passes_through(self):
-        result = expand_allowed_tools(["completely_unknown_tool"])
-        assert "completely_unknown_tool" in result
-
-    def test_mixed_exact_and_prefix(self):
-        result = expand_allowed_tools(["file_manager", "bash_"])
-        assert "file_manager" in result
+    @pytest.mark.parametrize(
+        ("allowed", "expected_present"),
+        [
+            (["file_manager"], "file_manager"),
+            (["bash_"], "bash_manager"),
+            (["completely_unknown_tool"], "completely_unknown_tool"),
+            (["file_manager", "bash_"], "file_manager"),
+        ],
+        ids=["exact_match", "prefix_expands", "unknown_passes_through", "mixed_exact_and_prefix"],
+    )
+    def test_expands(self, allowed, expected_present):
+        result = expand_allowed_tools(allowed)
+        assert expected_present in result
 
 
 class TestToolMatchesAllowlist:
-    def test_exact_match(self):
-        assert tool_matches_allowlist("file_manager", ["file_manager", "git_manager"]) is True
-
-    def test_prefix_match(self):
-        assert tool_matches_allowlist("file_manager", ["file_", "git_manager"]) is True
-
-    def test_mcp_match(self):
-        assert tool_matches_allowlist("mcp:browser_navigate", ["browser"]) is True
-
-    def test_sanitized_mcp_match(self):
-        assert tool_matches_allowlist("mcp_browser_navigate", ["browser"]) is True
-
-    def test_no_match(self):
-        assert tool_matches_allowlist("code_exec", ["file_manager", "git_manager"]) is False
+    @pytest.mark.parametrize(
+        ("tool", "allowlist", "expected"),
+        [
+            ("file_manager", ["file_manager", "git_manager"], True),
+            ("file_manager", ["file_", "git_manager"], True),
+            ("mcp:browser_navigate", ["browser"], True),
+            ("mcp_browser_navigate", ["browser"], True),
+            ("code_exec", ["file_manager", "git_manager"], False),
+        ],
+        ids=["exact_match", "prefix_match", "mcp_match", "sanitized_mcp_match", "no_match"],
+    )
+    def test_matches(self, tool, allowlist, expected):
+        assert tool_matches_allowlist(tool, allowlist) is expected
 
 
 def test_active_projects_base_uses_active_workspace(monkeypatch, tmp_path):
@@ -216,3 +226,30 @@ def test_active_projects_base_uses_active_workspace(monkeypatch, tmp_path):
 
     base = projects_base()
     assert base == tmp_path / "prueba9" / "code_projects"
+
+
+def test_no_nested_schema_keys_in_parameters():
+    """`parameters` es el dict PLANO de properties — ninguna ToolDefinition
+    puede anidar type/properties/required dentro de parameters (rompe to_openai_spec
+    y el strict mode de DeepSeek)."""
+    forbidden = {"type", "properties", "required"}
+    for name, td in TOOL_DEFINITIONS.items():
+        nested = forbidden & set(td.parameters.keys())
+        assert not nested, f"{name}: claves de schema anidadas en parameters: {nested}"
+
+
+def test_memory_inspector_spec_is_flat_and_callable():
+    """memory_inspector aplanado genera un spec OpenAI válido."""
+    spec = TOOL_DEFINITIONS["memory_inspector"].to_openai_spec()
+    props = spec["function"]["parameters"]["properties"]
+    assert set(props.keys()) == {"action", "key", "confirm_delete"}
+    assert props["action"]["enum"] == ["list", "read", "delete"]
+    assert "action" in spec["function"]["parameters"]["required"]
+
+
+def test_development_workflow_allowlist_includes_memory_inspector():
+    """memory_inspector expuesto en la allowlist del workflow development."""
+    from core.path_resolver import paths
+
+    dev = (paths.templates_workflows_dir() / "development.yaml").read_text(encoding="utf-8")
+    assert "memory_inspector" in dev

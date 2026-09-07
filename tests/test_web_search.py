@@ -59,3 +59,28 @@ async def test_web_search_handles_api_error():
 
         result = await _web_search_tool("test query")
         assert "Error" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_404_da_pista_accionable():
+    """El 404 de Google CSE apunta a GOOGLE_API_KEY/GOOGLE_CX."""
+    import httpx
+
+    from tools.web_search import _web_search_tool
+
+    def _raise(*a, **kw):
+        raise httpx.HTTPStatusError(
+            "Client error '404 Not Found'",
+            request=httpx.Request("GET", "https://x"),
+            response=httpx.Response(404),
+        )
+
+    with (
+        patch("tools.web_search.settings") as ms,
+        patch("tools.web_search.httpx.AsyncClient") as mc,
+    ):
+        ms.google_api_key = "k"
+        ms.google_cx = "c"
+        mc.return_value.__aenter__ = _raise
+        result = await _web_search_tool("q")
+    assert "GOOGLE_API_KEY" in result and "GOOGLE_CX" in result

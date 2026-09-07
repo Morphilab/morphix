@@ -113,7 +113,7 @@ class TestConformance:
         (tmp_path / "code_projects/prueba6" / "numeros.py").write_text(
             "print(1)\nprint(2)\nprint(3)\n"
         )
-        monkeypatch.setattr(aggregator._paths, "memory_dir", lambda ws: tmp_path)
+        monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)  # M27
 
         violations = await aggregator.ResultAggregator._conformance_violations(
             "Imprime los números del 1 al 5 usando un bucle",
@@ -128,11 +128,12 @@ class TestConformance:
         """Tarea con 'bucle' y archivo con for → sin violaciones."""
         from orchestration import aggregator
 
-        (tmp_path / "code_projects" / "prueba6").mkdir(parents=True)
-        (tmp_path / "code_projects/prueba6" / "numeros.py").write_text(
+        # layout canónico MEMORY_BASE/workspace/code_projects/proyecto
+        (tmp_path / "main" / "code_projects" / "prueba6").mkdir(parents=True)
+        (tmp_path / "main/code_projects/prueba6" / "numeros.py").write_text(
             "for numero in range(1, 6):\n    print(numero)\n"
         )
-        monkeypatch.setattr(aggregator._paths, "memory_dir", lambda ws: tmp_path)
+        monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)  # M27
 
         violations = await aggregator.ResultAggregator._conformance_violations(
             "Imprime los números del 1 al 5 usando un bucle",
@@ -164,8 +165,7 @@ class TestConformance:
         self, tmp_path, monkeypatch, mock_models_call
     ):
         """El veredicto 'success' baja a 'partial' si el archivo viola un
-        requisito explícito (evidencia 2026-08-14: numeros.py sin bucle
-        reportado como 'completo y funcional')."""
+        requisito explícito."""
         from unittest.mock import AsyncMock, patch
 
         from orchestration import aggregator

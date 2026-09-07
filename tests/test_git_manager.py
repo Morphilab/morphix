@@ -48,7 +48,9 @@ async def test_add_and_commit_after_init(temp_memory):
         workspace="main",
         project_root="code_projects/miapp",
     )
-    assert "Commit realizado" in commit_result
+    # '': retorno estructurado
+    assert isinstance(commit_result, dict) and commit_result["success"] is True
+    assert "Commit realizado" in commit_result["output"]
 
 
 @pytest.mark.asyncio
@@ -101,4 +103,71 @@ async def test_commit_accepts_valid_message(temp_memory):
         workspace="main",
         project_root="code_projects/miapp",
     )
-    assert "Commit realizado" in result
+    # '': dict estructurado; texto conservado en 'output'
+    assert result["success"] is True
+    assert "Commit realizado" in result["output"]
+
+
+@pytest.mark.asyncio
+async def test_show_returns_file_content(temp_memory):
+    """Task 2.1 doc 4: acción show read-only devuelve contenido de git show."""
+    await GitManager.execute("init", workspace="main", project_root="code_projects/miapp")
+    project_dir = temp_memory / "main" / "code_projects" / "miapp"
+    (project_dir / "test.txt").write_text("contenido-marcador")
+    await GitManager.execute("add", workspace="main", project_root="code_projects/miapp")
+    await GitManager.execute(
+        "commit", message="feat: inicial", workspace="main", project_root="code_projects/miapp"
+    )
+
+    result = await GitManager.execute(
+        "show",
+        workspace="main",
+        project_root="code_projects/miapp",
+        ref_path="HEAD:test.txt",
+    )
+    assert "contenido-marcador" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_show_requires_ref_path(temp_memory):
+    """show sin ref_path → error claro (no crashea)."""
+    await GitManager.execute("init", workspace="main", project_root="code_projects/miapp")
+    result = await GitManager.execute("show", workspace="main", project_root="code_projects/miapp")
+    assert "ref_path" in str(result)
+
+
+def test_show_not_in_dangerous_actions():
+    """show es read-only: NO exige diálogo de aprobación."""
+    from tools.orchestrator import ToolOrchestrator
+
+    assert "git_manager.show" not in ToolOrchestrator.DANGEROUS_ACTIONS
+
+
+def test_phantom_push_removed_from_dangerous_actions():
+    """git_manager.push no existe como implementación — fuera del set."""
+    from tools.orchestrator import ToolOrchestrator
+
+    assert "git_manager.push" not in ToolOrchestrator.DANGEROUS_ACTIONS
+    # y la acción push realmente no está implementada:
+    from tools.git_manager import GitManager
+
+    src = open(GitManager.execute.__code__.co_filename, encoding="utf-8").read()
+    assert 'action == "push"' not in src, "push implementado → re-añadir a DANGEROUS_ACTIONS"
+
+
+def test_spec_has_no_phantom_status_and_documents_show():
+    """Enum sin status fantasma; show documentado con ref_path."""
+    from tools.specs import TOOL_DEFINITIONS
+
+    params = TOOL_DEFINITIONS["git_manager"].parameters
+    actions = params["action"]["enum"]
+    assert "status" not in actions
+    assert "show" in actions
+    assert "ref_path" in params
+
+
+@pytest.mark.asyncio
+async def test_git_manager_without_action_fails_clearly(temp_memory):
+    """Sin default fantasma — action vacío da error explícito."""
+    result = await GitManager.execute("", workspace="main", project_root="code_projects/miapp")
+    assert "action" in str(result).lower()

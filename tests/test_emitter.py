@@ -81,11 +81,13 @@ async def test_files_written_always_list():
 
 
 @pytest.mark.asyncio
-async def test_unknown_field_raises_typeerror():
+async def test_unknown_field_is_ignored_with_warning(caplog):
+    """Un campo desconocido se ignora con warning — no mata el workflow."""
     session, _ = _make_session()
     emitter = WorkflowEmitter(session)
-    with pytest.raises(TypeError, match="Campo desconocido"):
-        await emitter.emit(total_tools=99)
+    with caplog.at_level("WARNING", logger="orchestration.emitter"):
+        await emitter.emit(total_tools=99)  # typo: campo fuera del contrato
+    assert any("campo desconocido" in r.message.lower() for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -123,3 +125,14 @@ async def test_phase_none_resets_phase():
     assert events.on_stats_update.await_count == 2
     data: dict = events.on_stats_update.await_args.args[0]
     assert data["phase"] is None
+
+
+@pytest.mark.asyncio
+async def test_emit_unknown_field_warns_but_does_not_raise():
+    """Un typo en un campo de emit no debe matar el workflow en marcha."""
+    from orchestration.emitter import WorkflowEmitter
+
+    emitter = WorkflowEmitter(None)
+    # No debe lanzar TypeError
+    await emitter.emit(statuus="typo", status="ok")
+    assert emitter._state.status == "ok"

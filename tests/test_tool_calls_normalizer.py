@@ -21,9 +21,9 @@ from llm.tool_calls import (
     tool_result_message,
 )
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # model_supports_tool_calling
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_model_capabilities_known_unsupported(monkeypatch):
@@ -64,8 +64,8 @@ def test_default_registry_does_not_disable_cloud_models():
 
 
 def test_default_registry_has_no_unsupported_entries():
-    """Ninguna entrada por defecto marca tools:False — no existe un modelo
-    verificado post-fix como incapaz; la degradación se detecta
+    """Ninguna entrada por defecto marca tools:False — no hay modelos
+    verificados como incapaces; la degradación se detecta
     dinámicamente (repair loop + telemetría)."""
     from core.config import settings
 
@@ -75,9 +75,9 @@ def test_default_registry_has_no_unsupported_entries():
         ), f"'{model}' marcado tools:False sin evidencia post-fix"
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # normalize_arguments
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_normalize_dict_passthrough():
@@ -128,9 +128,9 @@ def test_normalize_custom_default():
     assert normalize_arguments(None, default=fallback) is fallback
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # THE BUG — json.loads(dict) must not destroy valid Ollama arguments
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_normalize_real_ollama_tool_call():
@@ -138,10 +138,8 @@ def test_normalize_real_ollama_tool_call():
     (what the ollama SDK 0.6.1 returns).  json.loads(dict) → TypeError.
     normalize_arguments must handle this correctly."""
     # Build a real Message.ToolCall via the ollama SDK
-    try:
-        from ollama._types import Message
-    except ImportError:
-        pytest.skip("ollama SDK not available")
+    pytest.importorskip("ollama")
+    from ollama._types import Message
 
     msg = Message(
         role="assistant",
@@ -175,17 +173,15 @@ def test_normalize_real_ollama_tool_call():
     assert isinstance(result, dict)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # normalize_tool_call
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_normalize_tool_call_from_pydantic():
     """normalize_tool_call handles pydantic Message.ToolCall correctly."""
-    try:
-        from ollama._types import Message
-    except ImportError:
-        pytest.skip("ollama SDK not available")
+    pytest.importorskip("ollama")
+    from ollama._types import Message
 
     msg = Message(
         role="assistant",
@@ -225,17 +221,45 @@ def test_normalize_tool_call_synthesizes_missing_id():
     assert result["id"] == "call_5"
 
 
-# ---------------------------------------------------------------------------
+def test_normalize_tool_call_from_openai_sdk_object():
+    """OpenAI SDK tool-call object (.function, .id) normalizes to internal dict."""
+    tc = MagicMock()
+    tc.id = "call_openai_1"
+    tc.function = MagicMock()
+    tc.function.name = "file_manager"
+    tc.function.arguments = '{"action": "write", "path": "x.py"}'
+
+    result = normalize_tool_call(tc, index=0)
+    assert result["name"] == "file_manager"
+    assert result["id"] == "call_openai_1"
+    assert result["arguments"] == {"action": "write", "path": "x.py"}
+
+
+def test_normalize_tool_call_dict_without_function():
+    """dict without a function key → empty name/args, id preserved."""
+    result = normalize_tool_call({"id": "call_1"}, index=0)
+    assert result["id"] == "call_1"
+    assert result["name"] == ""
+    assert result["arguments"] == {}
+
+
+def test_normalize_tool_call_empty_name_stays_empty():
+    """name='' is not synthesised — only the id is."""
+    result = normalize_tool_call({"function": {"name": "", "arguments": {"a": 1}}}, index=3)
+    assert result["name"] == ""
+    assert result["id"] == "call_3"
+    assert result["arguments"] == {"a": 1}
+
+
+# --------------------------------------------------------------------------
 # detect_provider_from_raw_tool_call
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_detect_ollama_from_dict_args():
     """dict arguments → ollama."""
-    try:
-        from ollama._types import Message
-    except ImportError:
-        pytest.skip("ollama SDK not available")
+    pytest.importorskip("ollama")
+    from ollama._types import Message
 
     msg = Message(
         role="assistant",
@@ -253,9 +277,19 @@ def test_detect_openai_from_string_args():
     assert detect_provider_from_raw_tool_call(tc) == "openai"
 
 
-# ---------------------------------------------------------------------------
+def test_detect_provider_none_returns_openai_default():
+    """Unknown/None provider → openai (safe default)."""
+    assert detect_provider_from_raw_tool_call(None) == "openai"
+
+
+def test_detect_provider_dict_without_function_is_ollama():
+    """dict without a function key → empty dict arguments → ollama."""
+    assert detect_provider_from_raw_tool_call({"id": "call_1"}) == "ollama"
+
+
+# --------------------------------------------------------------------------
 # tool_result_message
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_tool_result_ollama_format():
@@ -274,9 +308,17 @@ def test_tool_result_openai_format():
     assert "tool_name" not in msg
 
 
-# ---------------------------------------------------------------------------
+def test_tool_result_unknown_provider_uses_openai_format():
+    """Unknown provider falls back to OpenAI format (tool_call_id)."""
+    msg = tool_result_message("anthropic", "file_manager", "call_1", "result")
+    assert msg["role"] == "tool"
+    assert msg["tool_call_id"] == "call_1"
+    assert "tool_name" not in msg
+
+
+# --------------------------------------------------------------------------
 # sanitize_messages_for_ollama
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_sanitize_converts_string_args():
@@ -342,10 +384,8 @@ def test_sanitize_handles_dict_already():
 
 def test_sanitize_via_real_sdk():
     """sanitize_messages_for_ollama → _copy_messages must not raise ValidationError."""
-    try:
-        from ollama._client import _copy_messages
-    except ImportError:
-        pytest.skip("ollama SDK not available")
+    pytest.importorskip("ollama")
+    from ollama._client import _copy_messages
 
     # Build a message with string args (OpenAI format)
     mixed = [
@@ -375,9 +415,9 @@ def test_sanitize_via_real_sdk():
     assert len(result) == 1
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # is_valid_tool_call
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_is_valid_with_real_args():
@@ -396,9 +436,9 @@ def test_is_valid_with_mixed():
     assert is_valid_tool_call({"arguments": {"action": "write", "project_root": "/tmp"}})
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # has_tool_association
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
 def test_has_association_with_tool_call_id():
@@ -414,3 +454,9 @@ def test_has_association_with_tool_name():
 
 def test_has_association_with_neither():
     assert not has_tool_association({"role": "tool", "content": "orphan"})
+
+
+def test_has_association_non_tool_role_uses_association_fields():
+    """role != 'tool' does not gate association — role field is not validated."""
+    assert has_tool_association({"role": "user", "tool_call_id": "c1"})
+    assert not has_tool_association({"role": "user", "content": "plain"})

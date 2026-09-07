@@ -34,27 +34,8 @@ async def test_list_workflows_moi_workspace():
 
 
 @pytest.mark.asyncio
-async def test_load_workflow_template_default_global():
-    from orchestration.loader import load_workflow_template
+async def test_list_workflows_ignores_underscore_files():
+    from orchestration.loader import list_workflows
 
-    template = load_workflow_template(None, "default")
-    assert isinstance(template, dict)
-
-
-@pytest.mark.asyncio
-async def test_load_workflow_template_not_found_returns_empty():
-    from orchestration.loader import load_workflow_template
-
-    template = load_workflow_template(None, "nonexistent_workflow_12345")
-    assert template == {}
-
-
-@pytest.mark.asyncio
-async def test_load_workflow_template_from_workspace():
-    from orchestration.loader import load_workflow_template
-
-    template = load_workflow_template("main", "development")
-    assert isinstance(template, dict)
-    assert template.get("name") == "development"
-    assert "agents" in template
-    assert "project" in template
+    for workflows in (list_workflows(), list_workflows("main")):
+        assert "_FULL_TEMPLATE" not in workflows

@@ -5,19 +5,27 @@ import tools.file_manager as fm
 from tools.file_manager import FileManager
 
 
+@pytest.fixture(autouse=True)
+def _use_tmp_memory_base(tmp_path_factory, monkeypatch):
+    """FileManager lee memory_base() en call-time — apuntarlo a tmp."""
+    import core.path_resolver as _pr
+
+    monkeypatch.setattr(_pr, "MEMORY_BASE", tmp_path_factory.mktemp("fm_mem"))
+
+
 @pytest.mark.asyncio
-async def test_write_and_read(tmp_path):
+async def test_write_and_read(tmp_path, monkeypatch):
     """Escribe un archivo y luego lo lee."""
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
     await FileManager.execute("write", path="test.txt", content="Hola mundo")
     result = await FileManager.execute("read", path="test.txt")
     assert result == "Hola mundo"
 
 
 @pytest.mark.asyncio
-async def test_write_with_project_root_normalization(tmp_path):
+async def test_write_with_project_root_normalization(tmp_path, monkeypatch):
     """El prefijo completo project_root se elimina del path."""
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
     await FileManager.execute(
         "write",
         path="code_projects/miapp/app.py",
@@ -30,9 +38,9 @@ async def test_write_with_project_root_normalization(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_write_with_project_name_normalization(tmp_path):
+async def test_write_with_project_name_normalization(tmp_path, monkeypatch):
     """El prefijo con el nombre del proyecto también se elimina."""
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
     await FileManager.execute(
         "write",
         path="miapp/app.py",
@@ -44,9 +52,9 @@ async def test_write_with_project_name_normalization(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_syntax_validation_rejects_bad_code(tmp_path):
+async def test_syntax_validation_rejects_bad_code(tmp_path, monkeypatch):
     """Devuelve error de sintaxis y NO escribe el archivo."""
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
     result = await FileManager.execute(
         "write",
         path="script.py",
@@ -57,14 +65,14 @@ async def test_syntax_validation_rejects_bad_code(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_file_not_found_returns_friendly_hint(tmp_path):
+async def test_file_not_found_returns_friendly_hint(tmp_path, monkeypatch):
     """Leer un archivo inexistente devuelve una guía amigable (no excepción).
 
     El patrón leer-antes-de-escribir hace que el modelo lea archivos
     nuevos que aún no existen; la respuesta debe guiarlo a escribir,
     no fallar como error (que disparaba stall del agente).
     """
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
     result = await FileManager.execute("read", path="no_existe.txt")
     assert "no existe todavía" in result
     assert "action='write'" in result
@@ -72,18 +80,18 @@ async def test_file_not_found_returns_friendly_hint(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_wrapper_infers_write_when_content_without_action(tmp_path):
+async def test_wrapper_infers_write_when_content_without_action(tmp_path, monkeypatch):
     """DeepSeek a veces omite 'action'; con content presente debe ESCRIBIR (no leer)."""
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
     result = await fm.file_manager_tool(path="inferido.py", content="x = 1", workspace="main")
     assert "escrito correctamente" in result
     assert (tmp_path / "main" / "inferido.py").read_text() == "x = 1"
 
 
 @pytest.mark.asyncio
-async def test_wrapper_infers_read_when_no_content_no_action(tmp_path):
+async def test_wrapper_infers_read_when_no_content_no_action(tmp_path, monkeypatch):
     """Sin action y sin content → leer el archivo."""
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
     (tmp_path / "main").mkdir(parents=True, exist_ok=True)
     (tmp_path / "main" / "leeme.txt").write_text("contenido")
     result = await fm.file_manager_tool(path="leeme.txt", workspace="main")
@@ -101,9 +109,9 @@ def test_is_modifying_action_infers_write_without_action():
 
 
 @pytest.mark.asyncio
-async def test_read_directory_returns_listing(tmp_path):
+async def test_read_directory_returns_listing(tmp_path, monkeypatch):
     """read sobre un directorio devuelve el listado en vez de FileNotFoundError."""
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
     (tmp_path / "main").mkdir(parents=True, exist_ok=True)
     (tmp_path / "main" / "a.py").write_text("x = 1")
     (tmp_path / "main" / "sub").mkdir()
@@ -113,9 +121,9 @@ async def test_read_directory_returns_listing(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_file_manager_rejects_invalid_workspace_name(tmp_path):
+async def test_file_manager_rejects_invalid_workspace_name(tmp_path, monkeypatch):
     """Un workspace con '../' no debe poder escapar de SAFE_BASE."""
-    fm.SAFE_BASE = tmp_path
+    monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path)
 
     result = await FileManager.execute(
         action="read",

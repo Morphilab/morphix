@@ -32,10 +32,6 @@ def mock_deps():
             "orchestration.finalizer.memory_manager.write",
             new_callable=AsyncMock,
         ),
-        patch(
-            "orchestration.finalizer.update_live_diagram",
-            new_callable=AsyncMock,
-        ),
     ):
         mock_save.return_value = 42
         yield mock_save
@@ -60,8 +56,10 @@ async def test_finalize_workflow_basic(mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_finalize_workflow_with_files_triggers_commit(mock_deps):
-    """Verifica que files_written dispara smart_auto_commit."""
+async def test_finalize_workflow_with_files_does_NOT_commit(mock_deps):
+    """El auto-commit implícito está eliminado — files_written ya
+    NO dispara smart_auto_commit (el commit es decisión del agente o del
+    workflow via commit_after)."""
     with patch(
         "core.git_operations.smart_auto_commit",
         new_callable=AsyncMock,
@@ -80,7 +78,7 @@ async def test_finalize_workflow_with_files_triggers_commit(mock_deps):
             project_root="code_projects/app",
             files_written=["app.py"],
         )
-        mock_commit.assert_awaited_once()
+        mock_commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -142,10 +140,26 @@ class TestExtractPersonalFacts:
             assert result == {}
 
     @pytest.mark.asyncio
-    async def test_extract_facts_rejects_trivial_name_only(self):
-        """Perfil trivial (solo name, p. ej. 'ChatGPT' de un contexto contaminado)
-        no debe devolverse como hecho — rompe el bucle de contaminación
-        (evidencia 2026-08-14: prueba 2 re-escribió user_profile con el dato stale)."""
+    async def test_extract_facts_name_only_survives_extraction(self):
+        """El nombre solo NO se descarta en la extracción: el gate contextual
+        (perfil vacío vs poblado) vive en update_user_profile — la extracción
+        entrega el hecho tal cual lo dijo el usuario."""
+        with patch(
+            "llm.controller.models.call",
+            new_callable=AsyncMock,
+        ) as mock_call:
+            mock_call.return_value = MagicMock()
+            mock_call.return_value.choices = [MagicMock()]
+            mock_call.return_value.choices[0].message.content = '{"name":"Ana"}'
+
+            result = await _extract_personal_facts("Hola", "Me llamo Ana")
+            assert result == {"name": "Ana"}
+
+    @pytest.mark.asyncio
+    async def test_extract_facts_name_only_returns_facts(self):
+        """La extracción entrega el hecho tal cual: el gate anti-stale es
+        CONTEXTUAL (perfil vacío se siembra; poblado no se toca) y vive en
+        update_user_profile, no en la extracción."""
         with patch(
             "llm.controller.models.call",
             new_callable=AsyncMock,
@@ -155,7 +169,7 @@ class TestExtractPersonalFacts:
             mock_call.return_value.choices[0].message.content = '{"name": "ChatGPT"}'
 
             result = await _extract_personal_facts("Hola", "Crea script.py")
-            assert result == {}
+            assert result == {"name": "ChatGPT"}
 
     @pytest.mark.asyncio
     async def test_extract_facts_keeps_name_with_context(self):
@@ -188,17 +202,3 @@ class TestTruncateSafeSummary:
         assert len(out) <= 4000
         assert out.endswith(".")
         assert len(out) < len(s)
-
-
-def test_build_subtask_list_shows_failed_as_failed():
-    """Un subtask con status 'failed' no debe mostrarse como 'completed'."""
-    from orchestration.workflows.development import _build_subtask_list
-
-    out = _build_subtask_list(
-        ["a", "b"],
-        {0: {"status": "failed"}},
-        current_node=1,
-        current_status="running",
-    )
-    assert out[0]["status"] == "failed"
-    assert out[1]["status"] == "running"

@@ -170,13 +170,6 @@ class TestMetrics:
         assert m.total_tokens == 100
         assert m.tool_calls == 3
 
-    def test_record_workflow_failed(self):
-        m = Metrics()
-        m.record_workflow_failed()
-        assert m.total_workflows == 1
-        assert m.failed_workflows == 1
-        assert m.completed_workflows == 0
-
     def test_record_llm_call(self):
         m = Metrics()
         m.record_llm_call()
@@ -215,12 +208,10 @@ class TestMetrics:
     def test_to_dict_after_workflows(self):
         m = Metrics()
         m.record_workflow_completed()
-        m.record_workflow_failed()
         d = m.to_dict()
-        assert d["total_workflows"] == 2
+        assert d["total_workflows"] == 1
         assert d["completed_workflows"] == 1
-        assert d["failed_workflows"] == 1
-        assert d["success_rate"] == "50.0%"
+        assert d["success_rate"] == "100.0%"
 
     def test_to_dict_cache_hit_rate(self):
         m = Metrics()

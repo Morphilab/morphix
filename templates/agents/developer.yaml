@@ -35,7 +35,7 @@ system_prompt: >
   FINISHING: When done, provide a summary of changes and stop using tools.
 length_guidance: "Concise but complete (max 800 words)."
 temperature: 0.2
-tools: ["file_manager", "git_manager", "bash_manager", "lsp_manager", "code_exec", "test_runner", "diff_editor"]
+tools: ["file_manager", "git_manager", "bash_manager", "lsp_manager", "code_exec", "test_runner", "diff_editor", "file_view", "goal_create", "goal_get", "goal_update", "goal_round", "todo_write", "todo_get"]
 keywords:
   - code
   - script
