@@ -119,30 +119,43 @@ async def test_wake_delivers_turn_into_eternal_chat(fake_turn):
 @pytest.mark.asyncio
 async def test_busy_bot_requeues_row(fake_turn, monkeypatch):
     """Bot ocupado ⇒ la fila recupera su claim y espera al próximo tick."""
-    sch = f"bots_busy_{secrets.token_hex(4)}"
-    try:
-        await create_schema(sch)
-        async with bound_schema(sch):
-            await _ct(sch)
-            uno = await BotsService.create_bot("uno")
-            await BotsService.create_bot("dos")
-            dest_id = int((await BotsService.get_bot("dos"))["id"])
+    # En runners pequeños el recolector de basura puede cerrar con
+    # GeneratorExit el greenlet suspendido que sostiene el DDL de create_all;
+    # con engine, pool y schema frescos el reintento pasa de forma fiable, así
+    # que un artefacto del entorno no tapa la verificación real del producto.
+    intentos = 2
+    for n in range(1, intentos + 1):
+        sch = f"bots_busy_{secrets.token_hex(4)}"
+        try:
+            await create_schema(sch)
+            async with bound_schema(sch):
+                await _ct(sch)
+                uno = await BotsService.create_bot("uno")
+                await BotsService.create_bot("dos")
+                dest_id = int((await BotsService.get_bot("dos"))["id"])
 
-            ack = await send_dm("uno", "dos", "hola ocupado")
-            assert ack["status"] == "sent"
+                ack = await send_dm("uno", "dos", "hola ocupado")
+                assert ack["status"] == "sent"
 
-            async with bots_wake._lock_for(dest_id):  # simula turno en curso
-                delivered = await bots_wake.drain_tick()
-            assert delivered == 0
+                async with bots_wake._lock_for(dest_id):  # simula turno en curso
+                    delivered = await bots_wake.drain_tick()
+                assert delivered == 0
 
-            # bot libre ⇒ próximo tick entrega normalmente
-            delivered2 = await bots_wake.drain_tick()
-            assert delivered2 == 1
-            canon = await ensure_open("dos")
-            msgs = await _messages_of(int(canon["conversation_id"]))
-            assert any(r == "user" and "@uno" in c for r, c in msgs)
-    finally:
-        await drop_schema(sch)
+                # bot libre ⇒ próximo tick entrega normalmente
+                delivered2 = await bots_wake.drain_tick()
+                assert delivered2 == 1
+                canon = await ensure_open("dos")
+                msgs = await _messages_of(int(canon["conversation_id"]))
+                assert any(r == "user" and "@uno" in c for r, c in msgs)
+            return
+        except GeneratorExit:
+            if n == intentos:
+                raise
+        finally:
+            try:
+                await drop_schema(sch)
+            except Exception:
+                pass
 
 
 # ── dead-letter + reaper de claims huérfanos ─────────────────────────
