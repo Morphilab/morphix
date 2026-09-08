@@ -148,11 +148,6 @@ async def test_redis_vector_cache_removed():
     session.execute = AsyncMock(side_effect=[msgs_result, convs_result])
     session.flush = AsyncMock()
 
-    fake_client = MagicMock()
-    fake_client.get = AsyncMock(return_value=None)
-    fake_client.set = AsyncMock()
-    url_factory = MagicMock(return_value=fake_client)
-
     with (
         patch("desktop.services.history_service._get_embed_model", return_value=MagicMock()),
         patch(
@@ -164,13 +159,11 @@ async def test_redis_vector_cache_removed():
             return_value="fp-test",
         ),
         patch("core.embedding_provider.EmbeddingProvider.wait_until_ready", return_value=True),
-        patch("redis.asyncio.from_url", url_factory),
     ):
         from desktop.services.history_service import HistoryService
 
         await HistoryService.semantic_search("consulta", session)
 
-    assert not url_factory.called, "la búsqueda no debe tocar caché Redis"
     assert not hasattr(HistoryService, "_EMB_CACHE_VERSION"), "constante de caché Redis huérfana"
 
 

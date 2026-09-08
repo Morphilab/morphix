@@ -283,6 +283,10 @@ def _install_switch_stubs(monkeypatch, templates, base):
     monkeypatch.setattr(ws_mod, "create_schema", AsyncMock())
     monkeypatch.setattr(ws_mod, "create_tables_in_schema", AsyncMock())
     monkeypatch.setattr(ws_mod, "set_async_schema", AsyncMock())
+    # El sync de bots toca la tabla real de la BD; este test cubre assets de
+    # templates, no BD — sin stub, el switch depende de que exista `bots` en
+    # el schema resuelto por el search_path del entorno.
+    monkeypatch.setattr("core.bot_templates.bootstrap_workspace_bots", AsyncMock())
     monkeypatch.setattr(ws_mod, "memory", type("M", (), {"switch_workspace": AsyncMock()})())
     monkeypatch.setattr(ws_mod, "switch_workflow_state", lambda name: None)
     monkeypatch.setattr("agents.loader.load_workspace_agents", lambda n: None)

@@ -13,6 +13,19 @@ import pytest
 
 from llm.controller import ModelsController
 
+
+@pytest.fixture(autouse=True)
+def _proveedor_fuera_de_offline(monkeypatch):
+    """Los tests manejan el cliente vía mocks explícitos; el modo offline del
+    entorno redirige get_client*_with_provider a un cliente Ollama real antes
+    de llegar a los parches — la decisión offline se fija en False."""
+    from core.config import settings
+    from llm.provider import LLMProvider
+
+    monkeypatch.setattr(settings, "offline_mode", False)
+    monkeypatch.setattr(LLMProvider._offline_manager, "is_offline", lambda: False)
+
+
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
