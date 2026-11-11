@@ -1,0 +1,118 @@
+# development.yaml — preset DSL del motor (v1)
+# Paridad con el orquestador legacy: decompose flat → secuencia con retry →
+# agregación determinista. Los orquestadores legacy quedan como referencia.
+version: 1
+name: development
+description: "General software development workflow — analysis, implementation, review"
+inputs: [apertura]
+defaults:
+  apertura: "Ejecuta esta subtarea del proyecto"
+agents:
+  allowed: [developer]
+tools:
+  allowed: ["file_manager", "git_manager", "bash_manager", "lsp_manager", "code_exec", "test_runner", "diff_editor", "code_search", "memory_inspector", "file_view", "goal_create", "goal_get", "goal_update", "goal_round", "todo_write", "todo_get", "plan_mode", "exit_plan_mode", "project_docs", "delegate_task", "mcp"]
+project:
+  required: true
+skills: true
+# Techo de tokens de ESTE preset (guardarraíl, no objetivo).
+budget_tokens: 500000
+# Reserva del reparador del agregado y del replanner: el loop no
+# arranca un ciclo que moriría en la cabecera del agent-loop.
+budget_reserve_final: 40000
+budget_reserve_replan: 30000
+steps:
+  - id: descomponer
+    kind: decompose
+    strategy: flat
+    output: subtasks
+    query: >-
+      Descompón esta tarea en subtareas de IMPLEMENTACIÓN (código y sus tests):
+      $query. Cada subtarea debe entregar una pieza concreta; NO generes
+      subtareas de análisis (explorar el repo, leer archivos, resumir), ni de
+      "ejecutar los tests", "verificar la spec" ni de verificación — el preset
+      ya tiene pasos deterministas de verificación (verificar_subtarea /
+      verificar_agregado).
+  - id: filtrar_subtareas
+    kind: plugin
+    plugin: filtrar_items
+    # La prohibición en el query del decompose es soft (el modelo genera
+    # "Leer y analizar..." igual): este filtro la hace determinista. Un
+    # ítem descartado marca degradación — jamás Alta con tareas ocultas.
+    params:
+      var: subtasks
+      out: subtasks
+      patrones:
+        - 'leer y analizar'
+        - 'analizar el proyecto'
+        - 'explorar el repo'
+        - 'ejecutar los tests'
+        - 'verificar la spec'
+  - id: ejecutar_subtareas
+    kind: loop
+    max_iter: 10
+    over: subtasks
+    budget_tokens: 160000
+    # Cota por ítem: una subtarea no puede comerse la vuelta entera y dejar
+    # al resto sin margen (el techo de la vuelta sigue siendo 160k).
+    max_tokens_per_item: 150000
+    # Un fallo MEDIDO del ciclo (verificación roja o sin medición) puede
+    # replanificarse una vez; el motor valida la decisión y acota los ítems.
+    replan: {max: 1, model_role: reasoning, max_new_items: 4}
+    body:
+      # body canónico compartido con coordinated — el fragmento se expande
+      # in-place en compile-time (el motor ve los steps reales).
+      - id: cuerpo_subtareas
+        kind: fragment
+        include: _cuerpo_subtareas
+  # La verificación por-subtarea NO cubre el agregado: subtareas que se pisan
+  # entre sí (módulos que no se importan, tests de un ciclo que rompen otro)
+  # pasan sus gates individuales y el proyecto entregado queda rojo. Este step
+  # es el que puede decir "la entrega está verde".
+  # Artefactos de ESTE run para la verificación del agregado: verificar solo
+  # lo que el run tocó — una suite preexistente en rojo no penaliza la
+  # entrega (trade-off: lo que el run rompió sin tocar tampoco se ve).
+  - id: artefactos_del_run
+    kind: plugin
+    plugin: files_del_run
+    params:
+      out: tests_del_run
+      glob: "tests/**/*.py"
+    outputs: ["tests_del_run"]
+  - id: verificar_agregado
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+      # La suite del run puede superar el default de 30s (un cuelgue
+      # transitorio convertía un verde en unmeasured): 120s da margen real.
+      timeout: 120
+    outputs:
+      pasan_agregado: tests_all_pass
+  # Reparación del agregado: el intermedio solo mide; el veredicto FINAL
+  # decide. Un rojo aquí no puede quedar sin quién lo arregle.
+  - id: reparar_agregado
+    kind: agent
+    agent: developer
+    when: "!$pasan_agregado"
+    goal: >-
+      La verificación del agregado quedó en ROJO. Corrige SOLO los tests que
+      fallan de este run ($tests_del_run): no reescribas lo que ya pasa ni
+      añadas archivos de test nuevos. Si el test es correcto, corrige la
+      implementación; no debilites asserts ni borres casos. Si todo pasa,
+      declara completado y PARA.
+    retry_max: 1
+    timeout: 600
+    max_iterations: 10
+    use_reserve_final: true
+  - id: verificar_agregado_final
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+      timeout: 120
+    outputs:
+      pasan_agregado_final: tests_all_pass
+    verdict: pasan_agregado_final
+  - id: agregar
+    kind: aggregate
+    strategy: confidence

@@ -1,0 +1,16 @@
+# Workspaces provisionables desde templates/workspaces/<name>/
+#
+# Con AUTO_PROVISION_WORKSPACES=true, al arrancar la app se copian de forma
+# aditiva e idempotente los agentes/workflows de templates/workspaces/<name>/
+# hacia workspaces/<name>/ (el schema PostgreSQL se crea en el primer switch).
+#
+# Las rutas project.root de los YAML soportan expansión ${VAR:-default} y ~
+# para ser portables entre máquinas.
+
+workspaces:
+  - name: novuscv
+    description: "CV y postulaciones sobre el repo novuscv"
+    isolate: true
+  - name: contentflow
+    description: "Publicaciones LinkedIn sobre el repo contentflow"
+    isolate: true

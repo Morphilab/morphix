@@ -1,0 +1,45 @@
+# reflexion.yaml — Evaluator-Optimizer / Generator-Critic / Reflexion (preset DSL v1)
+# Generador → crítico estructurado → loop con salida por juicio del modelo
+# (no-determinismo ACOTADO: expect validado + fallback declarado).
+version: 1
+name: reflexion
+description: "Generator-Critic / Reflexion loop — generar, evaluar, refinar"
+agents:
+  allowed: [developer, analista]
+tools:
+  allowed: ["file_manager", "code_search", "test_runner", "diff_editor", "pdf_read"]
+project:
+  required: true
+skills: true
+# Techo de tokens de ESTE preset (guardarraíl, no objetivo).
+budget_tokens: 200000
+steps:
+  - id: ciclo_reflexion
+    kind: loop
+    max_iter: 3
+    budget_tokens: 160000
+    init_vars:
+      critica: ""
+    until:
+      type: agent
+      question: "¿El resultado cumple el objetivo original?"
+      expect: "APROBADO"
+      fallback: continue
+    body:
+      - id: generador
+        kind: agent
+        agent: developer
+        goal: "Produce/mejora la solución para: $query. Incorpora la crítica previa (si la hay): $critica"
+        retry_max: 1
+        timeout: 300
+      - id: critico
+        kind: agent
+        agent: analista
+        goal: >-
+          Evalúa críticamente este resultado: $last_output. Responde SOLO
+          'APROBADO' si cumple el objetivo, o una crítica breve y accionable.
+        outputs: ["critica"]
+        timeout: 300
+  - id: entrega
+    kind: aggregate
+    strategy: result

@@ -1,0 +1,14 @@
+tool: diff_editor
+when_to_use:
+  - Para hacer cambios pequeños y precisos en archivos existentes
+  - Para aplicar correcciones de linting o refactoring quirúrgicos
+  - Para modificar código sin reescribir el archivo completo
+when_not_to_use:
+  - Para crear archivos nuevos (usa file_manager)
+  - Para cambios grandes (>30% del archivo, usa file_manager)
+examples:
+  - "diff_editor: apply, file_path='src/main.py', diff_content='@@ -10,5 +10,5 @@ ...'"
+  - "diff_editor: create, file_path='src/main.py'"
+tips:
+  - Usá formato unified diff estándar con @@ line markers
+  - Probá los tests después de aplicar el diff

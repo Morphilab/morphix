@@ -1,0 +1,28 @@
+tool_kit: tdd_workflow
+description: "Workflow TDD: red → green → refactor"
+steps:
+  - order: 1
+    tool: "file_manager"
+    action: "write"
+    params: {path: "tests/test_modulo.py", content: "test que debe fallar"}
+    note: "RED: Escribí un test que falle porque la funcionalidad no existe"
+  - order: 2
+    tool: "test_runner"
+    action: "run"
+    params: {file_path: "tests/test_modulo.py"}
+    note: "Verificá que el test FALLA. Si pasa, el test está mal o la funcionalidad ya existe"
+  - order: 3
+    tool: "file_manager"
+    action: "write"
+    params: {path: "modulo.py", content: "código mínimo"}
+    note: "GREEN: Escribí el código mínimo para que el test pase"
+  - order: 4
+    tool: "test_runner"
+    action: "run"
+    params: {file_path: "tests/test_modulo.py"}
+    note: "Todos los tests deben pasar. Si fallan, corregí el código"
+  - order: 5
+    tool: "diff_editor"
+    action: "apply"
+    params: {file_path: "modulo.py", diff_content: "mejoras de refactoring"}
+    note: "REFACTOR: Mejorá el código sin cambiar comportamiento. Tests deben seguir pasando"

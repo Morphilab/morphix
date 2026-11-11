@@ -1,0 +1,129 @@
+# edd.yaml — Eval-Driven Development (preset DSL v1)
+# Define casos de evaluación como tests ejecutables (≥5) → loop con salida
+# por MÉTRICA numérica sobre SU archivo ($eval_path): la métrica sobre "."
+# heredaba passed/failed de tests ajenos — convergencia falsa o inalcanzable.
+version: 1
+name: edd
+description: "Eval-Driven Development — métricas numéricas gobiernan el loop"
+agents:
+  allowed: ["developer"]
+tools:
+  allowed: ["file_manager", "diff_editor", "test_runner", "git_manager"]
+project:
+  required: true
+skills: true
+# Techo de tokens de ESTE preset (guardarraíl, no objetivo).
+budget_tokens: 200000
+steps:
+  - id: ruta_evals
+    kind: plugin
+    plugin: slug_path
+    params:
+      var: query
+      out: eval_path
+      prefix: "tests/test_evals_"
+      suffix: ".py"
+      max_len: 32
+    outputs: ["eval_path"]
+  - id: sembrar_evals
+    # Esqueleto DETERMINISTA: el archivo existe aunque el agente no llegue a
+    # escribirlo (la limitación medida de Ollama) — la métrica del loop
+    # siempre tiene qué medir, y el agente EDITA estructura en vez de
+    # crear desde blanco.
+    kind: tool
+    tool: file_manager
+    args:
+      action: write
+      file_path: "$eval_path"
+      content: |-
+        # Esqueleto de evals sembrado por el preset — COMPLETA los casos.
+        # Reemplaza los TODOs con 5 tests SIMPLES (un caso por test,
+        # asserts concretos que definan el criterio de la query).
+        import pytest
+
+
+        def test_caso_1():
+            """TODO: describir el caso 1."""
+            assert False, "TODO: implementar el caso 1."
+
+
+        def test_caso_2():
+            """TODO: describir el caso 2."""
+            assert False, "TODO: implementar el caso 2."
+
+
+        def test_caso_3():
+            """TODO: describir el caso 3."""
+            assert False, "TODO: implementar el caso 3."
+
+
+        def test_caso_4():
+            """TODO: describir el caso 4."""
+            assert False, "TODO: implementar el caso 4."
+
+
+        def test_caso_5():
+            """TODO: describir el caso 5."""
+            assert False, "TODO: implementar el caso 5."
+  - id: definir_evals
+    kind: agent
+    agent: developer
+    goal: >-
+      El archivo $eval_path YA existe con un esqueleto de 5 tests TODO
+      (sembrado por el preset). REEMPLAZA los TODOs con 5 casos de
+      evaluación SIMPLES para: $query — un caso por test, asserts concretos
+      que definan el criterio. No crees otros archivos. Cierra con un
+      resumen breve de los casos definidos.
+    retry_max: 1
+    timeout: 300
+  - id: ciclo_eval
+    kind: loop
+    max_iter: 10
+    budget_tokens: 160000
+    until:
+      type: metric
+      tool: test_runner
+      metric: passed_count
+      # margen deliberado: el goal pide 5 casos, el loop converge con 3 en
+      # verde — exigir los 5 exactos hacía que modelos más débiles agotaran
+      # max_iter con el cap de tokens (medido en Ollama 4/4 corridas).
+      op: ">="
+      value: 3
+      args:
+        file_path: "$eval_path"
+    body:
+      - id: implementar
+        kind: agent
+        agent: developer
+        goal: >-
+          Iteración $iter/$max_iter. Implementa/mejora la solución para
+          pasar los casos de evaluación de $eval_path — verifica SOLO con ese
+          archivo: los fallos de otros archivos no pertenecen a esta feature.
+          Resultado de la iteración previa: $last_output — continúa desde ahí,
+          no repitas trabajo.
+        retry_max: 2
+        timeout: 600
+        max_iterations: 12
+  # Verificación del AGREGADO: la métrica del loop solo ve SU archivo; este
+  # step confirma el conjunto que el run tocó.
+  - id: artefactos_del_run
+    kind: plugin
+    plugin: files_del_run
+    params:
+      out: tests_del_run
+      glob: "tests/**/*.py"
+    outputs: ["tests_del_run"]
+  - id: verificar_agregado
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+    outputs:
+      pasan_agregado: tests_all_pass
+    # Estricto por diseño: el loop converge con margen (>=3/5) para no
+    # quemar max_iter, pero el agregado dice la verdad del conjunto —
+    # converger por margen y cerrar Partial es honesto, no un accidente.
+    verdict: pasan_agregado
+  - id: agregar
+    kind: aggregate
+    strategy: result

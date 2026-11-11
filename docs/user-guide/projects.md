@@ -1,0 +1,133 @@
+# Projects & Workspaces
+
+## Workspaces
+
+A **workspace** in Morphix is an isolated environment with its own:
+
+- **PostgreSQL schema** — Separate database tables for conversations, messages, workflows, users, and paused sessions
+- **Agents** — Custom agent profiles (loaded from `workspaces/<name>/agents/`)
+- **Workflows** — Custom workflow templates (loaded from `workspaces/<name>/workflows/`)
+- **Tools** — Custom Python tools (loaded from `workspaces/<name>/tools/`)
+- **Hooks** — Lifecycle hooks (loaded from `workspaces/<name>/hooks/`)
+- **MCP servers** — Configured in `workspaces/<name>/mcp_servers.json`
+
+Workspaces are PostgreSQL schemas named with lowercase letters, numbers, and underscores (`[a-z][a-z0-9_]*`). Schema creation and table setup happen automatically when you switch to a workspace.
+
+### How Workspace Switching Works
+
+When you switch workspaces:
+
+1. The database `search_path` is set to the target schema
+2. If the schema doesn't exist, it's created with all required tables
+3. Workspace agents are unloaded from the global registry
+4. New workspace's agents are loaded from `workspaces/<name>/agents/`
+5. Workspace tools are loaded from `workspaces/<name>/tools/`
+6. All tabs refresh to reflect the new workspace
+
+### Workspace Directory Structure
+
+```
+workspaces/<name>/
+├── agents/
+│   ├── developer.yaml
+│   ├── analista.yaml
+│   └── custom_agent.yaml
+├── workflows/
+│   ├── development.yaml
+│   └── coordinated.yaml
+├── tools/
+│   └── custom_tool.py
+├── hooks/
+│   └── on_startup.py
+└── mcp_servers.json
+```
+
+On first workspace switch, default templates are copied from `templates/agents/` and `templates/workflows/` to the workspace directory.
+
+## Creating a New Project
+
+Projects in Morphix are directories within the workspace's `code_projects/` folder that contain your source code, tests, and configuration files.
+
+### From the Dashboard
+
+1. Open the **Dashboard** tab and go to the Proyectos section
+2. Click **＋ Nuevo** (new project)
+3. Enter a project name (lowercase, letters/numbers/underscores/hyphens)
+4. The project directory is created at `code_projects/<name>/`
+5. The project is selected and ready for use
+
+The Maestro top bar's project menu (`▤ Cambiar proyecto → Dashboard`) takes you there.
+
+## Importing an Existing Project
+
+1. In the **Dashboard**'s Proyectos section, click **⌂ Importar**
+2. Select an existing directory from your filesystem
+3. The directory is copied into `code_projects/<name>/`
+4. The project is selected and ready for use
+
+Imported projects retain their existing `.git` history, dependencies, and file structure.
+
+## Switching Between Projects
+
+1. Open the **Dashboard** and select a different project (the Maestro project menu's `▤ Cambiar proyecto → Dashboard` entry takes you there)
+2. The Editor tab updates to show the new project's file tree
+3. Subsequent workflow executions use the new project's root directory
+
+You can switch projects at any time — active conversations remain associated with the original project.
+
+## Pre-Loaded Projects
+
+The default `main` workspace comes with no pre-loaded code projects. Create your first project via the Dashboard workflow:
+
+1. Click **Development** workflow card
+2. Create a project from the **Dashboard**'s Proyectos section
+3. Type your first task to start building
+
+## How Projects Relate to Workflows
+
+Workflows operate on the selected project's directory (`code_projects/<name>/`). Every bundled preset except `collaborative` **requires** a project — launching without one fails fast with an actionable error instead of writing files somewhere unexpected.
+
+| Workflow | Project behavior |
+|----------|-----------------|
+| **Development** | Required. Subtasks read/write files in the project root; tests and git run against it. |
+| **Coordinated** | Required. Parallel subtasks all operate on the project directory. |
+| **Collaborative** | Optional. If set, agents can read the project to ground the debate; without one, the debate is based purely on the question. |
+| **TDD** | Required. `test_runner` executes pytest with the project as root. |
+
+!!! tip "Always set a project for code work"
+    Having a project selected ensures:
+    - Files are created in an organized location
+    - Tests can be discovered and run
+    - Git operations target the right repository
+    - LSP diagnostics have the correct project context
+
+## Database Isolation
+
+Each workspace has its own PostgreSQL schema with these tables:
+
+| Table | Purpose |
+|-------|---------|
+| `conversations` | Conversation metadata (ID, title, timestamps) |
+| `messages` | Individual messages with role, content, token count |
+| `workflows` | Workflow execution records |
+| `users` | Workspace-specific user data |
+| `paused_sessions` | Saved state for clarification/gate pauses (survive restarts) |
+
+This means:
+- Conversations in `workspace_a` never leak into `workspace_b`
+- Each workspace can have different agents and tools
+- You can have a `work` workspace and a `personal` workspace with different models
+
+## Workspace FAQ
+
+**Can I share agents between workspaces?**
+No — each workspace loads its own agent YAML files. Copy agent templates between workspace directories if needed.
+
+**Can I move a conversation to another workspace?**
+Not directly. Export the conversation from the History tab, then re-import context into the new workspace.
+
+**What happens if I delete a workspace?**
+Drop the PostgreSQL schema. All conversations, workflows, and agents in that workspace are permanently deleted.
+
+**Can I have different API keys per workspace?**
+API keys are global (in `.env`), not per-workspace. Model configuration applies across all workspaces.

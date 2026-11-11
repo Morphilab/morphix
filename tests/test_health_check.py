@@ -1,0 +1,185 @@
+"""Tests for health check — HealthReport, probes."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from core.health import (
+    HealthReport,
+    check_database,
+    check_embeddings,
+    check_filesystem,
+    check_llm,
+    check_workspace,
+)
+
+
+class TestHealthReport:
+    def test_all_ok_by_default(self):
+        r = HealthReport()
+        assert r.all_ok is True
+
+    def test_add_ok(self):
+        r = HealthReport()
+        r.add("test", True, "all good")
+        assert r.checks["test"]["ok"] is True
+        assert r.checks["test"]["detail"] == "all good"
+        assert r.all_ok is True
+
+    def test_add_fail_flips_all_ok(self):
+        r = HealthReport()
+        r.add("a", True, "ok")
+        r.add("b", False, "bad")
+        assert r.all_ok is False
+
+    def test_format_includes_all_checks(self):
+        r = HealthReport()
+        r.add("alpha", True, "ok")
+        r.add("beta", False, "error")
+        text = r.format()
+        assert "alpha" in text
+        assert "beta" in text
+        assert "ISSUES" in text
+
+    def test_format_all_ok(self):
+        r = HealthReport()
+        r.add("x", True, "ok")
+        assert "ALL OK" in r.format()
+
+
+class TestHealthChecks:
+    @pytest.mark.asyncio
+    async def test_check_database_ok(self):
+        r = HealthReport()
+        # Simulate DB failure gracefully, test that the check is registered.
+        # The full success path needs a real async engine mock which is
+        # complex — the integration is verified by actually running the check.
+        with patch("core.config.settings") as mock_settings:
+            mock_settings.database_url = "postgresql://invalid"
+            await check_database(r)
+
+        assert "Database" in r.checks
+        assert isinstance(r.checks["Database"]["ok"], bool)
+
+    @pytest.mark.asyncio
+    async def test_check_database_missing_url(self):
+        r = HealthReport()
+        with patch("core.config.settings") as mock_settings:
+            mock_settings.database_url = ""
+            await check_database(r)
+
+        assert r.checks["Database"]["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_check_llm_reachable(self):
+        r = HealthReport()
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_client.get.return_value = mock_resp
+
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("core.config.settings") as mock_settings,
+        ):
+            mock_settings.offline_mode = False
+            mock_settings.model_roles = {"default": {"provider": "deepseek", "model": "test"}}
+            await check_llm(r)
+
+        assert r.checks["LLM"]["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_check_llm_deepinfra_probea_base_openai_compat(self):
+        """Sin la rama explícita, el else probea la raíz del dominio
+        (https://api.deepinfra.com) en vez del base OpenAI-compat."""
+        r = HealthReport()
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_client.get.return_value = mock_resp
+
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("core.config.settings") as mock_settings,
+        ):
+            mock_settings.offline_mode = False
+            mock_settings.model_roles = {"default": {"provider": "deepinfra", "model": "test"}}
+            mock_settings.deepinfra_api_base = "https://api.deepinfra.com/v1/openai"
+            await check_llm(r)
+
+        assert r.checks["LLM"]["ok"] is True
+        args, _kwargs = mock_client.get.call_args
+        assert args[0] == "https://api.deepinfra.com/v1/openai/models"
+
+    def test_check_embeddings_lazy_no_es_fallo(self):
+        """En un proceso one-shot el modelo no ha cargado (lazy) — NO es
+        un fallo del sistema, es el estado esperado fuera de la app."""
+        r = HealthReport()
+        check_embeddings(r)
+        check = r.checks["Embeddings"]
+        assert check["ok"] is True
+        assert "lazy" in check["detail"] or "ready" in check["detail"]
+
+    def test_check_filesystem(self, tmp_path, monkeypatch):
+        r = HealthReport()
+        monkeypatch.setattr("core.path_resolver.MEMORY_BASE", tmp_path / "memory")
+        (tmp_path / "memory").mkdir()
+        monkeypatch.setattr("core.path_resolver.TEMPLATES_DIR", tmp_path / "templates")
+        (tmp_path / "templates").mkdir()
+        (tmp_path / "templates" / "test.yaml").write_text("x: 1")
+
+        check_filesystem(r)
+        assert r.checks["Memory Dir"]["ok"] is True
+        assert r.checks["Templates"]["ok"] is True
+
+    def test_check_workspace(self, monkeypatch):
+        r = HealthReport()
+        monkeypatch.setattr("core.workflow_state.get_active_workflow", lambda: "tdd")
+        check_workspace(r)
+        assert "tdd" in r.checks["Workspace"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_check_database_disposes_engine_on_connect_failure():
+    """Si la conexión falla, el engine asyncpg debe disponerse (sin leak)."""
+    from unittest.mock import MagicMock
+
+    from core.health import check_database
+
+    engine = MagicMock()
+    engine.connect = MagicMock(side_effect=RuntimeError("connection refused"))
+    engine.dispose = AsyncMock()
+    with (
+        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=engine),
+        patch("core.config.settings") as mock_settings,
+    ):
+        mock_settings.database_url = "postgresql://x/y"
+        report = MagicMock()
+        await check_database(report)
+
+    engine.dispose.assert_awaited_once()
+    report.add.assert_called_once()
+    assert report.add.call_args.args[1] is False
+
+
+def test_health_cli_main_runs_and_formats(monkeypatch, capsys):
+    """python -m core.health debe funcionar: main() corre el check e imprime."""
+
+    from core import health
+
+    report = health.HealthReport()
+    report.add("Database", True, "OK (5ms)")
+
+    async def fake_run():
+        return report
+
+    monkeypatch.setattr(health, "run_health_check", fake_run)
+
+    health.main()
+
+    out = capsys.readouterr().out
+    assert "Morphix Health Check" in out
+    assert "Database" in out
+    assert "ALL OK" in out

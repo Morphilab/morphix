@@ -1,0 +1,166 @@
+# bdd.yaml — Behavior-Driven Development / ATDD (preset DSL v1)
+# Historias Gherkin → test fallido por historia → implementación mínima →
+# verificación POR HISTORIA (tests/test_historia_$iter.py). El test de cada
+# historia vive en UNA ruta determinista: los intentos se sobrescriben (no se
+# acumulan) y la verificación nunca hereda los fallos de otras historias.
+version: 1
+name: bdd
+description: "BDD/ATDD — de historias Gherkin a tests verdes"
+agents:
+  allowed: [developer, analista]
+tools:
+  allowed: ["file_manager", "diff_editor", "test_runner", "git_manager", "pdf_read"]
+project:
+  required: true
+skills: true
+# Techo de tokens de ESTE preset (guardarraíl, no objetivo).
+budget_tokens: 650000
+# Reserva del run para el cierre (agregado + reparación): el loop no puede
+# consumir los últimos tokens y dejar la verificación final sin medir.
+budget_reserve_final: 60000
+# Contrato I/O (para includes como subrutina — kind: workflow)
+inputs: [query]
+outputs: [historias]
+steps:
+  - id: historias
+    kind: agent
+    agent: analista
+    goal: >-
+      Extrae historias de usuario con criterios Gherkin para: $query.
+      Respeta el máximo de historias que pida la petición: si dice
+      "máximo N", no generes más de N.
+      Cierra tu respuesta con la línea "## LISTA" seguida EXCLUSIVAMENTE
+      de una viñeta (- ) por historia — nada después de esa línea. Sin esa
+      sección el workflow no tiene historias que ejecutar. Ejemplo:
+      "## LISTA" + "- HU-1: Como usuario quiero..." (una por historia).
+      Entrega las historias como TEXTO en tu respuesta — no escribas
+      archivos: la implementación la hace el agente developer.
+    outputs: ["historias"]
+    retry_max: 1
+    timeout: 300
+    max_iterations: 8
+  - id: parse_historias
+    kind: plugin
+    plugin: text_to_list
+    params:
+      var: historias
+      out: historias_lista
+      marker: "## LISTA"
+      max_items: 5
+    outputs: ["historias_lista"]
+  # Consistencia ANTES de implementar: dos historias que piden resultados
+  # incompatibles para el mismo input hacen el plan imposible (el caso medido:
+  # 3 manzanas con total 30 vs 27). Parar acá cuesta ~5-10k; el agregado en
+  # rojo después costó 350k y el run cerró Parcial igual.
+  - id: revisar_historias
+    kind: agent
+    agent: analista
+    # tolerante a mayúsculas y acentos: el modelo escribe "Contradicción:"
+    # tanto como "CONTRADICCION:"; un gate exacto dejaba pasar el plan roto.
+    gate: '(?i)contradicci[oó]n\s*:'
+    on_blocker: stop
+    goal: >-
+      Revisa la consistencia de estas historias de usuario: $historias_lista.
+      Busca contradicciones (dos historias que piden resultados incompatibles
+      para el mismo input), solapamientos y requisitos imposibles. Si son
+      consistentes responde exactamente "OK". Si hay una contradicción,
+      responde "CONTRADICCION: <HU-A> vs <HU-B>: <razón>" y nada más.
+    retry_max: 1
+    timeout: 300
+    max_iterations: 8
+  - id: ciclo_bdd
+    kind: loop
+    max_iter: 5
+    over: historias_lista
+    budget_tokens: 200000
+    body:
+      - id: test_fallido
+        kind: agent
+        agent: developer
+        produces: ["tests/test_historia_$iter.py"]
+        goal: >-
+          Escribe un test FALLIDO que codifica la historia: $item. El test
+          vive EXACTAMENTE en tests/test_historia_$iter.py (créalo o
+          sobrescríbelo — no añadas otros archivos de test). El test prueba
+          COMPORTAMIENTO: prohibido ejecutar pytest, pytest.main o la suite
+          desde el test (subprocess/os.system); un test que corre la suite es
+          una recursión, no una verificación.
+        retry_max: 1
+        timeout: 300
+        max_iterations: 16
+      - id: implementar
+        kind: agent
+        agent: developer
+        produces: ["*.py", "src/**/*.py"]
+        verified_by: tests
+        goal: >-
+          Implementa lo mínimo para pasar el test de: $item. Verifica SOLO
+          con tests/test_historia_$iter.py — los fallos de otros archivos
+          no pertenecen a esta historia. Ciclos previos pueden haber
+          implementado ya parte del dominio: extiende o corrige lo
+          existente, jamás una implementación paralela del mismo dominio.
+        retry_max: 1
+        timeout: 600
+        max_iterations: 16
+      - id: tests
+        kind: tool
+        tool: test_runner
+        args:
+          file_path: "tests/test_historia_$iter.py"
+        outputs:
+          pasan: tests_all_pass
+        # veredicto consumido por el motor: un rojo reprueba el step y la
+        # entrega de su ciclo (antes se calculaba y se descartaba).
+        verdict: pasan
+  # Verificación del AGREGADO: los gates por-ítem no ven que las piezas encajen
+  # entre sí (un ciclo puede romper el test de otro). Este step es el que puede
+  # decir "la entrega está verde".
+  # Artefactos de ESTE run para la verificación del agregado: verificar solo
+  # lo que el run tocó — una suite preexistente en rojo no penaliza la
+  # entrega (trade-off: lo que el run rompió sin tocar tampoco se ve).
+  - id: artefactos_del_run
+    kind: plugin
+    plugin: files_del_run
+    params:
+      out: tests_del_run
+      glob: "tests/**/*.py"
+    outputs: ["tests_del_run"]
+  - id: verificar_agregado
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+      # La suite del run puede superar el default de 30s (un cuelgue
+      # transitorio convertía un verde en unmeasured): 120s da margen real.
+      timeout: 120
+    outputs:
+      pasan_agregado: tests_all_pass
+  # Reparación del agregado: solo si la verificación quedó en rojo. El
+  # veredicto FINAL es el gate de calidad; el intermedio solo mide.
+  - id: reparar_agregado
+    kind: agent
+    agent: developer
+    when: "!$pasan_agregado"
+    goal: >-
+      La verificación del agregado quedó en ROJO. Corrige SOLO los tests que
+      fallan de este run ($tests_del_run): no reescribas lo que ya pasa ni
+      añadas archivos de test nuevos. Verifica con test_runner sobre esos
+      archivos. Si el test es correcto, corrige la implementación; no
+      debilites asserts ni borres casos. Si todo pasa, declara completado
+      y PARA.
+    retry_max: 1
+    timeout: 600
+    max_iterations: 10
+    use_reserve_final: true
+  - id: verificar_agregado_final
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+      timeout: 120
+    outputs:
+      pasan_agregado_final: tests_all_pass
+    verdict: pasan_agregado_final
+  - id: resumen
+    kind: aggregate
+    strategy: confidence

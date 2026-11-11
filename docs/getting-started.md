@@ -1,0 +1,252 @@
+# Getting Started
+
+=== ":flag_gb: English"
+
+    ## Prerequisites
+
+    - **Python 3.12** (required; `<3.14`)
+    - **PostgreSQL** (required) — install and create a database
+    - **uv** — [install](https://docs.astral.sh/uv/getting-started/installation/)
+    - **Ollama** (optional, for offline mode)
+
+    ## Install
+
+    ```bash
+    git clone https://github.com/morphilab/morphix.git
+    cd morphix
+    uv sync --all-groups
+    ```
+
+    ## Configure
+
+    ```bash
+    cp example.env .env
+    ```
+
+    Edit `.env` and fill in the required values:
+
+    ```ini
+    # Required: PostgreSQL connection
+    DATABASE_URL=postgresql://postgres:your_password@localhost:5432/morphix
+
+    # Required: at least one API key (DEEPINFRA_API_KEY — the default provider;
+    # DeepSeek and others are also supported)
+    DEEPINFRA_API_KEY=
+
+    # Optional: for offline/local mode
+    # OLLAMA_BASE_URL=http://localhost:11434
+    # OFFLINE_MODE=true
+    ```
+
+    ## Database Setup
+
+    ```bash
+    # Create the database
+    createdb morphix
+
+    # Run migrations
+    uv run alembic upgrade head
+    ```
+
+    ## Launch
+
+    ```bash
+    uv run python run.py
+    ```
+
+    The GUI window opens. On first launch, the `main` workspace is created automatically.
+
+    ## First Steps
+
+    1. **Dashboard** — The home screen shows available workflows. Pick one (e.g., "Development").
+    2. **Select or create a project** — Click the project selector in the top bar. Create a new project or select an existing one.
+    3. **Maestro tab** — This is where you interact with Morphix. Type a task in the input field:
+        ```
+        Create a Flask API with a /health endpoint
+        ```
+    4. **Watch the workflow** — The active workflow (a YAML document run by the deterministic DSL engine) decomposes your task into subtasks, executes them with the allowed agents and tools, and aggregates the results.
+    5. **Review and edit** — Use the Editor tab to view and modify generated files. The History tab stores all past conversations.
+
+    ## Available Workflows
+
+    Workflows are YAML presets (docs with `version: 1`) executed by the built-in DSL engine. The ten bundled presets:
+
+    | Workflow | Best for |
+    |----------|----------|
+    | **Development** | General coding tasks — decompose → execute → aggregate |
+    | **Coordinated** | Multi-agent execution — subtasks run in parallel (up to 5) |
+    | **Collaborative** | Debate-style — multi-round panel with moderator consensus |
+    | **TDD** | Test-driven loop — iterate until all tests pass |
+    | **BDD** | Gherkin stories → failing test per story → minimal implementation |
+    | **SDD** | Spec-first — spec, review gate, traced implementation |
+    | **EDD** | Eval-driven — numeric metrics decide when the loop ends |
+    | **Domain TDD** | Domain model → scenarios → mini TDD cycle per scenario |
+    | **Reflexion** | Generator–critic loop — generate, evaluate, refine |
+    | **Long Horizon** | Long-running spec work with a larger budget and item cap |
+
+    All presets except **Collaborative** require a project to be selected.
+
+    ## Other Entrypoints
+
+    ```bash
+    # MCP server (exposes the 23 tools over stdio)
+    uv run python -m core.mcp.server
+
+    # Workflow DSL CLI
+    uv run python -m orchestration.dsl.cli new my-flow --type=development  # scaffold a workflow YAML
+    uv run python -m orchestration.dsl.cli validate tdd  # validate a preset (--conformance also EXECUTES it against the real engine with fake handlers)
+    uv run python -m orchestration.dsl.cli list          # list available workflows
+    ```
+
+    ## Direct Tool Commands
+
+    You can call tools directly from the chat input using the format `tool_name: action, key=value`:
+
+    | Command | What it does |
+    |---------|-------------|
+    | `file_manager: read, path=src/main.py` | Read a file |
+    | `file_manager: write, path=app.py, content=print('hi')` | Write a file |
+    | `bash_manager: command=pytest tests/` | Run a shell command |
+    | `git_manager: log, project_root=myproject` | View git log |
+    | `code_search: pattern=def foo` | Search codebase |
+
+    ## Common Issues
+
+    ### "Module not found" errors
+
+    Run commands via uv: `uv run python script.py` or `uv run pytest`.
+
+    ### Database connection refused
+
+    Check that PostgreSQL is running: `pg_isready`. Verify `DATABASE_URL` in `.env`.
+
+    ### "No API key configured"
+
+    Set at least one of: `DEEPINFRA_API_KEY` (default provider), `DEEPSEEK_API_KEY` or `OPENAI_API_KEY` in `.env`. For offline mode, set `OFFLINE_MODE=true` and ensure Ollama is running.
+
+    ### Tools not executing
+
+    Check that the tool is in the workflow's `tools.allowed` list. For direct tool commands, the tool must be globally registered.
+
+    ### Workspace not found
+
+    Workspaces are created on first use. Switch to a workspace via the Dashboard or config. The default is `main`.
+
+=== ":flag_es: Español"
+
+    ## Requisitos previos
+
+    - **Python 3.12** (obligatorio; `<3.14`)
+    - **PostgreSQL** (obligatorio) — instalar y crear una base de datos
+    - **uv** — [instalar](https://docs.astral.sh/uv/getting-started/installation/)
+    - **Ollama** (opcional, para modo offline)
+
+    ## Instalación
+
+    ```bash
+    git clone https://github.com/morphilab/morphix.git
+    cd morphix
+    uv sync --all-groups
+    ```
+
+    ## Configuración
+
+    ```bash
+    cp example.env .env
+    ```
+
+    Edita `.env` y completa los valores requeridos:
+
+    ```ini
+    # Obligatorio: conexión a PostgreSQL
+    DATABASE_URL=postgresql://postgres:tu_contraseña@localhost:5432/morphix
+
+    # Obligatorio: al menos una clave de API (DEEPINFRA_API_KEY — el proveedor
+    # predeterminado; DeepSeek y demás también soportados)
+    DEEPINFRA_API_KEY=
+
+    # Opcional: para modo offline/local
+    # OLLAMA_BASE_URL=http://localhost:11434
+    # OFFLINE_MODE=true
+    ```
+
+    ## Configuración de la base de datos
+
+    ```bash
+    # Crear la base de datos
+    createdb morphix
+
+    # Ejecutar migraciones
+    uv run alembic upgrade head
+    ```
+
+    ## Iniciar
+
+    ```bash
+    uv run python run.py
+    ```
+
+    La ventana de la GUI se abre. En el primer inicio, el workspace `main` se crea automáticamente.
+
+    ## Primeros pasos
+
+    1. **Dashboard** — La pantalla principal muestra los workflows disponibles. Elige uno (ej. "Development").
+    2. **Selecciona o crea un proyecto** — Usa el selector de proyectos en la barra superior. Crea un proyecto nuevo o selecciona uno existente.
+    3. **Pestaña Maestro** — Aquí interactúas con Morphix. Escribe una tarea en el campo de entrada:
+        ```
+        Crea una API Flask con un endpoint /health
+        ```
+    4. **Observa el workflow** — El workflow activo (un documento YAML ejecutado por el motor DSL determinista) descompone tu tarea en subtareas, las ejecuta con los agentes y herramientas permitidos, y agrega los resultados.
+    5. **Revisa y edita** — Usa la pestaña Editor para ver y modificar archivos generados. La pestaña Historial guarda todas las conversaciones pasadas.
+
+    ## Workflows disponibles
+
+    Los workflows son presets YAML (documentos con `version: 1`) ejecutados por el motor DSL integrado. Los nueve presets incluidos:
+
+    | Workflow | Ideal para |
+    |----------|------------|
+    | **Development** | Tareas generales de código — descomponer → ejecutar → agregar |
+    | **Coordinated** | Ejecución multi-agente — subtareas en paralelo (hasta 5) |
+    | **Collaborative** | Estilo debate — panel de varias rondas con consenso del moderador |
+    | **TDD** | Bucle guiado por tests — iterar hasta que todos pasen |
+    | **BDD** | Historias Gherkin → test fallido por historia → implementación mínima |
+    | **SDD** | Spec-first — especificación, gate de revisión, implementación trazada |
+    | **EDD** | Eval-driven — métricas numéricas deciden el fin del bucle |
+    | **Domain TDD** | Modelo de dominio → escenarios → mini ciclo TDD por escenario |
+    | **Reflexion** | Bucle generador–crítico — generar, evaluar, refinar |
+
+    Todos los presets salvo **Collaborative** requieren un proyecto seleccionado.
+
+    ## Comandos directos de herramienta
+
+    Puedes llamar herramientas directamente desde el chat usando el formato `herramienta: accion, clave=valor`:
+
+    | Comando | Qué hace |
+    |---------|----------|
+    | `file_manager: read, path=src/main.py` | Leer un archivo |
+    | `file_manager: write, path=app.py, content=print('hola')` | Escribir un archivo |
+    | `bash_manager: command=pytest tests/` | Ejecutar un comando shell |
+    | `git_manager: log, project_root=miproyecto` | Ver historial git |
+    | `code_search: pattern=def foo` | Buscar en el código |
+
+    ## Problemas comunes
+
+    ### Errores de "Module not found"
+
+    Ejecuta comandos a través de uv: `uv run python script.py` o `uv run pytest`.
+
+    ### Conexión a base de datos rechazada
+
+    Verifica que PostgreSQL está corriendo: `pg_isready`. Revisa `DATABASE_URL` en `.env`.
+
+    ### "No API key configured"
+
+    Configura al menos una de: `DEEPINFRA_API_KEY` (proveedor predeterminado), `DEEPSEEK_API_KEY` o `OPENAI_API_KEY` en `.env`. Para modo offline, configura `OFFLINE_MODE=true` y asegúrate de que Ollama está corriendo.
+
+    ### Herramientas no se ejecutan
+
+    Verifica que la herramienta está en la lista `tools.allowed` del workflow. Para comandos directos, la herramienta debe estar registrada globalmente.
+
+    ### Workspace no encontrado
+
+    Los workspaces se crean en el primer uso. Cambia de workspace desde el Dashboard o la configuración. El predeterminado es `main`.

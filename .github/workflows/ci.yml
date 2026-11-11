@@ -1,0 +1,66 @@
+name: Morphix CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: morphix
+          POSTGRES_PASSWORD: morphix
+          POSTGRES_DB: morphix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      QT_QPA_PLATFORM: offscreen
+      DATABASE_URL: postgresql://morphix:morphix@localhost:5432/morphix
+      ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY }}
+      PASSWORD_HASH: ${{ secrets.CI_PASSWORD_HASH }}
+      UNDERCOVER_MODE: "false"
+      DAEMON_MODE: "false"
+      OFFLINE_MODE: "true"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libegl1
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12.15'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-groups
+          uv run python --version
+
+      - name: Run pre-commit
+        run: uv run pre-commit run --all-files
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov=core --cov=llm --cov=agents --cov=tools --cov=orchestration --cov-report=xml
+
+      - name: Run mypy type check
+        run: uv run mypy core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/
+
+      - name: Build documentation
+        run: uv run mkdocs build --strict
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5

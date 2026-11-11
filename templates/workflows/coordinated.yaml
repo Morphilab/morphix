@@ -1,0 +1,133 @@
+# coordinated.yaml — preset DSL del motor (v1)
+# DECOMPOSE → loop.parallel dinámico → verificar → aggregate.
+version: 1
+name: coordinated
+description: "Multi-agent coordinator — decompose, execute per subtask, aggregate with confidence"
+inputs: [apertura]
+defaults:
+  apertura: "Subtarea del plan multi-agente"
+agents:
+  allowed: [developer, analista]
+tools:
+  allowed: ["file_manager", "git_manager", "bash_manager", "lsp_manager", "code_exec", "test_runner", "code_search", "diff_editor", "file_view", "goal_create", "goal_get", "goal_update", "goal_round", "todo_write", "todo_get", "plan_mode", "exit_plan_mode", "project_docs", "delegate_task", "pdf_read", "mcp"]
+project:
+  required: true
+skills: true
+# Techo de tokens de ESTE preset (guardarraíl, no objetivo).
+budget_tokens: 550000
+# Reserva del reparador del agregado; sin replanner en el loop paralelo.
+budget_reserve_final: 40000
+steps:
+  - id: planificar
+    kind: decompose
+    strategy: flat
+    output: subtasks
+    # 4 ítems como máximo: el loop paralelo comparte UN techo (420k), así que
+    # 10 subtareas no caben — se truncan antes de ejecutar, no a mitad.
+    max_items: 4
+    query: >-
+      Descompón esta tarea en subtareas de IMPLEMENTACIÓN (código y sus tests):
+      $query. Cada subtarea debe entregar una pieza concreta; NO generes
+      subtareas de análisis (explorar el repo, leer archivos, resumir), ni de
+      "ejecutar los tests", "verificar la spec" ni de verificación — el preset
+      ya tiene pasos deterministas de verificación (verificar_subtarea /
+      verificar_agregado). Genera como MÁXIMO 4 subtareas: el loop paralelo
+      comparte un techo y las tareas extra se descartan.
+  - id: filtrar_subtareas
+    kind: plugin
+    plugin: filtrar_items
+    # La prohibición en el query del decompose es soft (el modelo genera
+    # "Leer y analizar..." igual): este filtro la hace determinista. Un
+    # ítem descartado marca degradación — jamás Alta con tareas ocultas.
+    params:
+      var: subtasks
+      out: subtasks
+      patrones:
+        - 'leer y analizar'
+        - 'analizar el proyecto'
+        - 'explorar el repo'
+        - 'ejecutar los tests'
+        - 'verificar la spec'
+  - id: ejecutar
+    kind: loop
+    max_iter: 4
+    over: subtasks
+    parallel: true
+    parallel_max: 4
+    # Techo COMPARTIDO por los 4 hermanos (~105k cada uno a coste observado).
+    budget_tokens: 420000
+    body:
+      # body canónico compartido con development — el fragmento se expande
+      # in-place en compile-time (el motor ve los steps reales).
+      - id: cuerpo_subtareas
+        kind: fragment
+        include: _cuerpo_subtareas
+  - id: verificar
+    kind: agent
+    agent: analista
+    # El analista es read-only: un goal que pida "verificar la ejecución" lo
+    # invita a bash/escritura, el motor se lo niega y el step stalla. Verifica
+    # con lo que tiene: lectura de artefactos + test_runner (sin escritura).
+    goal: >-
+      Revisa la entrega de ESTE run para: $query. Trabaja SOLO en lectura:
+      lee los archivos que el run escribió con file_manager.read y, si
+      necesitas medir, usa test_runner sobre tests/. Tu perfil es read-only:
+      bash_manager, las escrituras y diff_editor están denegados y no debes
+      intentarlos. Reporta brechas concretas: piezas que no encajan entre sí
+      (imports rotos, contratos inconsistentes), tests que faltan o quedaron
+      rojos, y riesgos. Si no encuentras brechas, dilo y termina.
+    retry_max: 1
+    timeout: 600
+    max_iterations: 6
+  # Verificación del AGREGADO: este preset reparte subtareas en paralelo y sus
+  # gates individuales no ven que las piezas encajen entre sí (módulos que no
+  # se importan, tests de un ciclo que rompen otro). Este step es el que puede
+  # decir "la entrega está verde".
+  # Artefactos de ESTE run para la verificación del agregado: verificar solo
+  # lo que el run tocó — una suite preexistente en rojo no penaliza la
+  # entrega (trade-off: lo que el run rompió sin tocar tampoco se ve).
+  - id: artefactos_del_run
+    kind: plugin
+    plugin: files_del_run
+    params:
+      out: tests_del_run
+      glob: "tests/**/*.py"
+    outputs: ["tests_del_run"]
+  - id: verificar_agregado
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+      # La suite del run puede superar el default de 30s (un cuelgue
+      # transitorio convertía un verde en unmeasured): 120s da margen real.
+      timeout: 120
+    outputs:
+      pasan_agregado: tests_all_pass
+  # Reparación del agregado: el intermedio solo mide; el veredicto FINAL
+  # decide. Un rojo aquí no puede quedar sin quién lo arregle.
+  - id: reparar_agregado
+    kind: agent
+    agent: developer
+    when: "!$pasan_agregado"
+    goal: >-
+      La verificación del agregado quedó en ROJO. Corrige SOLO los tests que
+      fallan de este run ($tests_del_run): no reescribas lo que ya pasa ni
+      añadas archivos de test nuevos. Si el test es correcto, corrige la
+      implementación; no debilites asserts ni borres casos. Si todo pasa,
+      declara completado y PARA.
+    retry_max: 1
+    timeout: 600
+    max_iterations: 10
+    use_reserve_final: true
+  - id: verificar_agregado_final
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+      timeout: 120
+    outputs:
+      pasan_agregado_final: tests_all_pass
+    verdict: pasan_agregado_final
+  - id: agregar
+    kind: aggregate
+    strategy: confidence
