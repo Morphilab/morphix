@@ -1,0 +1,241 @@
+# sdd.yaml — Spec-Driven Development / Spec-First (preset DSL v1)
+# Spec redactada → gate de revisión (if_blockers) → plan → implementación
+# → trazabilidad spec↔entregado con gate final.
+version: 1
+name: sdd
+description: "Spec-Driven Development — spec primero, implementación trazada"
+agents:
+  allowed: [developer, analista, test_author]
+tools:
+  allowed: ["file_manager", "git_manager", "bash_manager", "test_runner", "diff_editor", "code_search", "lsp_manager", "delegate_task", "pdf_read"]
+project:
+  required: true
+skills: true
+# Techo de tokens de ESTE preset (guardarraíl, no objetivo).
+budget_tokens: 800000
+# Reserva del run: el reparador del agregado y el replanner no compiten con
+# el loop de implementación por los últimos tokens.
+budget_reserve_final: 60000
+budget_reserve_replan: 30000
+# La spec viaja entre redactar/corregir/plan/implementar; el cap global de
+# 2000 chars la cortaba y el plan solo veía el prefijo.
+max_interp_chars: 12000
+steps:
+  - id: redactar_spec
+    kind: agent
+    agent: analista
+    goal: >-
+      Redacta una spec técnica detallada (alcance, contratos, criterios de
+      aceptación) para: $query. Entrégala como TEXTO en tu respuesta — tu
+      rol es de solo lectura: no intentes escribir archivos ni ejecutar
+      bash; la implementación la hace el agente developer. Cada criterio de
+      aceptación debe ser una REGLA verificable y CONSISTENTE con la
+      definición que declares. No cuentes ejemplos a mano: si un ejemplo
+      lleva conteos (chars/palabras/líneas), derivalo de la definición
+      (p.ej. chars = len(texto)) o no lo incluyas. Un ejemplo que contradice
+      la definición es un error de la spec, no del implementador.
+    # Un intento único mata el run al primer final vacío del proveedor
+    # thinking: al menos un reintento por paso.
+    retry_max: 2
+    outputs: ["spec"]
+    timeout: 600
+    max_iterations: 10
+    # Paso de TEXTO: la spec se entrega como prosa; sin tools no hay
+    # exploración ni escritura que compita con el contrato.
+    tools: []
+  - id: revisar_spec
+    kind: agent
+    agent: analista
+    gate: true
+    goal: "Revisa la spec contra la petición: $spec. Petición original: $query. Hallazgos [Bloqueante|No bloqueante][razón]. Verificá la CONSISTENCIA INTERNA: cada ejemplo de los criterios de aceptación debe cumplir la definición declarada (p.ej. chars = len(texto)); un ejemplo que la contradice es [Bloqueante]. No explores el proyecto: la spec está en $spec. NO edites ni ejecutes bash: tu rol es de solo lectura; responde solo con la lista de hallazgos."
+    retry_max: 2
+    timeout: 600
+    max_iterations: 6
+  - id: corregir_spec
+    kind: agent
+    # developer: el analista es read-only por SOUL — un goal que manda a
+    # "corregir" lo lleva a intentar escribir/bash bloqueado por su propio
+    # perfil (contradicción agente/SOUL). El paso es coherente con un agente
+    # que PUEDE escribir; el contrato de salida es TEXTO ($spec).
+    agent: developer
+    when: if_blockers
+    goal: "Corrige los hallazgos [Bloqueante] de la spec conservando el resto, incluidos los ejemplos que contradicen la definición (recalculalos desde la definición o quitalos). Tu ÚNICA entrega es la spec COMPLETA corregida como TEXTO en tu respuesta — el paso siguiente la consume como $spec. Si usas tools, que sea solo para releer la spec o tu razonamiento; termina con el texto de la spec corregida y nada después."
+    retry_max: 2
+    outputs: ["spec"]
+    # una "spec corregida" de dos líneas no es una spec: el run la marca
+    # sin medición en vez de pasarla al plan como si estuviera completa.
+    min_output_chars: 1500
+    timeout: 600
+    max_iterations: 6
+    # Texto puro: la spec corregida es la respuesta, no un archivo.
+    tools: []
+  - id: plan
+    kind: decompose
+    strategy: flat
+    output: subtasks
+    # El coste por subtarea de sdd es alto (spec sections que reescriben el
+    # mismo archivo): 5 ítems no caben en 800k. 4 + spec acotada deja margen
+    # para traza/reparación.
+    max_items: 4
+    query: >-
+      Descompón esta spec en subtareas de IMPLEMENTACIÓN: $spec. Petición
+      original: $query. Cada subtarea debe entregar una pieza concreta; NO
+      generes subtareas de análisis (explorar el repo, leer archivos, resumir),
+      ni de "ejecutar los tests", "verificar la spec" ni de verificación — el
+      preset ya verifica con verificar_subtarea y verificar_agregado.
+  - id: filtrar_subtareas
+    kind: plugin
+    plugin: filtrar_items
+    # La prohibición en el query del decompose es soft (el modelo genera
+    # "Leer y analizar..." igual): este filtro la hace determinista. Un
+    # ítem descartado marca degradación — jamás Alta con tareas ocultas.
+    params:
+      var: subtasks
+      out: subtasks
+      # Los descartes por estos patrones son POR CONTRATO (el body escribe
+      # los tests de cada subtarea): el plan los muestra saltados, pero no
+      # degradan el proceso ni cuentan como entrega pendiente.
+      contrato: true
+      patrones:
+        - 'leer y analizar'
+        - 'analizar el proyecto'
+        - 'explorar el repo'
+        - 'ejecutar los tests'
+        - 'verificar la spec'
+        - 'crear test'
+        - 'crear spec'
+        - 'documenta'
+  # El test se escribe ANTES y por OTRO agente: el implementador no puede
+  # escribir un test que su propia implementación no cumple (el rojo real de
+  # telefonos/CSV era un test inventado por el mismo agente que implementaba).
+  - id: escribir_tests
+    kind: agent
+    agent: test_author
+    tools: [file_manager]
+    produces: ["tests/test_subtarea_*.py"]
+    goal: >-
+      Desde la spec ($spec) y las subtareas ($subtasks), escribí UN archivo de
+      test por subtarea: tests/test_subtarea_1.py, tests/test_subtarea_2.py, …
+      (el número es el índice de la subtarea en la lista). Cada test cubre los
+      criterios de la spec para ESA subtarea, con la API pública que la spec
+      define; no inventes APIs, excepciones ni contratos que la spec no nombre.
+      Solo tests: NO escribas en src/ ni implementes. Tests de COMPORTAMIENTO
+      (pytest); prohibido ejecutar pytest/pytest.main/la suite desde un test y
+      prohibido escribir meta-tests que escaneen la suite o el código buscando
+      patrones (se encuentran a sí mismos y fallan).
+      Cuando estén TODOS los archivos, resumí y PARA.
+    retry_max: 1
+    timeout: 600
+    # 4 archivos + lectura de la spec: 10 iteraciones cortaban el cierre.
+    max_iterations: 14
+  - id: implementar
+    kind: loop
+    max_iter: 10
+    over: subtasks
+    budget_tokens: 250000
+    # Cota por ítem: el ítem caro falla solo (max_iterations sigue acotando)
+    # y los siguientes conservan su margen.
+    max_tokens_per_item: 150000
+    replan: {max: 1, model_role: reasoning, max_new_items: 4}
+    body:
+      - id: subtarea
+        kind: agent
+        agent: developer
+        produces: ["**/*.py"]
+        verified_by: verificar_subtarea
+        goal: >-
+          Implementa según la spec ($spec): $item. El test de esta subtarea ya
+          está escrito en tests/test_subtarea_$iter.py (lo escribió el autor de
+          tests desde la spec): NO lo edites ni lo debilites — es el contrato.
+          Hazlo pasar sin romper los tests anteriores y PARA. Si el test
+          contradice la spec, dejá el rojo honesto en vez de cambiarlo.
+        retry_max: 2
+        timeout: 600
+        max_iterations: 18
+      - id: verificar_subtarea
+        kind: tool
+        tool: test_runner
+        args:
+          # La suite COMPLETA, no solo el test de esta subtarea: un subtask que
+          # toca el módulo compartido puede romper tests anteriores y su gate
+          # tiene que verlo (la regresión cruzada era el rojo real del
+          # agregado: cli.py rompió `contar` y test_cli.py no se ejecutó).
+          file_path: "tests"
+        outputs:
+          pasan: tests_all_pass
+        # veredicto consumido por el motor: un rojo reprueba el step y la
+        # entrega de su ciclo.
+        verdict: pasan
+  - id: trazabilidad
+    kind: agent
+    agent: analista
+    gate: true
+    goal: "Traza criterio por criterio la spec contra lo entregado. Spec: $spec. Podés LEER los archivos del run (file_manager/code_search) para contrastar la implementación; NO escribas archivos ni ejecutes bash. Leé SOLO lo necesario y, cuando tengas la evidencia, entregá la traza COMPLETA como TEXTO y PARA. [Bloqueante] por brecha."
+    retry_max: 2
+    timeout: 600
+    max_iterations: 10
+  - id: cerrar_brechas
+    kind: agent
+    agent: developer
+    when: if_blockers
+    goal: >-
+      Cierra las brechas [Bloqueante] detectadas en trazabilidad. Traza:
+      $last_output. Trabaja test-first: ajusta PRIMERO el test que cubre cada
+      brecha y luego el código hasta verde. La verificación del agregado
+      confirma el conjunto.
+    retry_max: 1
+    timeout: 600
+    # El cap no corrige un step que thrashea: ampliarlo solo multiplica el
+    # coste. Se queda en 10; el thrash es del step, no del techo.
+    max_iterations: 10
+  # Verificación del AGREGADO: los gates por-subtarea no ven que las piezas
+  # encajen entre sí — este step es el que puede decir "la entrega está verde".
+  # Artefactos de ESTE run para la verificación del agregado: verificar solo
+  # lo que el run tocó — una suite preexistente en rojo no penaliza la
+  # entrega (trade-off: lo que el run rompió sin tocar tampoco se ve).
+  - id: artefactos_del_run
+    kind: plugin
+    plugin: files_del_run
+    params:
+      out: tests_del_run
+      glob: "tests/**/*.py"
+    outputs: ["tests_del_run"]
+  - id: verificar_agregado
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+      # La suite del run puede superar el default de 30s (un cuelgue
+      # transitorio convertía un verde en unmeasured): 120s da margen real.
+      timeout: 120
+    outputs:
+      pasan_agregado: tests_all_pass
+  # Reparación del agregado: solo si la verificación quedó en rojo. El
+  # veredicto FINAL es el gate de calidad; el intermedio solo mide.
+  - id: reparar_agregado
+    kind: agent
+    agent: developer
+    when: "!$pasan_agregado"
+    goal: >-
+      La verificación del agregado quedó en ROJO. Corrige SOLO los tests que
+      fallan de este run ($tests_del_run): no reescribas lo que ya pasa ni
+      añadas archivos de test nuevos. Verifica con test_runner sobre esos
+      archivos. Si el test es correcto, corrige la implementación; no
+      debilites asserts ni borres casos. Si todo pasa, declara completado
+      y PARA.
+    retry_max: 1
+    timeout: 600
+    max_iterations: 10
+    use_reserve_final: true
+  - id: verificar_agregado_final
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+      timeout: 120
+    outputs:
+      pasan_agregado_final: tests_all_pass
+    verdict: pasan_agregado_final
+  - id: agregar
+    kind: aggregate
+    strategy: confidence

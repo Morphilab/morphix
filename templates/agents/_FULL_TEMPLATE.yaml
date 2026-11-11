@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════════
+# AGENT TEMPLATE — Todos los campos posibles
+# ═══════════════════════════════════════════════════════════
+# Copiá este archivo a workspaces/<nombre>/agents/<nombre>.yaml
+# y editá solo los campos que necesites.
+# Los campos marcados con ⚠️ son obligatorios.
+# ═══════════════════════════════════════════════════════════
+
+# ⚠️ Nombre único del agente (snake_case, sin espacios)
+name: mi_agente
+
+# Tipo de agente — controla el comportamiento del Safety Net
+# "analysis": solo lectura, Safety Net NUNCA crea archivos
+# "development": lectura/escritura, Safety Net puede crear archivos
+# Cualquier otro valor: igual que "development" (comportamiento seguro por defecto)
+type: development
+
+# ⚠️ System prompt — instrucciones que definen la personalidad y comportamiento
+# Usá '>' para texto multilínea con saltos de línea convertidos a espacios
+# Usá '|' para preservar saltos de línea exactos
+system_prompt: >
+  Eres un asistente experto. Responde de forma clara y concisa.
+
+# Control de longitud de respuestas
+length_guidance: "Sé conciso pero completo."
+
+# Temperatura del modelo (0.0 = determinista, 1.0 = creativo)
+temperature: 0.3
+
+# ⚠️ Herramientas que este agente puede usar
+tools:
+  - file_manager
+  - bash_manager
+  - test_runner
+
+# Palabras clave para enrutamiento automático
+# El router asigna agentes basado en estas keywords
+keywords:
+  - code
+  - script
+  - function
+  - implement
+
+# Prioridad de selección (1-100). Mayor = más probable de ser elegido.
+priority: 50
+
+# ⚠️ Rol de modelo — referencia a config.py model_roles
+# Todos los roles de producto corren en DeepInfra con un thinking model:
+#   deepinfra (temp 0.7, cap 8192) — rol canónico para agentes
+#   agent (temp 0.7, cap 8192) — equivalente al canónico
+#   fast (temp 0.3, cap 1024) — respuestas rápidas
+#   reasoning (temp 0.0, cap 4096) — análisis lógico
+#   creative (temp 0.9, cap 4096) — contenido creativo
+#   critique (temp 0.0, cap 1024) — evaluación objetiva
+#   vision (temp 0.3, cap 2048, sin tools) — análisis de imágenes
+#   default (temp 0.7, cap 4096) — fallback
+model_role: deepinfra
+
+# ═══ OPCIONAL: Override de modelo ═══
+# Solo usá esto si necesitás ajustar temperatura sin cambiar de rol.
+# El provider y model los define model_role en config.py.
+# Quitá el # para activar:
+
+# model_override:
+#   temperature: 0.2   # Solo este campo es válido aquí
+
+# ═══ OPCIONAL: Clave de memoria ═══
+# Key en FAISS donde se guarda el último resultado de este agente.
+# null = no persiste.
+
+last_memory_key: null

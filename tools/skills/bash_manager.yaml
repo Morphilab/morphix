@@ -1,0 +1,17 @@
+tool: bash_manager
+when_to_use:
+  - Para ejecutar comandos de terminal en el workspace del proyecto
+  - Para instalar dependencias (pip install, npm install, etc.)
+  - Para ejecutar scripts Python con argumentos
+  - Para crear directorios, mover archivos, y otras operaciones de filesystem
+when_not_to_use:
+  - Para ejecutar tests (usa test_runner)
+  - Para leer/escribir archivos (usa file_manager)
+  - Para comandos que requieran sudo o acceso root
+examples:
+  - "bash_manager: execute, command='python3 script.py'"
+  - "bash_manager: execute, command='pip install -r requirements.txt'"
+  - "bash_manager: execute, command='mkdir -p src/tests'"
+tips:
+  - El directorio de trabajo ya es el project root — NO uses paths absolutos
+  - Para comandos largos que requieren contexto de archivos, usa file_manager.write primero

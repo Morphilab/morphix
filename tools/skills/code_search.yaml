@@ -1,0 +1,11 @@
+tool: code_search
+when_to_use:
+  - Para buscar código, funciones o patrones en todo el proyecto
+  - Antes de hacer cambios grandes, para entender el código existente
+when_not_to_use:
+  - Para leer archivos específicos (usa file_manager)
+examples:
+  - "code_search: pattern='def process_data'"
+  - "code_search: pattern='class Database'"
+tips:
+  - Usá code_search antes de modificar para encontrar todas las referencias

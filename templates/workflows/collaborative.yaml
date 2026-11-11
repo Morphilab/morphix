@@ -1,0 +1,53 @@
+# collaborative.yaml — preset DSL del motor (v1)
+# Debate en rondas: cada panelista ve la opinión previa (secuencia
+# determinista por ronda); el moderador sintetiza al final.
+version: 1
+name: collaborative
+description: "Multi-agent panel debate to reach consensus on complex decisions"
+agents:
+  allowed: [developer, analista, moderador]
+tools:
+  allowed: ["file_manager", "code_search", "lsp_manager", "pdf_read"]
+project:
+  required: false
+# Debate oral sin entregables en disco: las procedurales no aportan aquí;
+# las guías de tools llegan igual por el allowlist.
+skills: false
+# Techo de tokens de ESTE preset (guardarraíl, no objetivo).
+budget_tokens: 150000
+steps:
+  - id: rondas
+    kind: loop
+    max_iter: 3
+    budget_tokens: 120000
+    body:
+      - id: opinion_developer
+        kind: agent
+        agent: developer
+        goal: >-
+          Ronda $iter de $max_iter del debate sobre: $query. Si es la ronda 1,
+          da tu postura inicial; en las siguientes, critica o responde a
+          $last_output y NO repitas tu postura inicial. Tu opinión es ORAL:
+          responde sin escribir ni editar archivos (ni ADRs, ni documentos) —
+          el registro canónico de la decisión lo escribe ÚNICAMENTE el
+          moderador en la síntesis final.
+        # Una opinión vacía del proveedor thinking no debe matar el debate
+        # entero: al menos un reintento por paso.
+        retry_max: 2
+        timeout: 300
+      - id: opinion_analista
+        kind: agent
+        agent: analista
+        goal: >-
+          Ronda $iter de $max_iter del debate sobre: $query. Si es la ronda 1,
+          da tu postura inicial; en las siguientes, replica a $last_output y
+          NO repitas tu postura inicial. Tu réplica es ORAL: responde sin
+          escribir ni editar archivos (ni ADRs, ni documentos) — el registro
+          canónico de la decisión lo escribe ÚNICAMENTE el moderador en la
+          síntesis final.
+        retry_max: 2
+        timeout: 300
+  - id: sintesis
+    kind: aggregate
+    strategy: moderator
+    agent: moderador

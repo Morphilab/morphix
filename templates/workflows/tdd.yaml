@@ -1,0 +1,87 @@
+# tdd.yaml — preset DSL del motor (v1)
+# Ciclo TDD autónomo: ruta del test → rojo → loop implementar → verde.
+# La ruta la DECLARA EL PRESET (derivada de la query con slug_path): el until
+# verifica SOLO ese archivo — correr sobre "." hereda los fallos de tests
+# ajenos, y depender de que el modelo emita "TEST_PATH:" dejaba la verificación
+# sin ruta cuando el agente no llegaba a escribir nada.
+version: 1
+name: tdd
+description: "Test-Driven Development loop — tests, implement, iterate until green"
+agents:
+  allowed: ["developer"]
+tools:
+  allowed: ["file_manager", "diff_editor", "test_runner", "git_manager"]
+project:
+  required: true
+skills: true
+# Techo de tokens de ESTE preset (guardarraíl, no objetivo).
+budget_tokens: 200000
+steps:
+  - id: ruta_test
+    kind: plugin
+    plugin: slug_path
+    params:
+      var: query
+      out: test_path
+      prefix: "tests/test_"
+      suffix: ".py"
+      max_len: 40
+    outputs: ["test_path"]
+  - id: rojo
+    kind: agent
+    agent: developer
+    goal: >-
+      Escribe el test FALLIDO que codifica: $query. El test vive EXACTAMENTE
+      en $test_path — créalo ahí y no añadas otros archivos de test. Si el
+      proyecto está vacío, no lo explores: crea el archivo de test
+      directamente con file_manager.write. El test prueba COMPORTAMIENTO:
+      prohibido ejecutar pytest, pytest.main o la suite desde el test
+      (subprocess/os.system); un test que corre la suite es una recursión, no
+      una verificación.
+    retry_max: 1
+    timeout: 300
+    max_iterations: 12
+  - id: ciclo
+    kind: loop
+    max_iter: 5
+    budget_tokens: 150000
+    until:
+      type: tool
+      tool: test_runner
+      check: tests_all_pass
+      args:
+        file_path: "$test_path"
+    body:
+      - id: implementar
+        kind: agent
+        agent: developer
+        produces: ["$test_path", "*.py"]
+        goal: >-
+          Ciclo TDD ($iter/$max_iter) para: $query. El test vive en
+          $test_path — verifica SOLO con él: los fallos de otros archivos
+          no pertenecen a esta feature. Resultado de la iteración previa:
+          $last_output — continúa desde ahí, no repitas trabajo ni re-crees
+          archivos existentes.
+        retry_max: 1
+        timeout: 600
+        max_iterations: 14
+  # Verificación del AGREGADO: el until del loop solo ve SU archivo; este
+  # step confirma el conjunto que el run tocó.
+  - id: artefactos_del_run
+    kind: plugin
+    plugin: files_del_run
+    params:
+      out: tests_del_run
+      glob: "tests/**/*.py"
+    outputs: ["tests_del_run"]
+  - id: verificar_agregado
+    kind: tool
+    tool: test_runner
+    args:
+      file_paths: "$tests_del_run"
+    outputs:
+      pasan_agregado: tests_all_pass
+    verdict: pasan_agregado
+  - id: resumen
+    kind: aggregate
+    strategy: confidence

@@ -1,0 +1,39 @@
+# _cuerpo_subtareas.yaml — body canónico del loop de subtareas.
+#
+# development y coordinated lo incluyen (kind: fragment) desde el body de su
+# loop: el cambio de cuerpo va en UN lugar (la divergencia de este par es la
+# que produjo el bug de `$iter` en paralelo). La apertura del goal es el input
+# `apertura` con default distinto por preset — el caller puede sobreescribirla.
+#
+# Archivo con `_` inicial: el catálogo de presets NO lo lista (solo se
+# referencia por include). `version` lo hace visible para el loader de
+# includes; sus `steps` son lo único que se splice.
+version: 1
+steps:
+  - id: subtarea
+    kind: agent
+    agent: developer
+    produces: ["tests/test_subtarea_$iter.py", "src/**/*.py"]
+    verified_by: verificar_subtarea
+    goal: >-
+      $apertura ($query): $item. Trabaja test-first: escribe PRIMERO el
+      test que verifica ESTA subtarea en tests/test_subtarea_$iter.py
+      (esa ruta exacta — no añadas otros archivos de test) y luego
+      implementa hasta verde — al pasar el test, declara completado y
+      PARA. Estado previo: $last_output — continúa desde ahí, no repitas
+      trabajo. El test prueba COMPORTAMIENTO: prohibido ejecutar pytest,
+      pytest.main o la suite desde el test (subprocess/os.system); un test
+      que corre la suite es una recursión, no una verificación.
+    retry_max: 2
+    timeout: 600
+    max_iterations: 16
+  - id: verificar_subtarea
+    kind: tool
+    tool: test_runner
+    args:
+      file_path: "tests/test_subtarea_$iter.py"
+    outputs:
+      pasan: tests_all_pass
+    # veredicto consumido por el motor: un rojo reprueba el step y la
+    # entrega de su ciclo.
+    verdict: pasan

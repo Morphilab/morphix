@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Morphix — PySide6 Desktop GUI entry point."""
+import asyncio
+import logging
+import os
+import signal
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+# ── Early .env loading (before logging) ──
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent / ".env")
+_LOG_LEVEL = logging.DEBUG if os.getenv("VERBOSE_LOGGING", "").lower() == "true" else logging.INFO
+
+# ── Logging ──
+from core.path_resolver import paths
+
+_LOG_FILE = paths.log_file()
+_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+# morphix.log redacta credenciales en cada línea (patrones de agents.audit,
+# compilados flag-al-import). audit.jsonl ya lo hacía por su cuenta.
+from agents.audit import RedactingFormatter
+
+logging.basicConfig(
+    level=_LOG_LEVEL,
+    filename=str(_LOG_FILE),
+    force=True,
+    encoding="utf-8",
+)
+_root = logging.getLogger()
+for _h in _root.handlers:
+    _h.setFormatter(RedactingFormatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+
+# Logs estructurados opt-in: LOG_JSON=true sustituye el formatter de texto por
+# líneas JSON (misma redacción de credenciales — el contrato no cambia).
+if os.getenv("LOG_JSON", "").lower() == "true":
+    from core.logging_json import apply_json_logging
+
+    apply_json_logging(_root)
+
+logger = logging.getLogger(__name__)
+logger.info("=== Morphix Desktop iniciado ===")
+
+# ── Higiene DAEMON_MODE ──
+# daemon_mode=true en desktop solo gobierna el heartbeat Kairos; las
+# aprobaciones dependen del callback de host de la GUI, no de este flag.
+# Un desktop con daemon en true es casi siempre residuo de configuración.
+import os as _os
+
+if _os.getenv("DAEMON_MODE", "").strip().lower() in ("1", "true", "yes", "on"):
+    logger.warning(
+        "⚠️ DAEMON_MODE=true en desktop: solo gobierna el heartbeat Kairos. "
+        "Las aprobaciones dependen de la GUI (callback de host), no de este flag. "
+        "Si no sabes qué es, elimina DAEMON_MODE de .env."
+    )
+
+# ── Carga temprana de tools + hooks ──
+from core.hook_loader import load_global_hooks
+from tools.loader import load_global_tools
+
+load_global_tools()
+load_global_hooks()
+
+# ── Config validation ──
+from core.bootstrap import validate_config
+
+try:
+    _valid, _warnings = validate_config()
+    for w in _warnings:
+        logger.warning("Config warning: %s", w)
+except ValueError as e:
+    logger.critical("Config validation failed: %s", e)
+    print(f"FATAL: {e}", file=sys.stderr)
+    sys.exit(1)
+
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QMessageBox
+
+from desktop.async_helpers import set_app_loop
+from desktop.main_window import LoginDialog, MainWindow
+
+_shutdown_flag = False
+
+
+def _signal_handler(signum: int, frame) -> None:
+    global _shutdown_flag
+    if not _shutdown_flag:
+        _shutdown_flag = True
+        signame = signal.Signals(signum).name
+        logger.info("Received %s, initiating graceful shutdown", signame)
+        QApplication.instance().quit()
+
+
+def main():
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("Morphix")
+    app.setOrganizationName("MorphiLab")
+
+    # Aplica el tema activo a nivel de app (palette + QSS base global):
+    # papel (oscuro) o papel claro según DARK_MODE — el tema decide los colores.
+    from desktop.theme import ThemeManager
+
+    ThemeManager.apply_to_app(app)
+
+    # ── Integrate asyncio event loop with Qt ──
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    set_app_loop(loop)
+    _init_task = None
+
+    def _pump_asyncio():
+        loop.call_soon(loop.stop)
+        loop.run_forever()
+
+    pump_timer = QTimer()
+    pump_timer.timeout.connect(_pump_asyncio)
+    pump_timer.start(16)
+
+    # Login
+    login = LoginDialog()
+    if login.exec() != LoginDialog.DialogCode.Accepted:
+        return
+
+    # Main window
+    window = MainWindow()
+    window.show()
+
+    # Inicializar backend
+    async def init():
+        try:
+            await window.init_backend()
+        except Exception as e:
+            logger.critical(f"Error en init: {e}", exc_info=True)
+            QMessageBox.critical(window, "Error", f"Error al inicializar:\n{e}")
+
+    _init_task = asyncio.run_coroutine_threadsafe(init(), loop)
+
+    # Save reference for cleanup in closeEvent
+    window._init_task = _init_task
+
+    exit_code = app.exec()
+
+    # ── Graceful shutdown: stop daemons, dispose DB, cancel tasks, close loop ──
+    from core.bootstrap import stop_daemons
+    from core.codebase_indexer import request_indexing_shutdown
+    from core.database import dispose_engine
+
+    # El hilo de indexado (to_thread) no se puede cancelar: marcarlo para
+    # que aborte en el próximo límite de lote con su checkpoint persistido —
+    # sin esto el proceso seguía vivo terminando batches tras el cierre
+    # y el proceso no quede vivo terminando batches tras el cierre.
+    request_indexing_shutdown()
+
+    async def _shutdown():
+        try:
+            await stop_daemons()
+        except Exception:
+            logger.warning("Error stopping daemons", exc_info=True)
+        try:
+            await dispose_engine()
+        except Exception:
+            logger.warning("Error disposing DB engine", exc_info=True)
+
+    loop.run_until_complete(_shutdown())
+
+    pending = asyncio.all_tasks(loop)
+    for task in pending:
+        task.cancel()
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    # transports de subprocess huérfanos (cancelación a mitad del spawn):
+    # forzar su finalización AHORA — con el loop aún abierto su __del__
+    # agenda el callback sin error; el burst posterior lo drena. Sin esto
+    # el GC los soltaba tras el close y su call_soon sobre el loop muerto
+    # imprimía el 'RuntimeError: Event loop is closed' cosmético.
+    import gc
+
+    gc.collect()
+    loop.run_until_complete(asyncio.sleep(0.05))
+    loop.close()
+    logger.info("=== Morphix Desktop shut down gracefully ===")
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

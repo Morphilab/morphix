@@ -1,0 +1,34 @@
+# Core API Reference
+
+::: core.database
+::: core.config
+::: core.path_resolver
+::: core.health
+::: core.bootstrap
+::: core.feature_flags
+::: core.circuit_breaker
+::: core.rate_limiter
+::: core.token_counter
+::: core.cache_manager
+::: core.context_manager
+::: core.change_tracker
+::: core.codebase_indexer
+::: core.embedding_provider
+::: core.faiss_indexer
+::: core.git_operations
+::: core.hooks_registry
+::: core.hook_loader
+::: core.metrics
+::: core.models
+::: core.utils
+::: core.workspaces
+::: core.workflow_state
+::: core.memory.manager
+::: core.mcp.server
+::: core.mcp.client
+::: core.mcp.config
+::: core.mcp.adapter
+::: core.mcp.protocol
+::: core.sandbox.restricted_executor
+::: core.hooks.audit
+::: core.repositories.conversation_repository

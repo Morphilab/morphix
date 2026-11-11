@@ -1,0 +1,51 @@
+# ── Runtime artifacts (created by the application) ──
+logs/
+/memory/
+/exports/
+/sessions/
+/workspaces/
+
+# ── Secrets & credentials ──
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# ── Logs ──
+*.log
+
+# ── Python artifacts ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+data/workspaces
+/data/runs/
+
+# ── Virtual environments ──
+venv/
+.venv/
+
+# ── OS artifacts ──
+.DS_Store
+
+# ── Test artifacts ──
+*.png
+
+# ── Docs build ──
+site/
+
+# ── Coverage ──
+coverage.json

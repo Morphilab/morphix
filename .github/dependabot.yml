@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Dependencias Python (pyproject/uv). Agrupado para evitar PRs ruidosos:
+  # el repo actualiza en lotes verificados con la suite completa.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      dev-deps:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(ci)"
