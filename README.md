@@ -63,6 +63,20 @@ tested, and extended independently.
 
 ---
 
+## Screenshots
+
+> Captured from a demo workspace with sample conversations and workflows.
+
+![Morphix dashboard — workflows, agents, projects and bots](docs/assets/screenshots/dashboard.png)
+
+*Dashboard — workflow presets, agent profiles, projects and bots in one place.*
+
+![Morphix Maestro — multi-agent debate with per-agent blocks and live activity](docs/assets/screenshots/maestro-debate.png)
+
+*Maestro — a multi-agent debate with per-agent blocks, a deterministic consensus and live activity/token telemetry.*
+
+---
+
 ## Quick Start
 
 ```bash

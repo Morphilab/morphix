@@ -65,6 +65,20 @@ independiente.
 
 ---
 
+## Capturas
+
+> Capturadas desde un workspace de demostración con conversaciones y workflows de ejemplo.
+
+![Dashboard de Morphix — workflows, agentes, proyectos y bots](docs/assets/screenshots/dashboard.png)
+
+*Dashboard — presets de workflow, perfiles de agentes, proyectos y bots en un solo lugar.*
+
+![Maestro de Morphix — debate multi-agente con bloques por agente y actividad en vivo](docs/assets/screenshots/maestro-debate.png)
+
+*Maestro — debate multi-agente con bloques por agente, consenso determinista y telemetría de actividad y tokens en vivo.*
+
+---
+
 ## Inicio rápido
 
 ```bash

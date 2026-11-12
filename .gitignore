@@ -43,6 +43,8 @@ venv/
 
 # ── Test artifacts ──
 *.png
+# README screenshots are documentation, not test output
+!docs/assets/screenshots/*.png
 
 # ── Docs build ──
 site/
