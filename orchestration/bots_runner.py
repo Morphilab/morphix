@@ -61,6 +61,7 @@ async def run_bot_turn(
     events: WorkflowEvents | None = None,
     room_id: str | None = None,
     room_send_dm: bool = False,
+    emitter: WorkflowEmitter | None = None,
 ) -> str | dict | None:
     """Ejecuta UN turno del bot en SU conversación con SU identidad.
 
@@ -139,7 +140,7 @@ async def run_bot_turn(
     task = f"{query}{extra_query}"
     start = time.monotonic()
 
-    emitter = WorkflowEmitter(None)
+    emitter = emitter or WorkflowEmitter(None)
     await emitter.emit(
         status=f"Bot @{slug}",
         current_agent=f"@{slug}",
@@ -200,10 +201,19 @@ async def run_bot_turn(
     # tokens_used/elapsed_time los mide el propio WorkflowEmitter
     # (antes se pasaban explícitos y el emitter logueaba warning por turno).
     await emitter.emit(
-        status="Completado",
+        status="Completado" if final else "Fallido",
+        # el subtask del turno nace "running": cerrarlo es la verdad del run
+        # (antes la GUI lo dejaba girando tras el turno).
+        subtask_list=[
+            {
+                "name": f"Turno @{slug}",
+                "status": "completed" if final else "failed",
+            }
+        ],
+        subtasks_total=1,
         subtasks_completed=1 if final else 0,
         current_agent=f"@{slug}",
-        phase="Completado",
+        phase="Completado" if final else "Fallido",
     )
 
     if not final:

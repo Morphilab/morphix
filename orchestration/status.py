@@ -12,6 +12,32 @@ from core.path_resolver import paths
 
 logger = logging.getLogger(__name__)
 
+# Prefijos (case-insensitive, anclados AL INICIO del status) del contrato de
+# stats que indican que el run YA NO está en ejecución. Los emits terminales
+# empiezan con la palabra ("Completado", "Fallido", "Detenido"...), mientras
+# que los intermedios solo la contienen en medio ("Ronda 2/3 completada",
+# "Aggregating (2 done, 1 failed)", "DAG level completed"). Vive aquí (no en
+# la GUI) porque el emitter también lo necesita para no dejar que un emit
+# diferido pise el cierre del run.
+TERMINAL_STATUS_PREFIXES = (
+    "completad",  # Completado/Completada (final español; diverge de "completed")
+    "complete",  # completed (final inglés: pipeline y agent loop)
+    "fallid",  # Fallido/Fallida (ruta TDD fallida)
+    "detenid",  # Detenido/Detenida (run stopped por plan inconsistente)
+    "cancel",  # Cancelado/cancelled
+    "paus",  # Pausa/paused (gate/checkpoint de pipeline)
+    "fail",  # failed (stage/gate de pipeline)
+    "error",  # Error ... (defensivo; sin emits actuales)
+    "idle",  # default del WorkflowEmitter
+)
+
+
+def is_terminal_status(status: object) -> bool:
+    """True si el status de stats representa el FIN del run (no un parcial)."""
+    text = str(status or "").strip().lower()
+    return bool(text) and text.startswith(TERMINAL_STATUS_PREFIXES)
+
+
 STATUS_ICONS = {
     "completed": "🟢",
     "delivered": "🟢",
@@ -108,7 +134,9 @@ def render_from_subtasks(
 
     Deriva exclusivamente de subtask_list (el mismo dato que la lista de
     Subtareas de la UI) — cero drift entre ambas vistas. La agrupación por
-    fase se muestra como encabezado; si no hay fase, lista plana.
+    fase se muestra como encabezado; si no hay fase, lista plana. Un ítem
+    puede declarar su propia ``phase`` (la GUI la deriva del plan del run):
+    se abre un encabezado cada vez que cambia, en el orden del plan.
     colors: overrides opcionales de color ({status_key|card_key: color}).
     """
     if not subtask_list:
@@ -124,7 +152,15 @@ def render_from_subtasks(
         )
 
     cards: list[str] = []
+    current_group: str | None = None
     for item in subtask_list:
+        item_phase = str(item.get("phase") or "").strip()
+        if item_phase and item_phase != current_group:
+            current_group = item_phase
+            cards.append(
+                f"<div style='color:{palette['accent']}; font-size:11px; font-weight:bold; "
+                f"margin:8px 0 2px 0'>📂 {_clean_text(item_phase, 60)}</div>"
+            )
         name = item.get("name", "Subtarea")
         status = item.get("status", "pending")
         agent = item.get("agent") or "—"

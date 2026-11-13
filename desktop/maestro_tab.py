@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 from datetime import UTC, datetime
+from html import escape as _html_escape
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QTextCursor
@@ -43,6 +44,7 @@ from desktop.services.workflow_runner import WorkflowRunner
 from desktop.widgets.collapsible_section import CollapsibleSection
 from desktop.widgets.phase_cards import PhaseCards
 from desktop.widgets.stat_chips import StatChips
+from orchestration.status import TERMINAL_STATUS_PREFIXES
 
 _SUBTASK_GLYPHS = {
     "completed": "✓",
@@ -56,22 +58,10 @@ _SUBTASK_GLYPHS = {
     "skipped": "⏭",
 }
 CHAT_MAX_WIDTH = 760
-# Prefijos (case-insensitive, anclados AL INICIO del status) del contrato real
-# de stats que indican que el workflow YA NO está en ejecución. Los emits
-# terminales empiezan con la palabra ("Completado", "Fallido", "completed"...)
-# mientras que los intermedios solo la contienen en medio ("Ronda 2/3
-# completada", "Aggregating (2 done, 1 failed)", "DAG level completed").
-_ACTIVITY_TERMINAL_PREFIXES = (
-    "completad",  # Completado/Completada (final español; OJO: diverge de "completed")
-    "complete",  # completed (final inglés: pipeline y agent loop)
-    "fallid",  # Fallido/Fallida (ruta TDD fallida)
-    "detenid",  # Detenido/Detenida (run stopped por plan inconsistente)
-    "cancel",  # Cancelado/cancelled
-    "paus",  # Pausa/paused (gate/checkpoint de pipeline)
-    "fail",  # failed (stage/gate de pipeline)
-    "error",  # Error ... (defensivo; sin emits actuales)
-    "idle",  # default del WorkflowEmitter
-)
+# Prefijos del contrato real de stats que indican que el workflow YA NO está
+# en ejecución. La fuente única vive en orchestration.status (el emitter
+# también la usa para no dejar que un emit diferido pise el cierre).
+_ACTIVITY_TERMINAL_PREFIXES = TERMINAL_STATUS_PREFIXES
 
 
 class SessionPane(QWidget):
@@ -159,10 +149,17 @@ class SessionPane(QWidget):
         self._stop_btn: QPushButton
 
         # Perf: differential-update caches to avoid redundant widget writes
-        self._last_progress: int = -1
+        self._last_progress_key: tuple[int, int] | None = None
         self._last_subtasks: list | None = None
         self._last_files: list | None = None
         self._last_plan_signature: tuple | None = None
+        # Cierre del run: el panel debe resetearse al INICIO de cada run (no
+        # arrastrar progreso/subtareas/archivos del anterior) y saber si el
+        # cierre llegó por stats o solo por el fin de la corrutina.
+        self._run_saw_terminal: bool = False
+        self._run_had_stats: bool = False
+        self._run_logged_terminal: bool = False
+        self._logged_subtask_states: dict[str, str] = {}
         self._status_log_started: bool = False
         self._budget_warned: bool = False  # banner de presupuesto una vez por run
 
@@ -212,9 +209,9 @@ class SessionPane(QWidget):
         self._runner.on_assistant = self._runner_on_assistant
         self._runner.on_pause = lambda s, q: self._on_runner_pause(s, q)
         self._runner.streaming_check = self._has_streaming
-        # Rutas sin emit terminal (coordinated) o excepción: el fin del run
-        # garantiza el reset del chip aunque ningún stats lo haga.
-        self._runner.on_finish = lambda: self._set_activity_state(False)
+        # Rutas sin emit terminal (excepción/cancelación) o cierre perdido: el
+        # fin del run deja el panel en idle y sin un chip "Ejecutando" eterno.
+        self._runner.on_finish = self._on_run_finished
         # ⏹ persiste la conversación parcial (guarda lo que haya en UI).
         self._runner.on_cancel_persist = self._persist_cancelled_run
 
@@ -338,6 +335,9 @@ class SessionPane(QWidget):
         self._selected_agent = name
         self._update_agent_detail()
         self._update_info_button()
+        # El tab Bash sigue al perfil del agente elegido: sin esto quedaba
+        # habilitado/deshabilitado según el agente anterior hasta un ⟳.
+        self._refresh_detail_tabs_for_workflow()
         # In chat mode: activate agent for direct conversation
         if self._mode == "chat":
             self._force_agent = name
@@ -661,7 +661,10 @@ class SessionPane(QWidget):
 
     def _on_system(self, msg: str):
         if "[bash_manager]" in msg:
-            self.bash_panel.set_output(msg[-3000:])
+            # el panel Bash acumula la salida de TODOS los comandos en orden
+            # (antes solo sobrevivía el último); el prefijo es ruido visual.
+            output = msg.replace("[bash_manager]", "", 1).lstrip("\n")
+            self.bash_panel.append_output(output)
         self._append_status(msg)
         if msg.startswith("❌"):
             self._show_status_banner(msg, "error")
@@ -726,6 +729,12 @@ class SessionPane(QWidget):
         self._update_pause_affordance()
         self._set_workflow_running(False)
         self._set_activity_state(False)
+        # El run NO terminó: está esperando al humano. El chip de estado debe
+        # decir la verdad (antes quedaba "Ejecutando (DSL)" con el dot ○).
+        self.stat_chips.set_status("Pausa")
+        # la pausa ES el cierre de este tramo: el on_finish del runner no debe
+        # reportar "sin estado final" sobre una pausa legítima.
+        self._run_saw_terminal = True
         self._hide_typing()
 
     def _update_pause_affordance(self) -> None:
@@ -746,6 +755,8 @@ class SessionPane(QWidget):
         self._hide_status_banner()
         self._update_pause_affordance()
         self.input_field.setPlaceholderText("Escribe tu mensaje...")
+        # el run pausado ya no existe: el chip no puede seguir diciendo "Pausa"
+        self.stat_chips.set_status("Finalizado")
         self._on_system(
             "⏸→ Pausa abandonada — la fila queda en BD; recargar la " "conversación la recupera."
         )
@@ -799,9 +810,13 @@ class SessionPane(QWidget):
         """Append a line to the status log (O(1) — no full-document reparse)."""
         # hora LOCAL — la GUI debe coincidir con el reloj del sistema
         timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
+        # El mensaje puede venir de una tool/LLM (salida bash, goal de una
+        # subtarea): se escapa para que un '<' no rompa el HTML del Log, y
+        # los saltos de línea se preservan (antes se colapsaban en un párrafo).
+        safe = _html_escape(str(msg)).replace("\n", "<br>")
         entry = (
             f"<span style='color:{color}; font-size:12px;'>"
-            f"<span style='color:{COLORS['text_timestamp']}'>{timestamp}</span>  {msg}</span>"
+            f"<span style='color:{COLORS['text_timestamp']}'>{timestamp}</span>  {safe}</span>"
         )
         if not self._status_log_started:
             self.status_log.clear()
@@ -838,23 +853,111 @@ class SessionPane(QWidget):
             "Workflow en ejecución" if running else "Sin ejecución activa"
         )
 
-    def _render_run_state(self, run_state: dict) -> None:
+    def _on_run_finished(self, status: str | None = None) -> None:
+        """Fin de la corrutina del run (éxito, excepción o cancelación).
+
+        El cierre REAL viaja por stats (status terminal); esto solo garantiza
+        el estado idle cuando ese cierre no llegó (excepción antes del emit,
+        cancelación, ruta de chat directo). Sin el aviso, el chip quedaba
+        diciendo "Ejecutando…" con el dot ya apagado — dos indicadores
+        contradiciéndose.
+        """
+        if status:
+            self.stat_chips.set_status(status)
+            self._run_saw_terminal = True
+            if not self._run_logged_terminal:
+                self._run_logged_terminal = True
+                self._append_status(f"■ {status}")
+        self._set_activity_state(False)
+        if self._run_had_stats and not self._run_saw_terminal:
+            self._append_status("■ El run terminó sin estado final (ver errores arriba)")
+            self.stat_chips.mark_finished()
+
+    def _reset_activity_panel(self) -> None:
+        """Deja el panel de Actividad en blanco para un run NUEVO.
+
+        Sin este reset, un run en la misma pane arrastraba el progreso,
+        subtareas, archivos, diagrama y chips del anterior — y un run que no
+        emite plan (chat directo) los dejaba ahí para siempre, mintiendo.
+        """
+        self._last_progress_key = None
+        self._last_subtasks = None
+        self._last_files = None
+        self._last_plan_signature = None
+        self._run_saw_terminal = False
+        self._run_had_stats = False
+        self._run_logged_terminal = False
+        self._logged_subtask_states = {}
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFormat("—")
+        self._subtask_list.clear()
+        self._subtask_section.set_collapsed(True)
+        self._files_written_list.clear()
+        self._files_section.set_collapsed(True)
+        self._diagram_view.reset()
+        self.stat_chips.reset()
+        self.bash_panel.clear()
+        # un panel en blanco no está "en ejecución": quien arranca el run
+        # vuelve a encender el dot (ver _begin_activity_run).
+        self._set_activity_state(False)
+
+    def _begin_activity_run(self, query: str) -> None:
+        """Run NUEVO: panel en blanco, dot ● y cabecera en el Log.
+
+        El reset se hace al enviar (no al lanzar la card del workflow) porque
+        ahí es donde nace la ejecución; sin él, el progreso/subtareas/archivos
+        del run anterior seguían visibles durante el siguiente.
+        """
+        self._reset_activity_panel()
+        self._set_activity_state(True)
+        self._append_status(f"▶ Run iniciado — {truncar_en_palabra(query, 80)}")
+
+    @staticmethod
+    def _emitted_steps(data: dict) -> list[dict]:
+        """Pasos emitidos por el runtime (paths ``padre ▸ hijo``)."""
+        steps = data.get("subtask_list")
+        if not isinstance(steps, list):
+            return []
+        return [s for s in steps if isinstance(s, dict) and str(s.get("name") or "").strip()]
+
+    @staticmethod
+    def _child_steps(plan_item: dict, steps: list[dict]) -> list[dict]:
+        """Pasos internos de un loop SIN over (su unidad de entrega es opaca).
+
+        Los loops con `over` ya tienen una subtarea por ítem: mostrar además
+        sus pasos duplicaría la lista. Un loop ciego ("rondas", "ciclo") no
+        tiene ítems, así que sus pasos son la única señal de avance real.
+        """
+        path = str(plan_item.get("path") or "")
+        if not path or "#" in path:
+            return []
+        prefixes = (f"{path}#", f"{path}/")
+        return [s for s in steps if str(s.get("name") or "").startswith(prefixes)]
+
+    def _render_run_state(
+        self, run_state: dict, plan: list[dict], steps: list[dict] | None = None
+    ) -> None:
         """Pinta la entrega por SUBTAREA (RunState) con su badge de replan."""
-        plan = [
-            item
-            for item in (run_state.get("plan") or [])
-            if isinstance(item, dict) and item.get("kind") == "subtask"
-        ]
-        if not plan:
-            return
+        steps = steps or []
+        children = {id(item): self._child_steps(item, steps) for item in plan}
         replans = len(run_state.get("replans") or [])
         signature = (
             tuple((item.get("id"), item.get("status"), item.get("goal")) for item in plan),
             replans,
+            # los pasos internos de un loop ciego cambian en cada ronda: sin
+            # ellos en la firma la lista no se repintaba (solo 1 fila quieta).
+            tuple(
+                (str(s.get("name")), str(s.get("status")))
+                for item in plan
+                for s in children[id(item)]
+            ),
         )
         if signature == self._last_plan_signature:
             return
         self._last_plan_signature = signature
+        # la lista pasa a mostrar el plan: el fallback de pasos no debe
+        # saltarse por una caché vieja si el plan desaparece del payload
+        self._last_subtasks = None
         self._subtask_section.set_collapsed(False)
         self._subtask_list.clear()
         colors = ThemeManager.current().colors
@@ -873,6 +976,273 @@ class SessionPane(QWidget):
             elif status == "unmeasured":
                 entry.setForeground(QColor(colors.status_recovered))
             self._subtask_list.addItem(entry)
+            # avance interno del loop (rondas/pasos) bajo su unidad de entrega
+            for child in children[id(item)]:
+                c_status = str(child.get("status") or "pending")
+                c_icon = _SUBTASK_GLYPHS.get(c_status, "○")
+                c_name = truncar_en_palabra(str(child.get("name") or ""), 70)
+                c_entry = QListWidgetItem(f"      {c_icon}  {c_name}")
+                c_entry.setToolTip("Paso interno de la subtarea")
+                if c_status == "failed":
+                    c_entry.setForeground(QColor(colors.status_failed))
+                elif c_status == "unmeasured":
+                    c_entry.setForeground(QColor(colors.status_recovered))
+                self._subtask_list.addItem(c_entry)
+
+    @staticmethod
+    def _plan_items(run_state: object) -> list[dict]:
+        """Ítems del plan del run (fases y subtareas)."""
+        if not isinstance(run_state, dict):
+            return []
+        return [item for item in (run_state.get("plan") or []) if isinstance(item, dict)]
+
+    @staticmethod
+    def _phase_of(plan_items: list[dict], path: str) -> str | None:
+        """Fase dueña de un path de subtarea (prefijo más específico).
+
+        El plan del motor es plano: la fase "ciclo" y sus ítems "ciclo#1"
+        comparten prefijo. Sin esta derivación el Diagrama nunca mostraba el
+        encabezado de fase (el contrato de stats no emite `phase` en DSL).
+        """
+        best_path = ""
+        best_label: str | None = None
+        for item in plan_items:
+            if item.get("kind") != "phase":
+                continue
+            ppath = str(item.get("path") or "")
+            if not ppath:
+                continue
+            if not (path == ppath or path.startswith(f"{ppath}#") or path.startswith(f"{ppath}/")):
+                continue
+            if len(ppath) > len(best_path):
+                best_path = ppath
+                best_label = str(item.get("goal") or item.get("id") or ppath)
+        return best_label
+
+    @staticmethod
+    def _round_label(step_name: str) -> str:
+        """'rondas#2 ▸ opinion_developer' → 'rondas · ronda 2' (chip de fase)."""
+        head = str(step_name or "").split(" ▸ ", 1)[0].strip()
+        if "#" not in head:
+            return head
+        base, _, num = head.partition("#")
+        if not num.isdigit():
+            return head
+        word = "ronda" if base.strip().lower().startswith("ronda") else "iter"
+        return f"{base.strip()} · {word} {num}"
+
+    @staticmethod
+    def _current_phase(
+        plan_items: list[dict], plan_subtasks: list[dict], steps: list[dict] | None = None
+    ) -> str | None:
+        """Fase en curso derivada del plan (el DSL no emite `phase` en stats).
+
+        Prioridad: la fase de la subtarea que corre; si no, la fase de nivel
+        superior que corre (pasos plugin/tool/aggregate); si no, la ronda/paso
+        que corre (loop ciego: "rondas · ronda 2").
+        """
+        for item in plan_subtasks:
+            if str(item.get("status") or "") != "running":
+                continue
+            phase = SessionPane._phase_of(plan_items, str(item.get("path") or ""))
+            if phase:
+                return phase
+        for item in plan_items:
+            if item.get("kind") == "phase" and str(item.get("status") or "") == "running":
+                return str(item.get("goal") or item.get("id") or "") or None
+        # el paso del propio loop ("rondas") precede a los de la ronda: se
+        # prefiere el paso con "#N" (la ronda en curso), recorriendo al revés
+        # porque el más reciente es el último emitido.
+        fallback: str | None = None
+        for step in reversed(steps or []):
+            if str(step.get("status") or "") != "running":
+                continue
+            name = str(step.get("name") or "")
+            head = name.split(" ▸ ", 1)[0]
+            if "#" in head:
+                return SessionPane._round_label(name)
+            if fallback is None:
+                fallback = SessionPane._round_label(name)
+        return fallback
+
+    def _update_progress(self, data: dict, plan_subtasks: list[dict]) -> None:
+        """Barra de progreso con el MISMO denominador que el reporte del run."""
+        if plan_subtasks:
+            # RunState.counts() excluye los descartes por contrato sin
+            # evidencia: el mismo criterio del reporte final (antes la barra
+            # dividía por TODOS los ítems y nunca llegaba al 100% en sdd).
+            from orchestration.dsl.run_state import RunState
+
+            counts = RunState.from_dict(data.get("run_state") or {}).counts()
+            total = int(counts.get("total") or 0)
+            completed = int(counts.get("delivered") or 0)
+        elif "subtasks_total" in data:
+            total = int(data.get("subtasks_total") or 0)
+            completed = int(data.get("subtasks_completed") or 0)
+        else:
+            # stats parciales del agent-loop: no traen unidades de entrega
+            return
+        if total > 0:
+            completed = max(0, min(completed, total))
+            key = (completed, total)
+            if key == self._last_progress_key:
+                return
+            self._last_progress_key = key
+            self._progress_bar.setValue(int(completed / total * 100))
+            self._progress_bar.setFormat(f"{completed}/{total} subtareas")
+            return
+        # Cero unidades reales (tool directa / run sin plan): barra neutra,
+        # no el "100%" heredado del run anterior.
+        if self._last_progress_key != (0, 0):
+            self._last_progress_key = (0, 0)
+            self._progress_bar.setValue(0)
+            self._progress_bar.setFormat("—")
+
+    def _update_subtasks(self, data: dict, run_state: object, plan_subtasks: list[dict]) -> None:
+        """Lista de Subtareas: plan cuando existe; pasos emitidos si no."""
+        if plan_subtasks and isinstance(run_state, dict):
+            self._render_run_state(run_state, plan_subtasks, self._emitted_steps(data))
+            return
+        subtask_list = data.get("subtask_list")
+        if subtask_list is None or subtask_list == self._last_subtasks:
+            return
+        self._last_subtasks = list(subtask_list)
+        if subtask_list:
+            self._subtask_section.set_collapsed(False)
+        self._subtask_list.clear()
+        for item in subtask_list:
+            name = item.get("name", "")
+            status = item.get("status", "pending")
+            icon = _SUBTASK_GLYPHS.get(status, "○")
+            self._subtask_list.addItem(f"{icon}  {name}")
+
+    def _update_files(self, data: dict) -> None:
+        """Archivos del run: acumulativos y sin perder los de pasos previos.
+
+        El agent-loop emite su lista LOCAL por step: reemplazar con ella
+        borraba los archivos de los steps anteriores hasta el próximo
+        boundary del DSL. Un archivo escrito no se "des-escribe" dentro del
+        run, así que la lista crece (el reset por run la vacía).
+        """
+        files_written = data.get("files_written")
+        if not isinstance(files_written, list):
+            return
+        merged = list(self._last_files or [])
+        for f in files_written:
+            text = str(f)
+            if text and text not in merged:
+                merged.append(text)
+        if merged == (self._last_files or []):
+            return
+        self._last_files = merged
+        if merged:
+            self._files_section.set_collapsed(False)
+        self._files_written_list.clear()
+        for f in merged:
+            self._files_written_list.addItem(f)
+
+    def _update_diagram(
+        self, data: dict, plan_items: list[dict], plan_subtasks: list[dict]
+    ) -> None:
+        """Diagrama derivado localmente: el plan es la unidad real de entrega."""
+        if plan_subtasks:
+            steps = self._emitted_steps(data)
+            paths = [str(p.get("path") or "") for p in plan_subtasks]
+
+            def _owns_subtasks(ppath: str) -> bool:
+                return any(
+                    p == ppath or p.startswith(f"{ppath}#") or p.startswith(f"{ppath}/")
+                    for p in paths
+                )
+
+            entries: list[dict] = []
+            for item in plan_items:
+                kind = item.get("kind")
+                if kind == "phase":
+                    # Una fase sin subtareas propias (p.ej. "sintesis" de
+                    # collaborative) también es estado del run: sin su tarjeta
+                    # el diagrama quedaba congelado en las subtareas.
+                    if _owns_subtasks(str(item.get("path") or "")):
+                        continue
+                    entries.append(
+                        {"name": item.get("goal") or item.get("id"), "status": item.get("status")}
+                    )
+                    continue
+                if kind != "subtask":
+                    continue
+                entry = {
+                    "name": item.get("goal") or item.get("id"),
+                    "status": item.get("status"),
+                }
+                phase = self._phase_of(plan_items, str(item.get("path") or ""))
+                if phase:
+                    entry["phase"] = phase
+                entries.append(entry)
+                # el avance interno de un loop ciego también es estado del run:
+                # sin sus tarjetas el diagrama quedaba congelado en "rondas".
+                for child in self._child_steps(item, steps):
+                    entries.append({"name": child.get("name"), "status": child.get("status")})
+            self._diagram_view.update_from_stats(
+                {"subtask_list": entries, "phase": data.get("phase")}
+            )
+            return
+        # plan sin subtareas (solo fases) o ruta sin RunState: los pasos
+        # emitidos son la única estructura disponible — no dejar el diagrama
+        # con el run anterior.
+        self._diagram_view.update_from_stats(data)
+
+    def _log_subtask_transitions(
+        self, data: dict, plan_subtasks: list[dict], running: bool
+    ) -> None:
+        """Traza el avance por subtarea en el Log, en orden de llegada.
+
+        El Log solo recibía mensajes de sistema: un run DSL podía terminar
+        sin una sola línea de qué steps corrieron. Se deriva del MISMO stats
+        que pinta Subtareas (cero drift) y solo se escribe en cada cambio de
+        estado, no en cada emit. Los loops ciegos aportan además sus rondas.
+        """
+        steps = self._emitted_steps(data)
+        entries: list[tuple[str, str, str]] = []  # (key, label, status)
+        if plan_subtasks:
+            for idx, item in enumerate(plan_subtasks, 1):
+                label = truncar_en_palabra(str(item.get("goal") or item.get("id") or ""), 60)
+                entries.append(
+                    (
+                        f"plan:{item.get('id')}",
+                        f"{idx}. {label}",
+                        str(item.get("status") or "pending"),
+                    )
+                )
+                for child in self._child_steps(item, steps):
+                    entries.append(
+                        (
+                            f"step:{child.get('name')}",
+                            f"   {child.get('name')}",
+                            str(child.get("status") or "pending"),
+                        )
+                    )
+        else:
+            for idx, item in enumerate(steps, 1):
+                entries.append(
+                    (
+                        f"step:{item.get('name')}",
+                        f"{idx}. {item.get('name')}",
+                        str(item.get("status") or "pending"),
+                    )
+                )
+        for key, label, status in entries:
+            if self._logged_subtask_states.get(key) == status:
+                continue
+            self._logged_subtask_states[key] = status
+            if status in ("pending", ""):
+                continue
+            icon = _SUBTASK_GLYPHS.get(status, "○")
+            self._append_status(f"{icon} {label} — {status}")
+        if not running and not self._run_logged_terminal:
+            self._run_logged_terminal = True
+            status = str(data.get("status") or "").strip()
+            if status:
+                self._append_status(f"■ {status}")
 
     def _on_stats(self, data: dict):
         # emits en vuelo tras ⏹/fin (create_task del runtime
@@ -880,7 +1250,11 @@ class SessionPane(QWidget):
         with self._workflow_running_lock:
             if not self._workflow_running:
                 return
-        self._set_activity_state(self._is_activity_running(data))
+        running = self._is_activity_running(data)
+        self._run_had_stats = True
+        if not running:
+            self._run_saw_terminal = True
+        self._set_activity_state(running)
 
         self.stat_chips.update_from_stats(data)
 
@@ -888,69 +1262,24 @@ class SessionPane(QWidget):
         # bloqueadas y las subtareas degradan en silencio; la GUI debe avisar.
         self._maybe_warn_token_budget(data)
 
-        # Barra de progreso
-        total = data.get("subtasks_total", 0)
-        completed = data.get("subtasks_completed", 0)
         run_state = data.get("run_state")
-        if isinstance(run_state, dict) and run_state.get("plan"):
-            # la unidad de entrega es la SUBTAREA del plan, no el paso emitido:
-            # sin esto la barra decía "16/16" mientras el reporte decía 1/4.
-            plan_subtasks = [
-                p for p in run_state["plan"] if isinstance(p, dict) and p.get("kind") == "subtask"
-            ]
-            total = len(plan_subtasks)
-            completed = sum(
-                1
-                for p in plan_subtasks
-                if p.get("status") == "delivered"
-                or (p.get("status") == "skipped" and p.get("satisfied_by"))
+        plan_items = self._plan_items(run_state)
+        plan_subtasks = [p for p in plan_items if p.get("kind") == "subtask"]
+
+        # El chip de fase del DSL no llega por stats: se deriva del plan en
+        # curso (sin esto quedaba "—" durante todo el run).
+        if data.get("phase") is None:
+            derived_phase = self._current_phase(
+                plan_items, plan_subtasks, self._emitted_steps(data)
             )
-        if total and total > 0:
-            pct = int(completed / total * 100)
-            if pct != self._last_progress:
-                self._progress_bar.setValue(pct)
-                self._progress_bar.setFormat(f"{completed}/{total} subtareas")
-                self._last_progress = pct
+            if derived_phase:
+                self.stat_chips.set_phase(derived_phase)
 
-        # Subtareas: expandir la sección en cuanto haya pasos reales
-        # (TDD/DSL emiten 1 solo path — sin esto la sección queda colapsada)
-        subtask_list = data.get("subtask_list")
-        run_state = data.get("run_state")
-        if isinstance(run_state, dict) and run_state.get("plan"):
-            self._render_run_state(run_state)
-        elif subtask_list is not None and subtask_list != self._last_subtasks:
-            self._last_subtasks = list(subtask_list)
-            if subtask_list:
-                self._subtask_section.set_collapsed(False)
-            self._subtask_list.clear()
-            for item in subtask_list:
-                name = item.get("name", "")
-                status = item.get("status", "pending")
-                icon = _SUBTASK_GLYPHS.get(status, "○")
-                self._subtask_list.addItem(f"{icon}  {name}")
-
-        # Archivos: expandir sección si hay archivos
-        files_written = data.get("files_written")
-        if isinstance(files_written, list) and files_written and files_written != self._last_files:
-            self._last_files = list(files_written)
-            self._files_section.set_collapsed(False)
-            self._files_written_list.clear()
-            for f in files_written:
-                self._files_written_list.addItem(f)
-
-        # Diagrama derivado localmente (reemplaza _on_diagram): el plan es la
-        # unidad real de entrega; los pasos emitidos solo son el fallback.
-        if isinstance(run_state, dict) and run_state.get("plan"):
-            plan_subtasks = [
-                {"name": p.get("goal") or p.get("id"), "status": p.get("status")}
-                for p in run_state["plan"]
-                if isinstance(p, dict) and p.get("kind") == "subtask"
-            ]
-            self._diagram_view.update_from_stats(
-                {"subtask_list": plan_subtasks, "phase": data.get("phase")}
-            )
-        else:
-            self._diagram_view.update_from_stats(data)
+        self._update_progress(data, plan_subtasks)
+        self._update_subtasks(data, run_state, plan_subtasks)
+        self._update_files(data)
+        self._update_diagram(data, plan_items, plan_subtasks)
+        self._log_subtask_transitions(data, plan_subtasks, running)
 
     # ── Chat ──
 
@@ -1098,18 +1427,8 @@ class SessionPane(QWidget):
         self._update_info_button()
         self.chat_container.adjustSize()
         self.debate_section.clear()
-        self._subtask_list.clear()
-        self._files_written_list.clear()
-        self._last_progress = -1
-        self._last_subtasks = None
-        self._last_files = None
-        self._last_plan_signature = None
+        self._reset_activity_panel()
         self._status_log_started = False
-        self._progress_bar.setValue(0)
-        self._progress_bar.setFormat("—")
-        self.stat_chips.reset()
-        self._subtask_section.set_collapsed(True)
-        self._files_section.set_collapsed(True)
         self.status_log.setHtml(
             f"<p style='color:{COLORS['text_dim']}; text-align:center'>Listo. Envía una consulta</p>"
         )
@@ -1678,6 +1997,12 @@ class SessionPane(QWidget):
             self._streaming_bubble = None
             self._streaming_text = ""
             self._suppress_flat_stream = False
+            # el resume continúa el MISMO run: se conserva el panel, pero el
+            # cierre del tramo reanudado debe volver a registrarse
+            self._run_saw_terminal = False
+            self._run_logged_terminal = False
+            self._set_activity_state(True)
+            self._append_status("▶ Run reanudado")
             session = self._paused_session
             self._paused_session = None
             self._update_pause_affordance()
@@ -1725,6 +2050,7 @@ class SessionPane(QWidget):
         if self._uses_direct_agent_route():
             agent = self._force_agent or "conversacional"
             self._set_workflow_running(True)
+            self._begin_activity_run(query)
             self._add_bubble(query, "user")
             self.input_field.clear()
             self._show_typing()
@@ -1735,6 +2061,7 @@ class SessionPane(QWidget):
             return
 
         self._set_workflow_running(True)
+        self._begin_activity_run(query)
         self._add_bubble(query, "user")
         self.input_field.clear()
         self._show_typing()
@@ -1857,11 +2184,13 @@ class SessionPane(QWidget):
             ),
             events=events,
         )
+        status_final: str | None = None
         try:
             response = await self._runner.run_direct_agent(session, query, agent)
 
             # Persist conversation + perfil (comportamiento original conservado)
             final_output = (response or "").strip()
+            status_final = "Completado (chat)" if final_output else "Fallido (chat)"
             if final_output:
                 try:
                     from core.repositories.conversation_repository import ConversationRepository
@@ -1903,8 +2232,12 @@ class SessionPane(QWidget):
         except Exception as e:
             logger.error(f"Error en agente directo: {e}", exc_info=True)
             self._on_system(f"❌ Error: {e}")
+            status_final = "Fallido (chat)"
         finally:
             self._hide_typing()
+            # la ruta directa NO pasa por WorkflowRunner.on_finish: sin este
+            # cierre el dot de ACTIVIDAD quedaba ● para siempre tras el chat.
+            self._on_run_finished(status_final)
             self._set_workflow_running(False)
 
 

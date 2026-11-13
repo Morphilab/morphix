@@ -298,3 +298,46 @@ async def test_bot_provider_override_llega_al_loop(fake_llm, monkeypatch):
             assert kw["model_override"] == "deepseek-ai/DeepSeek-V4.1-Flash"
     finally:
         await drop_schema(sch)
+
+
+@_pg
+@pytest.mark.asyncio
+async def test_turno_de_bot_emite_stats_de_cierre_reales(fake_llm, monkeypatch):
+    """El turno canónico pinta su fase en Actividad y CIERRA su subtarea.
+
+    Antes el runner creaba un emitter sin sesión (no-op) y la sección del
+    chat del bot nunca reflejaba el turno; y el subtask nacía "running" y
+    nunca se cerraba.
+    """
+    sch = f"brun_{secrets.token_hex(4)}"
+    d = _tpl_dir()
+    try:
+        await create_schema(sch)
+        _write_tpl(d, "luz")
+        _bounded(sch, d, monkeypatch)
+        async with bound_schema(sch):
+            await create_tables_in_schema(sch)
+            await BotsService.create_bot("luz", soul_md="Soul.")
+
+            class _FakeEmitter:
+                def __init__(self):
+                    self.calls: list[dict] = []
+
+                async def emit(self, **kwargs):
+                    self.calls.append(dict(kwargs))
+
+            emitter = _FakeEmitter()
+            await bots_runner.run_bot_turn(
+                "luz", "turno", 1, transport="canonical", emitter=emitter
+            )
+
+            assert emitter.calls, "el turno no emitió stats a la pane"
+            assert emitter.calls[0]["current_agent"] == "@luz"
+            final = emitter.calls[-1]
+            assert final["status"] == "Completado"
+            assert final["subtasks_total"] == 1
+            assert final["subtasks_completed"] == 1
+            assert final["subtask_list"] == [{"name": "Turno @luz", "status": "completed"}]
+    finally:
+        await drop_schema(sch)
+        shutil.rmtree(d, ignore_errors=True)

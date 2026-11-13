@@ -311,11 +311,20 @@ class WorkflowOrchestrator:
         )
 
         elapsed = round(time.monotonic() - start_time, 1)
+        tool_ok = bool(tool_result.get("success"))
         await emitter.emit(
-            subtasks_total=0,
-            subtasks_completed=0,
+            # La unidad de entrega es la tool invocada: el subtask por defecto
+            # del emitter (la query en pending) mentía tras el cierre.
+            subtask_list=[
+                {
+                    "name": f"Tool directa: {direct_tool['tool_name']}",
+                    "status": "completed" if tool_ok else "failed",
+                }
+            ],
+            subtasks_total=1,
+            subtasks_completed=1 if tool_ok else 0,
             current_agent="—",
-            status="Completado (tool directa)",
+            status="Completado (tool directa)" if tool_ok else "Fallido (tool directa)",
         )
         await finalize_workflow(
             query=query,
@@ -539,6 +548,9 @@ class WorkflowOrchestrator:
                     events=events,
                     start_time=start_time,
                     persist=persist,
+                    # el bus de stats de la pane: el turno del bot debe pintar
+                    # su fase/estado en la sección Actividad (antes no-op).
+                    emitter=session.emitter,
                 )
 
         # ── Resolver workspace + plantilla (validada contra schema) ──
@@ -818,6 +830,7 @@ class WorkflowOrchestrator:
     ) -> str:
         """Ejecuta el motor y traduce el resultado al contrato del resto."""
         from orchestration.dsl.engine import WorkflowEngine
+        from orchestration.dsl.run_state import RunState
 
         engine = WorkflowEngine(runtime)
         from tools.orchestrator import get_token_budget_max
@@ -828,6 +841,18 @@ class WorkflowOrchestrator:
             resume=resume,
             default_budget=get_token_budget_max(),
         )
+
+        # El motor programa los emits de steps como tasks (no bloquean el
+        # run): se drenan ANTES de cualquier cierre para que el ÚLTIMO stats
+        # del run sea el terminal. Sin esto, una task pendiente llegaba
+        # después del cierre y la GUI volvía a "Ejecutando (DSL)" con conteos
+        # viejos (chip ● encendido y progreso incompleto tras terminar).
+        # getattr: runtimes fake de tests no implementan el flush.
+        flush = getattr(runtime, "flush_emits", None)
+        if callable(flush):
+            await flush()
+        run_state = RunState.from_dict(result.run_state or {})
+        run_state_public = run_state.public()
 
         if result.status == "paused":
             question = result.paused_question or "El workflow necesita tu confirmación."
@@ -882,13 +907,19 @@ class WorkflowOrchestrator:
         if result.status == "stopped":
             msg = f"⏹ Run detenido: {result.stop_reason or 'plan inconsistente'}"
             await emit_system(events, msg)
-            await emitter.emit(status="Detenido")
+            await emitter.emit(
+                status="Detenido",
+                subtask_list=list(runtime._subtasks.values()),
+                subtasks_total=runtime.subtask_summary[0],
+                subtasks_completed=runtime.subtask_summary[1],
+                files_written=list(getattr(runtime, "files_written", [])),
+                run_state=run_state_public,
+            )
             logger.warning("run DSL '%s' detenido: %s", workflow_name, result.stop_reason)
             final_msg = msg
             if persist:
                 from tools.orchestrator import get_llm_token_usage
 
-                run_state = RunState.from_dict(result.run_state or {})
                 scorecard = _dsl_scorecard(
                     run_state,
                     tokens=get_llm_token_usage(),
@@ -929,7 +960,14 @@ class WorkflowOrchestrator:
         if result.status == "failed":
             msg = f"❌ Workflow DSL '{workflow_name}' falló: {result.failure}"
             await emit_system(events, msg)
-            await emitter.emit(status="Fallido")
+            await emitter.emit(
+                status="Fallido",
+                subtask_list=list(runtime._subtasks.values()),
+                subtasks_total=runtime.subtask_summary[0],
+                subtasks_completed=runtime.subtask_summary[1],
+                files_written=list(getattr(runtime, "files_written", [])),
+                run_state=run_state_public,
+            )
             # un run fallido deja huella auditable: antes solo existía en la
             # burbuja del chat (un run se esfumó de log y BD por completo)
             logger.error("run DSL '%s' falló: %s", workflow_name, result.failure)
@@ -939,7 +977,6 @@ class WorkflowOrchestrator:
                     from tools.orchestrator import get_llm_token_usage
 
                     subtask_list = list(runtime._subtasks.values())
-                    run_state = RunState.from_dict(result.run_state or {})
                     scorecard = _dsl_scorecard(
                         run_state,
                         tokens=get_llm_token_usage(),
@@ -987,13 +1024,13 @@ class WorkflowOrchestrator:
             subtasks_total=subtasks_total,
             subtasks_completed=subtasks_completed,
             files_written=files_written,
+            run_state=run_state_public,
         )
 
         if persist:
             from tools.orchestrator import get_llm_token_usage
 
             real_tokens = get_llm_token_usage()
-            run_state = RunState.from_dict(result.run_state or {})
             scorecard = _dsl_scorecard(
                 run_state,
                 tokens=real_tokens,
@@ -1159,6 +1196,8 @@ class WorkflowOrchestrator:
                         question=question,
                         answer=answer,
                         workspace=workspace,
+                        # el resume del bot también pinta su turno en Actividad
+                        emitter=emitter,
                     )
                 else:
                     # ── Retiro del legacy: orígenes antiguos ──

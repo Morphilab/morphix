@@ -12,6 +12,7 @@ los patch targets de origen estables.
 
 import logging
 import time
+from typing import Any
 
 from orchestration import pauses
 from orchestration.context import PAUSED_MARKER, WorkflowContext, WorkflowEvents, emit_system
@@ -56,6 +57,7 @@ async def dispatch_canonical_turn(
     events: WorkflowEvents,
     start_time: float,
     persist: bool,
+    emitter: Any | None = None,
 ) -> str:
     """Turno de chat canónico: SIEMPRE corre por bots_runner con la identidad
     del bot, INDEPENDIENTE del workflow activo (cargar la plantilla activa
@@ -64,6 +66,10 @@ async def dispatch_canonical_turn(
     ``persist=True`` es el chat canónico del usuario en la GUI — finaliza con
     scorecard; los transportes machine-local persisten por su cuenta via
     ``persist_turn_exchange`` y llegan aquí con ``persist=False``.
+
+    ``emitter``: el WorkflowEmitter del run de la pane. Sin él el turno
+    emitía a un emitter sin sesión (no-op) y la sección Actividad del chat
+    del bot nunca reflejaba el turno.
     """
     conv_id = ctx.conversation_id
     if conv_id is None:
@@ -79,6 +85,7 @@ async def dispatch_canonical_turn(
         int(conv_id),
         transport="canonical",
         events=events,
+        emitter=emitter,
     )
     if isinstance(final, dict) and final.get("status") == "clarification_needed":
         # Bot con can_pause=true en su chat canónico — pausa con origin='bot';
@@ -146,13 +153,16 @@ async def resume_bot_turn(
     question: str,
     answer: str,
     workspace: str,
+    emitter: Any | None = None,
 ) -> str:
     """Resume de un turno de bot pausado.
 
     Reconstruye el estado del agent loop, re-inyecta la identidad del bot y
-    persiste el intercambio en el chat canónico.
+    persiste el intercambio en el chat canónico. ``emitter`` pinta el turno
+    en la sección Actividad (sin él, el resume del bot no reportaba estado).
     """
     from llm.tool_calls import sanitize_messages_for_ollama
+    from orchestration.emitter import WorkflowEmitter
     from orchestration.loop import execute_agent_loop
     from orchestration.utils import apply_undercover
 
@@ -164,6 +174,15 @@ async def resume_bot_turn(
         msg = f"❌ El bot '{bot_slug}' ya no existe o está deshabilitado."
         await emit_system(events, msg)
         return msg
+
+    emitter = emitter or WorkflowEmitter(None)
+    turn_unit = f"Turno @{bot_slug}"
+    await emitter.emit(
+        status=f"Bot @{bot_slug}",
+        current_agent=f"@{bot_slug}",
+        phase="Respondiendo",
+        subtask_list=[{"name": turn_unit, "status": "running"}],
+    )
 
     loop_state = paused_data.get("paused_loop_state", {})
     messages = loop_state.get("messages", [])
@@ -197,6 +216,14 @@ async def resume_bot_turn(
     final = await apply_undercover(result_text)
 
     if not final:
+        await emitter.emit(
+            status="Fallido",
+            current_agent=f"@{bot_slug}",
+            phase="Fallido",
+            subtask_list=[{"name": turn_unit, "status": "failed"}],
+            subtasks_total=1,
+            subtasks_completed=0,
+        )
         await emit_system(events, "❌ El bot no produjo respuesta tras la clarificación.")
         return final or ""
 
@@ -213,6 +240,14 @@ async def resume_bot_turn(
         "tipo_tarea": "bot_canonical_resume",
         "complejidad": "simple",
     }
+    await emitter.emit(
+        status="Completado",
+        current_agent=f"@{bot_slug}",
+        phase="Completado",
+        subtask_list=[{"name": turn_unit, "status": "completed"}],
+        subtasks_total=1,
+        subtasks_completed=1,
+    )
     await finalize_workflow(
         query=paused_data.get("query", question),
         final_output=final,

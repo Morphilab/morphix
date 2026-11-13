@@ -136,3 +136,34 @@ async def test_emit_unknown_field_warns_but_does_not_raise():
     # No debe lanzar TypeError
     await emitter.emit(statuus="typo", status="ok")
     assert emitter._state.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_emit_tardio_no_pisa_el_cierre_terminal():
+    """Los emits de steps del DSL son tasks: uno diferido puede llegar después
+    del cierre. El cierre es irreversible — un "Ejecutando (DSL)" posterior
+    devolvía el chip ● y conteos viejos a la GUI."""
+    session, events = _make_session()
+    emitter = WorkflowEmitter(session)
+
+    await emitter.emit(status="Ejecutando (DSL)", subtasks_total=4, subtasks_completed=2)
+    await emitter.emit(status="Completado (DSL)", subtasks_total=4, subtasks_completed=4)
+    await emitter.emit(status="Ejecutando (DSL)", subtasks_total=2, subtasks_completed=1)
+
+    assert events.on_stats_update.await_count == 2
+    data: dict = events.on_stats_update.await_args.args[0]
+    assert data["status"] == "Completado (DSL)"
+    assert data["subtasks_total"] == 4
+    assert data["subtasks_completed"] == 4
+
+
+@pytest.mark.asyncio
+async def test_emit_terminal_posterior_si_actualiza():
+    """Un segundo cierre (p.ej. Detenido tras Completado) sí se aplica."""
+    session, events = _make_session()
+    emitter = WorkflowEmitter(session)
+    await emitter.emit(status="Completado (DSL)")
+    await emitter.emit(status="Detenido")
+
+    assert events.on_stats_update.await_count == 2
+    assert events.on_stats_update.await_args.args[0]["status"] == "Detenido"

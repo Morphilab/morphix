@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from desktop.theme import StyleFactory, ThemeManager
+from orchestration.status import is_terminal_status
 
 CHIP_KEYS = ["elapsed_time", "tokens_used", "current_agent", "status", "phase"]
 
@@ -16,9 +17,25 @@ _DOT_NEUTRAL = ThemeManager.current().colors.text_muted
 
 CHIP_STYLE = StyleFactory.chip()
 
+_RUNNING_WORDS = ("ejecut", "running", "curso", "execut")
+_FAILED_WORDS = ("fallid", "failed", "error", "detenid", "cancel")
+
 
 def _dot(color: str) -> str:
     return f"<span style='color:{color}'>&#9679;</span>"
+
+
+def _status_color(text: str) -> str:
+    """Color del punto según el status REAL (verde/rojo/azul/ámbar)."""
+    lower = text.lower()
+    colors = ThemeManager.current().colors
+    if any(w in lower for w in _FAILED_WORDS):
+        return colors.status_failed
+    if "completad" in lower:
+        return colors.success
+    if any(w in lower for w in _RUNNING_WORDS):
+        return colors.status_running
+    return colors.warning
 
 
 class StatChips(QWidget):
@@ -30,6 +47,9 @@ class StatChips(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self._labels: dict[str, QLabel] = {}
+        # valor plano del chip de estado: mark_finished decide sobre él, no
+        # sobre el HTML (parsear el markup era frágil).
+        self._status_text: str = ""
         for key in CHIP_KEYS:
             lbl = QLabel(f"{_dot(_DOT_NEUTRAL)} —")
             lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -39,8 +59,16 @@ class StatChips(QWidget):
             self._labels[key] = lbl
         layout.addStretch()
 
+    def _paint(self, key: str, text: str, dot_color: str | None = None, bold: bool = True):
+        if dot_color is None:
+            dot_color = _status_color(text) if key == "status" else _DOT_NEUTRAL
+        body = f"<b>{_escape(text)}</b>" if bold else _escape(text)
+        self._labels[key].setText(f"{_dot(dot_color)}&nbsp;&nbsp;{body}")
+        if key == "status":
+            self._status_text = text
+
     def update_from_stats(self, data: dict):
-        for key, lbl in self._labels.items():
+        for key in self._labels:
             value = data.get(key)
             if value is None:
                 continue
@@ -52,26 +80,30 @@ class StatChips(QWidget):
                     text = str(value)
             elif key == "current_agent" and str(value) in ("—", "None"):
                 text = "—"
-            dot_color = _DOT_NEUTRAL
-            if key == "status":
-                lower = text.lower()
-                _c = ThemeManager.current().colors
-                if "completad" in lower:
-                    dot_color = _c.success
-                    extra = f"<b>{_escape(text)}</b>"
-                elif any(w in lower for w in ("ejecut", "running", "curso", "execut")):
-                    dot_color = _c.status_running
-                    extra = _escape(text)
-                else:
-                    dot_color = _c.warning
-                    extra = _escape(text)
-            elif key in ("elapsed_time", "tokens_used"):
-                extra = f"<b>{_escape(text)}</b>"
-            else:
-                extra = f"<b>{_escape(text)}</b>"
-            lbl.setText(f"{_dot(dot_color)}&nbsp;&nbsp;{extra}")
+            self._paint(key, text)
+
+    def set_status(self, text: str) -> None:
+        """Fija el chip de estado sin pasar por el contrato de stats."""
+        self._paint("status", str(text))
+
+    def set_phase(self, text: str) -> None:
+        """Fija el chip de fase (fase derivada del plan si el stats no la trae)."""
+        if text:
+            self._paint("phase", str(text))
+
+    def mark_finished(self) -> None:
+        """Cierra el chip si el run terminó sin un stats terminal.
+
+        Un chip "Ejecutando…" con el dot ○ es una contradicción: el run ya no
+        corre (excepción/cancelación sin cierre), así que el estado se declara
+        finalizado en vez de dejar la mentira del último parcial.
+        """
+        if not self._status_text or is_terminal_status(self._status_text):
+            return
+        self.set_status("Finalizado")
 
     def reset(self):
         """Vuelve los chips al estado inicial (—)."""
+        self._status_text = ""
         for lbl in self._labels.values():
             lbl.setText(f"{_dot(_DOT_NEUTRAL)} —")

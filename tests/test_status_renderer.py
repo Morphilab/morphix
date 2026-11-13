@@ -54,3 +54,28 @@ def test_render_defaults_match_current_palette():
     html = render_from_subtasks([{"name": "X", "status": "pending"}])
     assert DEFAULT_CARD_COLORS["card_bg"] in html
     assert DEFAULT_CARD_COLORS["body_bg"] in html
+
+
+def test_render_agrupa_por_la_fase_de_cada_item():
+    """La GUI deriva la fase del plan: el diagrama abre un encabezado por fase
+    en el orden del plan (antes el DSL nunca emitía `phase` y era plano)."""
+    html = render_from_subtasks(
+        [
+            {"name": "ciclo#1", "status": "delivered", "phase": "ciclo"},
+            {"name": "ciclo#2", "status": "running", "phase": "ciclo"},
+            {"name": "cierre", "status": "pending", "phase": "verificación"},
+        ]
+    )
+    assert html.count("📂") == 2
+    assert html.index("ciclo") < html.index("ciclo#1")
+    assert html.index("verificación") < html.index("cierre")
+
+
+def test_render_ignora_fases_repetidas_consecutivas():
+    html = render_from_subtasks(
+        [
+            {"name": "a", "status": "running", "phase": "ciclo"},
+            {"name": "b", "status": "pending", "phase": "ciclo"},
+        ]
+    )
+    assert html.count("📂") == 1

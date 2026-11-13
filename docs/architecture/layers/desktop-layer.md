@@ -27,7 +27,7 @@ The primary interaction tab — a 2-column layout with a resizable splitter (202
 | Column | Width | Content |
 |--------|-------|---------|
 | **Left** (Chat) | Flexible (~3/5) | Chat blocks with streaming markdown rendering, agent debate blocks, user input field, send button |
-| **Right** (Actividad unificado) | ~1/5 (resizable) | Collapsible sections: **Ejecución** (progress bar + stat chips), **Subtareas**, **Archivos creados** — plus a `QTabWidget` below: **Diagrama** (phase cards derived from stats), **Log**, **Bash** (hidden when the active workflow's allowlist excludes `bash_manager`, e.g. collaborative) |
+| **Right** (Actividad unificado) | ~1/5 (resizable) | Collapsible sections: **Ejecución** (progress bar + stat chips), **Subtareas**, **Archivos creados** — plus a `QTabWidget` below: **Diagrama** (phase cards derived from stats), **Log**, **Bash** (always visible; disabled with an explanatory tooltip when the active workflow's allowlist excludes `bash_manager`, e.g. collaborative) |
 
 **Features:**
 
@@ -156,9 +156,8 @@ The service layer ensures the UI files remain thin presentation logic — all da
 
 ### Bash Panel (`bash_panel.py`)
 
-- **Terminal output**: Monospace text display for bash command results
+- **Terminal output**: Monospace text display for bash command results; outputs accumulate in execution order (last 5000 characters, cleared per run)
 - **Auto-scroll**: Follows new output
-- **Error highlighting**: Red text for non-zero exit codes
 - **Live updates**: Connected to `emit_system` events for real-time bash output
 
 ## UI Event Flow

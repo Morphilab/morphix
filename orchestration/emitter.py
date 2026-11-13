@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from core.utils import truncar_en_palabra
+from orchestration.status import is_terminal_status
 from tools.orchestrator import get_llm_token_usage
 
 if TYPE_CHECKING:
@@ -70,9 +71,19 @@ class WorkflowEmitter:
         self._start = time.monotonic()
         self._state = _WorkflowState()
         self._query = session.context.query if session is not None else ""
+        # El cierre del run es irreversible: tras un emit terminal, un parcial
+        # diferido (los emits de steps del DSL se programan como task) no puede
+        # devolver el estado a "Ejecutando" ni re-encender el chip de la GUI.
+        self._terminal = False
 
     async def emit(self, **updates: Any) -> None:
         """Aplica actualizaciones parciales y emite el estado completo."""
+        if self._terminal and not is_terminal_status(updates.get("status")):
+            logger.debug(
+                "WorkflowEmitter: emit '%s' descartado — el run ya cerró",
+                updates.get("status"),
+            )
+            return
         for key, value in updates.items():
             if key not in _FIELDS:
                 # un typo no debe matar el workflow en marcha
@@ -85,6 +96,9 @@ class WorkflowEmitter:
 
         self._state.elapsed_time = f"{round(time.monotonic() - self._start, 1)}s"
         self._state.tokens_used = get_llm_token_usage()
+
+        if is_terminal_status(updates.get("status")):
+            self._terminal = True
 
         if not self._state.subtask_list:
             self._state.subtask_list = [

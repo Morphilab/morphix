@@ -382,6 +382,56 @@ class TestDirectToolConDSL:
 
 class TestCierreHonestoDSL:
     @pytest.mark.asyncio
+    async def test_el_cierre_es_el_ultimo_stats_pese_a_emits_diferidos(self, fake_ws):
+        """El terminal debe llegar DESPUÉS de los emits de steps.
+
+        El motor programa los stats de cada step como task; con un finalize
+        que cede el loop (DB real) la task pendiente llegaba después del
+        cierre y la GUI volvía a "Ejecutando (DSL)" con conteos viejos.
+        """
+        import asyncio as _asyncio
+
+        doc = _dsl_doc([{"id": "paso1", "kind": "agent", "agent": "developer", "goal": "haz"}])
+        session = _session(conv_id=5)
+
+        async def _finalize_que_cede(**kwargs):
+            await _asyncio.sleep(0)
+
+        with (
+            patch(
+                "core.bots_chat.canonical_owner_of",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "orchestration.workflows.orchestrator.load_workflow_document",
+                return_value=doc,
+            ),
+            patch(
+                "orchestration.loop.execute_agent_loop",
+                new_callable=AsyncMock,
+                return_value={
+                    "status": "completed",
+                    "result": "LISTO",
+                    "files_written": ["saludo.py"],
+                },
+            ),
+            patch(
+                "orchestration.workflows.orchestrator.finalize_workflow",
+                side_effect=_finalize_que_cede,
+            ),
+        ):
+            await WorkflowOrchestrator.run_full_workflow(session, persist=True)
+
+        stats = [c.args[0] for c in session.events.on_stats_update.await_args_list]
+        assert stats, "sin emits de stats"
+        assert stats[-1]["status"].startswith("Completado"), [s.get("status") for s in stats]
+        # el cierre lleva el plan FINAL del motor (no el snapshot del último
+        # step emitido): la GUI pinta el plan del reporte.
+        assert stats[-1]["run_state"]["plan"], "el cierre no lleva el run_state final"
+        assert "saludo.py" in stats[-1]["files_written"]
+
+    @pytest.mark.asyncio
     async def test_exito_emite_terminal_y_files_reales(self, fake_ws):
         doc = _dsl_doc([{"id": "paso1", "kind": "agent", "agent": "developer", "goal": "haz"}])
         session = _session(conv_id=5)

@@ -40,10 +40,10 @@ The stats chips show real-time execution metrics from the normalized stats contr
 | ⏱ Elapsed time | Time since workflow started |
 | ⚡ Tokens used | Total tokens consumed (prompt + completion) |
 | 🧠 Current agent | Agent currently executing |
-| 🚦 Status | Workflow status — "completado" turns green |
-| 📂 Phase | Current phase (design/implement/verify, Descomponiendo/Ejecutando/Verificando/Sintetizando, Ronda N/M, Iteración N/M) |
+| 🚦 Status | Workflow status — completed turns green, failed/stopped red |
+| 📂 Phase | Current phase (design/implement/verify, Descomponiendo/Ejecutando/Verificando/Sintetizando, Ronda N/M, Iteración N/M); in DSL runs it is derived from the running plan item, and for a blind loop from the running round (`rondas · ronda 2`) |
 
-The progress bar fills as subtasks complete (`completed / total`). The Ejecución section is always visible.
+The progress bar fills as subtasks complete (`completed / total`), using the **same denominator as the run report** (contract skips without evidence are not counted as pending work). A new run resets the panel: progress, subtasks, files, diagram and chips never carry over from the previous run. The Ejecución section is always visible.
 
 ### Subtask List Section
 
@@ -51,14 +51,19 @@ Collapsible (auto-expands when the workflow emits real steps). Lists each subtas
 
 | Icon | Status | Meaning |
 |------|--------|---------|
-| ✅ | completed | Subtask finished successfully |
-| 🔵 | running | Subtask currently being executed |
-| ❌ | failed | Subtask encountered an error |
-| ⏳ | pending | Subtask not yet started |
+| ✓ | completed / delivered | Subtask finished successfully |
+| ● | running | Subtask currently being executed |
+| ✕ | failed | Subtask encountered an error |
+| ⚠ | unmeasured | Delivered without a deterministic measurement |
+| ⏳ | blocked | Waiting on budget/gate |
+| ⏭ | skipped | Discarded (the plan still shows it) |
+| ○ | pending | Subtask not yet started |
+
+When the run has a delivery plan (DSL), the list shows the plan's subtasks (the delivery unit) with a `↻ replan ×N` badge when the plan was replanned. Loops without an item list (collaborative's `rondas`, tdd's `ciclo`, …) are a **single** delivery unit, so the list also shows their internal steps indented under it (round 1, agent by agent, round 2, …) — that is the run's real progress and it updates on every step.
 
 ### Archivos creados Section
 
-Collapsible (auto-expands when files are written). Shows files created or modified during the current workflow. **Double-click a file to open it in the standalone viewer** (Markdown, HTML and PDF are rendered; anything else shows as text) — the content is for your eyes only and is not re-sent to the agent.
+Collapsible (auto-expands when files are written). Shows files created or modified during the current run; the list accumulates across steps (a file written by an earlier step is not dropped when a later agent loop reports its own files). **Double-click a file to open it in the standalone viewer** (Markdown, HTML and PDF are rendered; anything else shows as text) — the content is for your eyes only and is not re-sent to the agent.
 
 ## Left Column: Chat
 
@@ -88,7 +93,7 @@ A QTabWidget below the collapsible sections, with 3 tabs:
 
 ### 1. Diagrama Tab
 
-Phase cards derived locally from each `stats_update` (`subtask_list` grouped by phase). Shows the current workflow structure with status cards (✅🔵❌⏳). Agent debate during collaborative and coordinated workflows streams live in the chat instead (universal `agent_stream` blocks).
+Phase cards derived locally from each `stats_update` (`subtask_list` grouped by phase). In DSL runs the cards are the plan's subtasks, grouped under their phase header (derived from the plan paths); loops without an item list also add a card per internal step (round/agent), so a debate is not frozen on a single "rondas" card. Shows the current workflow structure with status cards. Agent debate during collaborative and coordinated workflows streams live in the chat instead (universal `agent_stream` blocks).
 
 ### 2. Log Tab
 
@@ -98,11 +103,11 @@ Detailed execution log with timestamps. Each entry follows the format:
 HH:MM:SS  message text
 ```
 
-Log entries include system messages, tool execution notifications, agent transitions, and error reports. The log is capped at 400 blocks to prevent memory issues. The `[bash_manager]` prefix in log messages also updates the Bash tab.
+Log entries include system messages, tool execution notifications, error reports, a `▶ Run iniciado` header per run, one line per subtask status change (in arrival order), and the terminal `■ status` line. Message text is HTML-escaped and line breaks are preserved. The log is capped at 400 blocks to prevent memory issues. The `[bash_manager]` prefix in log messages also updates the Bash tab.
 
 ### 3. Bash Tab
 
-Shows shell command output from the `bash_manager` tool. Uses a monospace font on the theme's bash background (`#151619` in dark mode, `#F2F2F2` in light mode) with the success color for text (`#3FB68B` dark / `#0B6B45` light). Content is truncated to the last 5000 characters. Shows "(sin comandos ejecutados aún)" when empty. The tab is **always visible**; when the active workflow's allowlist does not include `bash_manager` (e.g., collaborative), the tab is disabled with an explanatory tooltip.
+Shows shell command output from the `bash_manager` tool. Outputs accumulate in execution order within a run (a new run clears the panel); the buffer is truncated to the last 5000 characters. Uses a monospace font on the theme's bash background (`#151619` in dark mode, `#F2F2F2` in light mode) with the success color for text (`#3FB68B` dark / `#0B6B45` light). Shows "(sin comandos ejecutados aún)" when empty. The tab is **always visible**; when the active workflow's allowlist does not include `bash_manager` (e.g., collaborative), the tab is disabled with an explanatory tooltip.
 
 ## Chat Mode vs Orchestrate Mode
 

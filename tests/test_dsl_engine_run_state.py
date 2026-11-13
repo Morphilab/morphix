@@ -252,3 +252,103 @@ async def test_el_engine_persiste_un_journal_por_step_de_nivel_superior():
     )
     await WorkflowEngine(rt).run(cw, inputs={"query": "q"})
     assert rt.persisted == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_loop_sin_over_no_se_marca_delivered_hasta_terminar():
+    """Un loop ciego es UNA unidad de entrega: su estado no puede pasar a
+    delivered cuando termina el primer agent-step de la ronda 1 (la GUI lo
+    mostraba entregado con rondas pendientes)."""
+    rt = FakeRuntime(agent_output="ok")
+    cw = _compile(
+        [
+            {
+                "id": "rondas",
+                "kind": "loop",
+                "max_iter": 3,
+                "body": [
+                    {"id": "op", "kind": "agent", "agent": "developer", "goal": "ronda $iter"}
+                ],
+            }
+        ]
+    )
+    res = await WorkflowEngine(rt).run(cw, inputs={"query": "q"})
+
+    for emit in rt.emits:
+        if emit.get("path") == "rondas":
+            continue  # el emit del cierre del loop sí puede traer delivered
+        plan = {i["id"]: i["status"] for i in (emit.get("run_state") or {}).get("plan", [])}
+        assert plan.get("rondas") != "delivered", (
+            f"el loop se marcó entregado antes de terminar: {emit.get('path')} "
+            f"status={emit.get('status')} plan={plan}"
+        )
+
+    final = {i["id"]: i["status"] for i in res.run_state["plan"]}
+    assert final["rondas"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_loop_con_over_sigue_marcando_su_ciclo_delivered():
+    """El ciclo de un loop con over sí es la unidad de entrega de sus steps."""
+    rt = FakeRuntime(agent_output="ok")
+    cw = _compile(
+        [
+            {
+                "id": "l",
+                "kind": "loop",
+                "over": "items",
+                "max_iter": 2,
+                "body": [{"id": "a", "kind": "agent", "agent": "developer", "goal": "$item"}],
+            }
+        ]
+    )
+    res = await WorkflowEngine(rt).run(cw, inputs={"query": "q", "items": ["a", "b"]})
+    subtasks = [i for i in res.run_state["plan"] if i["kind"] == "subtask"]
+    assert [i["status"] for i in subtasks] == ["delivered", "delivered"]
+
+
+@pytest.mark.asyncio
+async def test_loop_sin_over_conserva_resultados_completed_para_el_agregador():
+    """El status del resultado es el del agent call, no el del loop entero.
+
+    Antes el loop ciego se marcaba delivered y el resultado heredaba ese
+    status; al corregir el plan, heredar "running" habría dejado al agregador
+    con 0 entregas a mitad del debate.
+    """
+    rt = FakeRuntime(agent_output="ok")
+    cw = _compile(
+        [
+            {
+                "id": "rondas",
+                "kind": "loop",
+                "max_iter": 2,
+                "body": [
+                    {"id": "op", "kind": "agent", "agent": "developer", "goal": "ronda $iter"}
+                ],
+            },
+            {"id": "resumen", "kind": "aggregate", "strategy": "confidence"},
+        ]
+    )
+    await WorkflowEngine(rt).run(cw, inputs={"query": "q"})
+    statuses = [r["status"] for r in rt.aggregate_results[-1]]
+    assert statuses == ["completed", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_loop_con_over_sigue_poniendo_el_status_del_ciclo_en_los_resultados():
+    rt = FakeRuntime(agent_output="ok")
+    cw = _compile(
+        [
+            {
+                "id": "l",
+                "kind": "loop",
+                "over": "items",
+                "max_iter": 2,
+                "body": [{"id": "a", "kind": "agent", "agent": "developer", "goal": "$item"}],
+            },
+            {"id": "resumen", "kind": "aggregate", "strategy": "confidence"},
+        ]
+    )
+    await WorkflowEngine(rt).run(cw, inputs={"query": "q", "items": ["a", "b"]})
+    statuses = [r["status"] for r in rt.aggregate_results[-1]]
+    assert statuses == ["delivered", "delivered"]

@@ -5,6 +5,9 @@ from PySide6.QtWidgets import QLabel, QTextEdit, QVBoxLayout, QWidget
 
 from desktop.theme import COLORS
 
+# Tope del buffer acumulado (mismo límite documentado del panel: 5000).
+MAX_CHARS = 5000
+
 
 class BashPanel(QWidget):
     """Panel de salida bash con fuente monoespaciada."""
@@ -30,10 +33,33 @@ class BashPanel(QWidget):
 
         layout.addWidget(title)
         layout.addWidget(self.output)
+        self._buffer = ""
+
+    def append_output(self, text: str) -> None:
+        """Añade la salida de UN comando conservando las anteriores en orden.
+
+        Antes cada comando reemplazaba el panel: con varios bash en un run
+        solo sobrevivía el último y la salida previa se perdía.
+        """
+        chunk = str(text or "")
+        if not chunk.strip():
+            return
+        self._buffer = f"{self._buffer}\n{chunk}" if self._buffer else chunk
+        self._buffer = self._buffer[-MAX_CHARS:]
+        self._render()
 
     def set_output(self, text: str) -> None:
-        """Actualiza la salida del panel."""
-        self.output.setPlainText(text[-5000:])
+        """Reemplaza el contenido del panel (compatibilidad)."""
+        self._buffer = str(text or "")[-MAX_CHARS:]
+        self._render()
+
+    def clear(self) -> None:
+        """Vacía el panel al inicio de un run nuevo."""
+        self._buffer = ""
+        self._render()
+
+    def _render(self) -> None:
+        self.output.setPlainText(self._buffer)
         # Scroll al final
         cursor = self.output.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)

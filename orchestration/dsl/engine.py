@@ -1047,6 +1047,14 @@ class WorkflowEngine:
             state.run_state.budget.spent += int(outcome.tokens or 0)
         item = state.run_state.find_for_path(qpath)
         if item is not None and (item.kind == "subtask" or item.path == qpath):
+            # El dueño de un step anidado es la subtarea del CICLO (loop con
+            # over): su entrega la decide el step del ciclo. Un loop SIN over
+            # no tiene ciclos: el dueño es el propio loop y su estado lo
+            # gobierna _loop (running hasta la última ronda). Sin este filtro,
+            # el primer agent-step de la ronda 1 marcaba el loop "delivered"
+            # y la GUI lo mostraba entregado con rondas pendientes.
+            parent_path = qpath.rsplit("/", 1)[0] if "/" in qpath else ""
+            owns_status = item.path == qpath or (bool(parent_path) and item.path == parent_path)
             item.attempts += 1
             if outcome is not None:
                 item.tokens += int(outcome.tokens or 0)
@@ -1058,25 +1066,33 @@ class WorkflowEngine:
                     if step.produces and not _produces_ok(
                         step, state, outcome.files_written, qpath
                     ):
-                        item.status = "unmeasured"
+                        if owns_status:
+                            item.status = "unmeasured"
                         item.last_error = "faltan artefactos: " + ", ".join(
                             _interpolate(p, state.vars, qpath, state.max_interp_chars)
                             for p in step.produces
                         )
                     elif step.min_output_chars and len(str(output).strip()) < step.min_output_chars:
-                        item.status = "unmeasured"
+                        if owns_status:
+                            item.status = "unmeasured"
                         item.last_error = (
                             f"salida corta: {len(str(output).strip())} < {step.min_output_chars}"
                         )
                     elif step.verified_by:
                         # espera la medición del ToolStep del ciclo
-                        item.status = "unmeasured"
-                    else:
+                        if owns_status:
+                            item.status = "unmeasured"
+                    elif owns_status:
                         item.status = "delivered"
                 elif outcome.status in ("stalled", "failed"):
-                    item.status = "unmeasured"
+                    if owns_status:
+                        item.status = "unmeasured"
                     item.last_error = outcome.error or f"agente {outcome.status}"
-            if state.results and state.results[-1].get("id") == qpath:
+            # El status del RESULTADO es el de la entrega del ciclo (over). En
+            # un loop ciego el dueño es el loop entero (sigue "running"): el
+            # resultado conserva el status del agent call (completed) para que
+            # el agregador no cuente 0 entregas a mitad del debate.
+            if owns_status and state.results and state.results[-1].get("id") == qpath:
                 state.results[-1]["status"] = item.status
         if step.gate:
             # Semántica pipeline: el stage-gate publica su salida completa;

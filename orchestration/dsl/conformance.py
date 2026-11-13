@@ -158,6 +158,7 @@ async def simulate_preset(
     decide_answer: str | None = None,
     agent_output: str | None = None,
     test_runner_verde: bool = True,
+    emitter: Any | None = None,
 ) -> ConformanceReport:
     """Compila, valida y EJECUTA un preset contra la pila real (lo difuso fake).
 
@@ -327,7 +328,7 @@ async def simulate_preset(
             project_root=project_root,
             tools_allowed=list(cw.dsl.tools.allowed or []),
             query="consulta de conformance",
-            emitter=None,
+            emitter=emitter,
         )
 
         async def _recording_call_tool(tool: str, args: dict[str, Any]) -> dict:
@@ -338,6 +339,9 @@ async def simulate_preset(
 
         engine = WorkflowEngine(runtime)  # type: ignore[arg-type]
         result = await engine.run(cw, inputs={"query": "consulta de conformance"})
+        # drena los emits de steps (tasks): con stubs sin suspensión quedan
+        # pendientes y un emitter de test no vería el run.
+        await runtime.flush_emits()
         report.status = result.status
         report.failure = result.failure
         report.errors = list(result.errors)

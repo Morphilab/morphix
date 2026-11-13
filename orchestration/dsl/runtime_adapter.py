@@ -21,6 +21,7 @@ El motor es agnóstico; AQUÍ se cablea:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -697,8 +698,6 @@ class ProductionRuntime:
             return
         emit_kwargs = self._stats_payload()
         try:
-            import asyncio
-
             loop = asyncio.get_running_loop()
             # guardar la referencia — sin ella la task
             # podía ser recolectada por GC antes de emitir (stats perdidos).
@@ -722,6 +721,18 @@ class ProductionRuntime:
             run_state=self._last_run_state,
         )
         return payload
+
+    async def flush_emits(self) -> None:
+        """Espera los emits de steps diferidos ANTES del cierre del run.
+
+        `emit` programa el stats como task para no bloquear el motor; si el
+        cierre (Completado/Fallido/Detenido) se emitiera primero, la task
+        pendiente llegaría después y la GUI volvería a "Ejecutando (DSL)"
+        con conteos viejos. El cierre debe ser el ÚLTIMO stats del run.
+        """
+        while self._emit_tasks:
+            pending = list(self._emit_tasks)
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 _REPLAN_ACTIONS = {"retry", "replace", "skip", "stop"}
