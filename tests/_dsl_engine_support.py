@@ -115,7 +115,7 @@ class FakeRuntime:
     async def decide(
         self, question: str, options: list[str], context: str, *, step_id: str = ""
     ) -> str:
-        # El runtime puede devolver basura — el motor valida y aplica fallback
+        # El runtime puede devolver salida inválida — el motor valida y aplica fallback
         return self.decide_answer if self.decide_answer is not None else options[0]
 
     async def evaluate(self, question: str, expect: str, context: str) -> str:

@@ -349,7 +349,7 @@ async def default_reviewer(candidates: list[dict[str, Any]]) -> dict[str, str]:
     """Pase LLM opcional: el modelo VETA ("keep") pero jamás fuerza archivos.
 
     Conservador por diseño: cualquier respuesta no-parseable cuenta como
-    "keep" — sin red o con respuesta basura el walk determinista no pierde
+    "keep" — sin red o con respuesta inválida el walk determinista no pierde
     nada (la edad re-evalúa en la próxima corrida).
     """
     if not candidates:

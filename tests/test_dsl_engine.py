@@ -221,7 +221,7 @@ class TestLoop:
 
     @pytest.mark.asyncio
     async def test_until_agent_invalido_fallback_exit(self):
-        rt = FakeRuntime(evaluate_answer="respuesta basura")
+        rt = FakeRuntime(evaluate_answer="respuesta inválida")
         cw = _compile(
             [
                 {

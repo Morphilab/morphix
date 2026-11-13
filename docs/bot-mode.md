@@ -7,7 +7,7 @@
 
 ## Qué es
 
-Cada **bot** es una fila `bots` del schema de SU workspace ("isla", C9) con identidad
+Cada **bot** es una fila `bots` del schema de SU workspace ("isla") con identidad
 conversacional eterna por NOMBRE: `(bot_id, conversación titulada exactamente "Bot Chat")`,
 garantizada por el índice único parcial `uq_conversation_bot_chat` declarado EN
 `__table_args__` de `Conversation` (los schemas workspace no reciben índices de migraciones).
@@ -16,18 +16,18 @@ garantizada por el índice único parcial `uq_conversation_bot_chat` declarado E
 
 | # | Contrato | Dónde vive aquí |
 |---|----------|-----------------|
-| C1 | Identidad = nombre + índice parcial ≤1 fila | `core/models.py`, `tests/test_bots_identity.py` |
-| C2 | Cero punteros session-id | flows de `core/bots_chat`; tripwire `test_bots_e2e` |
-| C3 | adopt-before-mint fail-closed | `core/bots_chat.ensure_open/resolve_canonical` |
-| C4 | Eternos SIEMPRE ocultos + sweep | `sweep_hidden_bot_chats`, filtro repo |
-| C5 | preview == click, recencia jamás gana | `bots_service.roster_with_previews` |
-| C6 | Prompt caching sagrado + epoch ×1 | `core/bots_epoch.refresh_if_stale` |
-| C7 | send_to_bot inyectado NO registrado, re-gate | `core/bots_gate` + loop |
-| C8 | Fire-and-forget idle-first sin splices | `orchestration/bots_wake` |
-| C9 | Islas por workspace | todo el subsistema (schema activo) |
-| C10 | ui_meta CAS ≤64KiB revisiones sobreviven | `core/bots.set_ui_meta/meta_history` |
-| C11 | Rutinas machine-local | `core/bots_routines.enqueue_bot_chat_delivery` |
-| C12 | Sin splices: turnos user-role reales | wake/clock/drive usan `WorkflowContext` |
+| 1 | Identidad = nombre + índice parcial ≤1 fila | `core/models.py`, `tests/test_bots_identity.py` |
+| 2 | Cero punteros session-id | flows de `core/bots_chat`; tripwire `test_bots_e2e` |
+| 3 | adopt-before-mint fail-closed | `core/bots_chat.ensure_open/resolve_canonical` |
+| 4 | Eternos SIEMPRE ocultos + sweep | `sweep_hidden_bot_chats`, filtro repo |
+| 5 | preview == click, recencia jamás gana | `bots_service.roster_with_previews` |
+| 6 | Prompt caching sagrado + epoch ×1 | `core/bots_epoch.refresh_if_stale` |
+| 7 | send_to_bot inyectado NO registrado, re-gate | `core/bots_gate` + loop |
+| 8 | Fire-and-forget idle-first sin splices | `orchestration/bots_wake` |
+| 9 | Islas por workspace | todo el subsistema (schema activo) |
+| 10 | ui_meta CAS ≤64KiB revisiones sobreviven | `core/bots.set_ui_meta/meta_history` |
+| 11 | Rutinas machine-local | `core/bots_routines.enqueue_bot_chat_delivery` |
+| 12 | Sin splices: turnos user-role reales | wake/clock/drive usan `WorkflowContext` |
 
 ## Flags (`kairos`)
 

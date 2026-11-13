@@ -21,7 +21,7 @@ with per-workspace PostgreSQL isolation and production-grade infrastructure patt
 | Metric | Value |
 |--------|-------|
 | Python | **3.12.15** pinned via uv (`.python-version`, interpreter managed by uv — decoupled from system Python), `>=3.12,<3.14` |
-| Tests | **2,719** test functions across **295** test modules (measured 2026-11-11 — recompute: `git grep -hE "def test_" -- 'tests/*.py' \| wc -l` / `ls tests/test_*.py \| wc -l`) |
+| Tests | **2,752** test functions across **296** test modules (measured 2026-11-13 — recompute: `git grep -hE '^\s*(async )?def test_' -- 'tests/*.py' \| wc -l` / `ls tests/test_*.py \| wc -l`) |
 | Version | **1.2.0** (`pyproject.toml`) |
 | Type checking | mypy on `core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/` &mdash; 0 errors |
 | Default LLM | DeepInfra `deepseek-ai/DeepSeek-V4.1-Flash-1017` (all roles; needs `DEEPINFRA_API_KEY`), fallback &rarr; Ollama |
@@ -41,7 +41,7 @@ tested, and extended independently.
 - **Per-workspace PostgreSQL schemas** &mdash; every workspace lives in its own schema with isolated tables. No data leakage between projects. The active schema is set via `search_path` on every async session.
 - **Deterministic workflow DSL engine** &mdash; workflows are YAML documents (`version: 1`) compiled and validated before execution. Flow control (gates, loops, retries, parallel fan-out, human checkpoints) lives in the engine, never in the LLM; model outputs are validated against declared enums and fallbacks. **10 product presets** ship ready to run.
 - **Production patterns** &mdash; circuit breaker with fallback, sliding-window rate limiter, RestrictedPython sandbox running in a confined subprocess, FAISS vector memory with self-healing, token budget, anti-distillation watermarking.
-- **2,719 test functions (measured 2026-11-11), 0 mypy errors** &mdash; async tests with `pytest-asyncio`. Full CI pipeline with PostgreSQL service containers.
+- **2,752 test functions (measured 2026-11-13), 0 mypy errors** &mdash; async tests with `pytest-asyncio`. Full CI pipeline with PostgreSQL service containers.
 - **Dynamic extensibility** &mdash; tools as `.py` files loaded at runtime, agents as YAML profiles, hooks with 6 interception points, MCP integration for external tool servers.
 
 > ⚠️ **AI Disclosure / Divulgación de IA**
@@ -179,7 +179,7 @@ inventory honest.
 
 **10 product presets** in `templates/workflows/`, **curated into 5 core** (the dashboard shows
 the rest folded under "Experimentales"). The curation is by measured reliability
-(E2E session 2026-10-08), not opinion; experimental presets stay in the catalog because they
+(measured in an E2E run on 2026-10-08), not opinion; experimental presets stay in the catalog because they
 are the engine's live regression coverage (`edd` is the only production user of `until.metric`).
 
 | Core preset | Description |
@@ -493,7 +493,7 @@ morphix/
 ├── workspaces/           # per-workspace configs + runtime data (gitignored)
 ├── docs/                 # MkDocs documentation source
 ├── alembic/              # DB migrations
-├── tests/                # 295 test modules (2,719 test functions, measured 2026-11-11)
+├── tests/                # 296 test modules (2,752 test functions, measured 2026-11-13)
 └── logs/                 # runtime logs (morphix.log)
 ```
 

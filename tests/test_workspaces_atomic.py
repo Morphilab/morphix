@@ -129,9 +129,9 @@ async def test_list_workspaces_includes_disk_only_workspaces(tmp_path, monkeypat
         return ["main"]
 
     base = tmp_path / "workspaces"
-    (base / "novuscv" / "agents").mkdir(parents=True)
-    (base / "novuscv" / "workflows").mkdir()
-    (base / "contentflow" / "workflows").mkdir(parents=True)
+    (base / "demo" / "agents").mkdir(parents=True)
+    (base / "demo" / "workflows").mkdir()
+    (base / "sandbox" / "workflows").mkdir(parents=True)
     (base / "Nombre-Invalido").mkdir()  # regex [a-z][a-z0-9_]* falla
     (base / "vacio").mkdir()  # sin subdirectorios marcadores
     (base / "sueltos.txt").write_text("x", encoding="utf-8")  # no es dir
@@ -144,8 +144,8 @@ async def test_list_workspaces_includes_disk_only_workspaces(tmp_path, monkeypat
         out = await Workspaces().list_workspaces()
 
     assert "main" in out
-    assert "novuscv" in out, f"workspace solo-disco no listado: {out}"
-    assert "contentflow" in out, f"workspace solo-disco no listado: {out}"
+    assert "demo" in out, f"workspace solo-disco no listado: {out}"
+    assert "sandbox" in out, f"workspace solo-disco no listado: {out}"
     assert "Nombre-Invalido" not in out
     assert "vacio" not in out
     assert "sueltos.txt" not in out
@@ -159,10 +159,10 @@ async def test_list_workspaces_dedupes_db_and_disk(tmp_path, monkeypatch):
     from core.workspaces import Workspaces
 
     async def fake_schemas():
-        return ["main", "novuscv"]
+        return ["main", "demo"]
 
     base = tmp_path / "workspaces"
-    (base / "novuscv" / "agents").mkdir(parents=True)
+    (base / "demo" / "agents").mkdir(parents=True)
 
     from core.path_resolver import paths
 
@@ -171,15 +171,15 @@ async def test_list_workspaces_dedupes_db_and_disk(tmp_path, monkeypatch):
     with patch.object(ws_mod, "list_schemas", new=fake_schemas):
         out = await Workspaces().list_workspaces()
 
-    assert out.count("novuscv") == 1
-    assert out == ["main", "novuscv"]
+    assert out.count("demo") == 1
+    assert out == ["demo", "main"]
 
 
 def test_disk_only_names_pass_switch_validation():
     """Los nombres descubiertos por disco son válidos para switch_workspace."""
     from core.workspaces import Workspaces
 
-    for name in ("novuscv", "contentflow"):
+    for name in ("demo", "sandbox"):
         assert Workspaces._validate_workspace_name(name) == name
 
 
@@ -193,7 +193,7 @@ async def test_list_workspaces_survives_db_error_with_disk(tmp_path, monkeypatch
         raise RuntimeError("DB caida")
 
     base = tmp_path / "workspaces"
-    (base / "novuscv" / "workflows").mkdir(parents=True)
+    (base / "demo" / "workflows").mkdir(parents=True)
 
     from core.path_resolver import paths
 
@@ -202,14 +202,14 @@ async def test_list_workspaces_survives_db_error_with_disk(tmp_path, monkeypatch
     with patch.object(ws_mod, "list_schemas", new=broken_schemas):
         out = await Workspaces().list_workspaces()
 
-    assert out == ["novuscv"]
+    assert out == ["demo"]
 
 
 # ── Aislamiento de workspaces producto (manifest isolate:true) ──
 
 
 def _build_iso_env(tmp_path):
-    """templates/ + base fake: globales mínimos + novuscv aislado con lo propio."""
+    """templates/ + base fake: globales mínimos + demo aislado con lo propio."""
     from pathlib import Path
 
     templates = tmp_path / "templates"
@@ -227,7 +227,7 @@ def _build_iso_env(tmp_path):
     (templates / "skills" / "demo").mkdir(parents=True)
     (templates / "skills" / "demo" / "SKILL.md").write_text("x\n", encoding="utf-8")
 
-    nov = templates / "workspaces" / "novuscv"
+    nov = templates / "workspaces" / "demo"
     (nov / "agents").mkdir(parents=True)
     (nov / "workflows").mkdir()
     (nov / "agents" / "asesor.yaml").write_text("name: asesor\n", encoding="utf-8")
@@ -236,7 +236,7 @@ def _build_iso_env(tmp_path):
         "name: postulacion\ntype: pipeline\n", encoding="utf-8"
     )
     (templates / "workspaces.yaml").write_text(
-        "workspaces:\n  - {name: novuscv, isolate: true}\n  - {name: otro}\n",
+        "workspaces:\n  - {name: demo, isolate: true}\n  - {name: otro}\n",
         encoding="utf-8",
     )
     del Path
@@ -307,21 +307,21 @@ async def test_isolated_switch_does_not_inherit_globals(tmp_path, monkeypatch):
 
     templates, base = _build_iso_env(tmp_path)
     # Pre-poblar heredados de una instalación previa:
-    (base / "novuscv" / "agents").mkdir(parents=True)
-    (base / "novuscv" / "agents" / "developer.yaml").write_text("name: developer\n")
-    (base / "novuscv" / "agents" / "_FULL_TEMPLATE.yaml").write_text("#\n")
-    (base / "novuscv" / "workflows").mkdir()
-    (base / "novuscv" / "workflows" / "development.yaml").write_text("type: development\n")
+    (base / "demo" / "agents").mkdir(parents=True)
+    (base / "demo" / "agents" / "developer.yaml").write_text("name: developer\n")
+    (base / "demo" / "agents" / "_FULL_TEMPLATE.yaml").write_text("#\n")
+    (base / "demo" / "workflows").mkdir()
+    (base / "demo" / "workflows" / "development.yaml").write_text("type: development\n")
 
     _install_switch_stubs(monkeypatch, templates, base)
-    ok = await Workspaces().switch_workspace("novuscv")
+    ok = await Workspaces().switch_workspace("demo")
 
     assert ok is True
-    agents = sorted(p.name for p in (base / "novuscv" / "agents").glob("*.yaml"))
-    workflows = sorted(p.name for p in (base / "novuscv" / "workflows").glob("*.yaml"))
+    agents = sorted(p.name for p in (base / "demo" / "agents").glob("*.yaml"))
+    workflows = sorted(p.name for p in (base / "demo" / "workflows").glob("*.yaml"))
     assert agents == ["asesor.yaml", "conversacional.yaml", "revisor.yaml"], agents
     assert workflows == ["postulacion.yaml"], workflows
-    assert not (base / "novuscv" / "skills").exists(), "skills heredadas en aislado"
+    assert not (base / "demo" / "skills").exists(), "skills heredadas en aislado"
 
 
 @pytest.mark.asyncio
@@ -357,29 +357,29 @@ def test_prune_inherited_templates_idempotent(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(PathResolver, "workspace_dir", staticmethod(lambda n: base / n))
 
-    ws_agents = base / "novuscv" / "agents"
+    ws_agents = base / "demo" / "agents"
     ws_agents.mkdir(parents=True)
     (ws_agents / "developer.yaml").write_text("name: developer\n")  # heredado
     (ws_agents / "_FULL_TEMPLATE.yaml").write_text("#\n")  # heredado
     (ws_agents / "asesor.yaml").write_text("name: asesor\n")  # propio
     (ws_agents / "custom_usuario.yaml").write_text("name: custom\n")  # propio extra
-    ws_wf = base / "novuscv" / "workflows"
+    ws_wf = base / "demo" / "workflows"
     ws_wf.mkdir(parents=True)
     (ws_wf / "development.yaml").write_text("x\n")  # heredado
     (ws_wf / "postulacion.yaml").write_text("x\n")  # propio
 
-    removed = Workspaces.prune_inherited_templates("novuscv")
+    removed = Workspaces.prune_inherited_templates("demo")
     assert sorted(removed) == [
-        str(base / "novuscv" / "agents" / "_FULL_TEMPLATE.yaml"),
-        str(base / "novuscv" / "agents" / "developer.yaml"),
-        str(base / "novuscv" / "workflows" / "development.yaml"),
+        str(base / "demo" / "agents" / "_FULL_TEMPLATE.yaml"),
+        str(base / "demo" / "agents" / "developer.yaml"),
+        str(base / "demo" / "workflows" / "development.yaml"),
     ]
     assert (ws_agents / "asesor.yaml").exists()
     assert (ws_agents / "custom_usuario.yaml").exists()
     assert (ws_wf / "postulacion.yaml").exists()
 
     # Idempotente
-    assert Workspaces.prune_inherited_templates("novuscv") == []
+    assert Workspaces.prune_inherited_templates("demo") == []
 
 
 def test_bootstrap_agents_skips_underscore(tmp_path, monkeypatch):

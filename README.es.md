@@ -22,7 +22,7 @@ por workspace en PostgreSQL y patrones de infraestructura de producción.
 | Métrica | Valor |
 |---------|-------|
 | Python | **3.12.15** fijado con uv (`.python-version`, intérprete gestionado por uv — desacoplado del Python del sistema), `>=3.12,<3.14` |
-| Tests | **2.719** funciones de test en **295** módulos (medido el 2026-11-11 — recalcular con: `git grep -hE "def test_" -- 'tests/*.py' \| wc -l` / `ls tests/test_*.py \| wc -l`) |
+| Tests | **2.752** funciones de test en **296** módulos (medido el 2026-11-13 — recalcular con: `git grep -hE '^\s*(async )?def test_' -- 'tests/*.py' \| wc -l` / `ls tests/test_*.py \| wc -l`) |
 | Versión | **1.2.0** (`pyproject.toml`) |
 | Tipado | mypy sobre `core/ llm/ agents/ tools/ orchestration/ desktop/ viewer/` &mdash; 0 errores |
 | LLM por defecto | DeepInfra `deepseek-ai/DeepSeek-V4.1-Flash-1017` (todos los roles; requiere `DEEPINFRA_API_KEY`), fallback &rarr; Ollama |
@@ -43,7 +43,7 @@ independiente.
 - **Schemas de PostgreSQL por workspace** &mdash; cada workspace vive en su propio schema con tablas aisladas. No hay fuga de datos entre proyectos. El schema activo se fija con `search_path` en cada sesión async.
 - **Motor determinista de workflows DSL** &mdash; los workflows son documentos YAML (`version: 1`) que se compilan y validan antes de ejecutarse. El control de flujo (gates, loops, reintentos, fan-out paralelo, checkpoints humanos) vive en el motor, nunca en el LLM; las salidas del modelo se validan contra enums y fallbacks declarados. **10 presets de producto** listos para ejecutar.
 - **Patrones de producción** &mdash; circuit breaker con fallback, rate limiter de ventana deslizante, sandbox de RestrictedPython en un subproceso confinado, memoria vectorial FAISS con self-healing, presupuesto de tokens y watermarking anti-distillation.
-- **2.719 funciones de test (medido el 2026-11-11), 0 errores de mypy** &mdash; tests async con `pytest-asyncio`. Pipeline de CI completo con PostgreSQL como contenedor de servicios.
+- **2.752 funciones de test (medido el 2026-11-13), 0 errores de mypy** &mdash; tests async con `pytest-asyncio`. Pipeline de CI completo con PostgreSQL como contenedor de servicios.
 - **Extensibilidad dinámica** &mdash; tools como archivos `.py` cargados en runtime, agentes como perfiles YAML, hooks con 6 puntos de intercepción e integración MCP para servidores de tools externos.
 
 > ⚠️ **Divulgación de IA / AI Disclosure**
@@ -186,7 +186,7 @@ disponible para tus propios workflows. Un test estructural
 
 **10 presets de producto** en `templates/workflows/`, **curados en 5 core** (el dashboard
 muestra el resto plegado como “Experimentales”). La curación se basa en fiabilidad medida
-(sesión E2E del 2026-10-08), no en opinión; los presets experimentales siguen en el catálogo
+(medido en una prueba E2E del 2026-10-08), no en opinión; los presets experimentales siguen en el catálogo
 porque son la cobertura viva del motor (`edd` es el único usuario de producción de
 `until.metric`).
 
@@ -479,7 +479,7 @@ morphix/
 ├── workspaces/           # configuración por workspace + datos runtime (gitignored)
 ├── docs/                 # fuente de documentación MkDocs
 ├── alembic/              # migraciones de BD
-├── tests/                # 295 módulos de test (2.719 funciones, medido el 2026-11-11)
+├── tests/                # 296 módulos de test (2.752 funciones, medido el 2026-11-13)
 └── logs/                 # logs runtime (morphix.log)
 ```
 

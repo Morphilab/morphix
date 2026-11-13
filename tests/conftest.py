@@ -119,7 +119,7 @@ def _reset_global_singletons(monkeypatch):
     La suite completa ejecuta ~90 módulos en un proceso compartido; varios
     tests mutan estado global (singleton de MemoryManager vía ``__new__``,
     classvars de EmbeddingProvider/OfflineManager, breakers por proveedor).
-    El orden alfabético determina quién hereda basura — fallos que no se
+    El orden alfabético determina quién hereda residuos — fallos que no se
     reproducen por pares. Este fixture garantiza línea base limpia.
 
     NO toca tools_registry / TOOL_DEFINITIONS (los flujos direct-tool

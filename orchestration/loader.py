@@ -37,8 +37,9 @@ def is_core_preset(name: str) -> bool:
     """¿El preset es core?
 
     Los presets GLOBALES se curan por nombre (CORE_PRESETS). Cualquier otro
-    —un preset propio del workspace (novuscv, contentflow, o creado por el
-    usuario con ``cli new``)— es SIEMPRE core: nació de una necesidad real,
+    —un preset propio del workspace (creado por el usuario con
+    ``cli new`` o copiado a ``templates/workspaces/<ws>/``)— es SIEMPRE
+    core: nació de una necesidad real,
     no de la demostración del motor. El nombre manda: en ``main`` las copias
     ws-local de los globales comparten nombre con la plantilla y caen en la
     curación; los propios del workspace no existen como globales.

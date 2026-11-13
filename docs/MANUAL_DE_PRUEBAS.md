@@ -424,7 +424,7 @@
 uv run ruff check .                                   # lint  → 0 issues
 uv run black --check .                                # format → no changes
 uv run mypy core/ llm/ agents/ tools/ orchestration/ desktop/   # types → 0 errors
-uv run pytest                                         # suite → ~2,300 pass (2,305 test functions in 247 modules, measured 2026-10-15)
+uv run pytest                                         # suite → ~2,921 pass (2,752 test functions in 296 modules, measured 2026-11-13)
 uv run pre-commit run --all-files                     # all hooks
 uv run alembic upgrade head                           # migrations
 ```

@@ -39,10 +39,9 @@ graph TD
 
 | Metric | Value |
 |--------|-------|
-| Python | 3.12, 44,444 lines excluding tests (measured 2026-10-15) |
-| Tests | 2,305 test functions across 247 modules (measured 2026-10-15) |
-| Commits | 1,021 (measured 2026-10-15) |
-| Type checking | mypy — 0 errors, 0 exclusions |
+| Python | 3.12, 50,149 lines excluding tests (measured 2026-11-13) |
+| Tests | 2,752 test functions across 296 modules (measured 2026-11-13) |
+| Type checking | mypy — 0 errors |
 | Coverage | core, llm, agents, tools, orchestration (per-file ratchet) |
 | Pre-commit | black, ruff, mypy, YAML, whitespace |
 

@@ -68,7 +68,7 @@ def run_async(coro, loop=None):
             exc = fut.exception()
         except _FuturesCancelledError:
             # Shutdown race: el future se canceló antes del callback.
-            # OJO: fut.exception() lanza concurrent.futures.CancelledError,
+            # Nota: fut.exception() lanza concurrent.futures.CancelledError,
             # NO asyncio.CancelledError (builtin) — clases distintas desde
             # Python 3.8; capturar la equivocada reintroduce la pérdida
             # silenciosa del error.

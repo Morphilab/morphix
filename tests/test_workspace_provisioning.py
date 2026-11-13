@@ -13,54 +13,54 @@ def template_env(tmp_path, monkeypatch):
     templates = tmp_path / "templates"
     ws_base = tmp_path / "workspaces"
 
-    nov = templates / "workspaces" / "novuscv"
-    (nov / "agents").mkdir(parents=True)
-    (nov / "workflows").mkdir(parents=True)
-    (nov / "agents" / "asesor.yaml").write_text("name: asesor\n", encoding="utf-8")
-    (nov / "workflows" / "postulacion.yaml").write_text(
-        "name: postulacion\ntype: pipeline\ndecomposition: pipeline\n"
-        "execution: sequential_pipeline\nagents:\n  allowed: [asesor]\nstages:\n"
-        "  - {name: s1, agent: asesor}\n"
-        "  - {name: s2, agent: asesor}\n",
+    demo_dir = templates / "workspaces" / "demo"
+    (demo_dir / "agents").mkdir(parents=True)
+    (demo_dir / "workflows").mkdir(parents=True)
+    (demo_dir / "agents" / "agent_a.yaml").write_text("name: agent_a\n", encoding="utf-8")
+    (demo_dir / "workflows" / "pipeline_demo.yaml").write_text(
+        "name: pipeline_demo\ntype: pipeline\ndecomposition: pipeline\n"
+        "execution: sequential_pipeline\nagents:\n  allowed: [agent_a]\nstages:\n"
+        "  - {name: s1, agent: agent_a}\n"
+        "  - {name: s2, agent: agent_a}\n",
         encoding="utf-8",
     )
     (templates / "workspaces.yaml").write_text(
-        "workspaces:\n  - {name: novuscv, description: test}\n", encoding="utf-8"
+        "workspaces:\n  - {name: demo, description: test}\n", encoding="utf-8"
     )
 
     monkeypatch.setattr(PathResolver, "templates_dir", staticmethod(lambda: templates))
     monkeypatch.setattr(PathResolver, "workspace_dir", staticmethod(lambda name: ws_base / name))
-    return templates, ws_base, nov
+    return templates, ws_base, demo_dir
 
 
 def test_provision_disabled_by_default(template_env):
     """OFF por defecto: sin AUTO_PROVISION_WORKSPACES no se copia nada."""
     from core.workspaces import Workspaces
 
-    templates, ws_base, _nov = template_env
+    templates, ws_base, _demo = template_env
     with patch("core.config.settings.auto_provision_workspaces", False):
         out = Workspaces.provision_template_workspaces()
     assert out == []
-    assert not (ws_base / "novuscv").exists()
+    assert not (ws_base / "demo").exists()
 
 
 def test_provision_copies_additively_and_idempotent(template_env):
     """Con flag ON: copia agentes/workflows; segunda corrida no sobreescribe."""
     from core.workspaces import Workspaces
 
-    templates, ws_base, nov = template_env
+    templates, ws_base, demo_dir = template_env
     with patch("core.config.settings.auto_provision_workspaces", True):
         first = Workspaces.provision_template_workspaces()
-    assert "novuscv" in first
-    dst_agent = ws_base / "novuscv" / "agents" / "asesor.yaml"
-    assert dst_agent.read_text(encoding="utf-8") == "name: asesor\n"
+    assert "demo" in first
+    dst_agent = ws_base / "demo" / "agents" / "agent_a.yaml"
+    assert dst_agent.read_text(encoding="utf-8") == "name: agent_a\n"
 
     # Modificar el origen NO re-escribe lo ya provisionado (idempotente)
-    (nov / "agents" / "asesor.yaml").write_text("name: MODIFICADO\n", encoding="utf-8")
+    (demo_dir / "agents" / "agent_a.yaml").write_text("name: MODIFICADO\n", encoding="utf-8")
     with patch("core.config.settings.auto_provision_workspaces", True):
         second = Workspaces.provision_template_workspaces()
-    assert "novuscv" in second
-    assert dst_agent.read_text(encoding="utf-8") == "name: asesor\n"
+    assert "demo" in second
+    assert dst_agent.read_text(encoding="utf-8") == "name: agent_a\n"
 
 
 def test_provision_skips_invalid_names(tmp_path, monkeypatch):
@@ -108,7 +108,7 @@ async def test_init_backend_provisions_when_enabled(template_env, monkeypatch):
 
     import core.bootstrap as bootstrap_mod
 
-    templates, ws_base, _nov = template_env
+    templates, ws_base, _demo = template_env
 
     with (
         patch("core.database.startup_db", new_callable=AsyncMock),
@@ -117,7 +117,7 @@ async def test_init_backend_provisions_when_enabled(template_env, monkeypatch):
         patch("core.workspaces.Workspaces.provision_template_workspaces") as mock_prov,
     ):
         gw.return_value.switch_workspace = AsyncMock()
-        mock_prov.return_value = ["novuscv"]
+        mock_prov.return_value = ["demo"]
         ok = await bootstrap_mod.init_backend(workspace="main")
         assert ok is True
         mock_prov.assert_called_once()

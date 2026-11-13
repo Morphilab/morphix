@@ -1,4 +1,4 @@
-# tests/test_agent_switch_gui.py — cambio de agente y modo sin trampas (offscreen)
+# tests/test_agent_switch_gui.py — cambio de agente y modo sin atajos (offscreen)
 """El selector de agentes lista TODOS los registrados (el activo queda
 seleccionado) y el toggle Orquestar nunca queda gris tras usar una card del
 Dashboard: forzar un agente no debe filtrar el combo a uno solo, elegir

@@ -6,11 +6,13 @@
 #
 # Las rutas project.root de los YAML soportan expansión ${VAR:-default} y ~
 # para ser portables entre máquinas.
+#
+# Ejemplo — crea templates/workspaces/<name>/agents/*.yaml y
+# templates/workspaces/<name>/workflows/*.yaml y declara la entrada:
+#
+# workspaces:
+#   - name: demo
+#     description: "Workspace de ejemplo"
+#     isolate: true
 
-workspaces:
-  - name: novuscv
-    description: "CV y postulaciones sobre el repo novuscv"
-    isolate: true
-  - name: contentflow
-    description: "Publicaciones LinkedIn sobre el repo contentflow"
-    isolate: true
+workspaces: []
